@@ -7,6 +7,7 @@ Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 - [Como iniciar o projeto](#como-iniciar-o-projeto)
 - [Arquitetura](#arquitetura)
 - [Detalhamento](#detalhamento)
+- [Convenções](#convenções)
 
 ## Como iniciar o projeto
 
@@ -137,3 +138,42 @@ tests/
 - **`.vscode/`** — `settings.json` (format on save + organize imports com Ruff) e `extensions.json` (extensão recomendada).
 
 - **`pyproject.toml`** — dependências do projeto e configuração do Ruff (`[tool.ruff]`).
+
+## Convenções
+
+### Padrão de branches
+
+O repo tem duas branches "permanentes": `develop` (onde o time integra o trabalho do dia a dia) e `main` (produção/release — o CI roda em Pull Requests pra ambas). Toda branch nova nasce a partir da `develop` e volta pra ela via Pull Request.
+
+O nome segue o formato:
+
+```
+<tipo>/<descrição-curta-em-kebab-case>
+```
+
+- **kebab-case** = tudo minúsculo, palavras separadas por hífen, sem acento e sem espaço (ex.: `cadastro-de-usuario`, não `Cadastro De Usuário`).
+- A descrição deve dizer *o quê*, de forma curta — não precisa repetir o tipo nem detalhar o "como".
+
+Os três tipos e quando usar cada um:
+
+| Tipo | Quando usar | Exemplos |
+|---|---|---|
+| `feature/` | Algo novo — uma funcionalidade que o sistema **não fazia antes** e passa a fazer. | `feature/cadastro-de-usuario`, `feature/auth-jwt`, `feature/listagem-de-pedidos` |
+| `fix/` | Correção de um **comportamento que já existia mas estava errado** (bug). Se o sistema tinha um comportamento incorreto e você está consertando, é `fix/`. | `fix/token-nao-expira`, `fix/cors-bloqueando-frontend`, `fix/validacao-de-email` |
+| `chore/` | Tudo que **não muda o comportamento do sistema para quem usa a API** — configuração, dependências, CI/CD, documentação, formatação, refatoração sem mudar comportamento. | `chore/atualizar-dependencias`, `chore/configurar-ci`, `chore/documentar-readme` |
+
+**Como diferenciar `fix/` de `chore/` na prática:** pergunte "isso corrige um bug que afeta o resultado/comportamento da aplicação?". Se sim → `fix/`. Se é manutenção/organização que não muda o que a aplicação faz (ex.: trocar versão do Ruff, ajustar `.gitignore`, mexer no workflow de CI) → `chore/`.
+
+### Padrão de nomenclatura de arquivos
+
+O projeto é Python, então os arquivos `.py` seguem o [PEP 8](https://peps.python.org/pep-0008/#package-and-module-names): **snake_case** (tudo minúsculo, palavras separadas por `_`). Nunca `CamelCase.py` nem `kebab-case.py` para módulos Python.
+
+Além da regra geral, cada pasta tem sua própria convenção de nome de arquivo, pra facilitar achar as coisas:
+
+- **`app/api/v1/endpoints/<recurso>.py`** — nome do recurso no singular (ex.: `user.py`, `auth.py`). Cada arquivo contém um único `APIRouter` daquele recurso.
+- **`app/services/<recurso>_service.py`** — nome do recurso + sufixo `_service`, pra deixar explícito que é a camada de regra de negócio (ex.: `user_service.py`, `auth_service.py`).
+- **`app/models/<recurso>.py`** — nome do recurso no singular; dentro do arquivo fica a classe da entidade (ex.: `user.py` define a classe `User`).
+- **`app/schemas/<recurso>.py`** — mesmo nome do recurso; dentro do arquivo ficam as classes Pydantic relacionadas àquele recurso (ex.: `user.py` define `UserCreate`, `UserRead`, etc.).
+- **`tests/test_<caminho_espelhado>.py`** — sempre com o prefixo `test_`. Não é estética: é assim que o `pytest` **descobre os testes automaticamente** (ele procura por arquivos `test_*.py`). Ex.: o teste de `app/api/v1/endpoints/health.py` fica em `tests/test_health.py`.
+- **`__init__.py`** — arquivo vazio presente em toda pasta dentro de `app/`. Não é conteúdo, é o que transforma uma pasta comum num **pacote Python importável** (sem ele, `from app.services import ...` não funcionaria).
+- **Arquivos de configuração na raiz** (`pyproject.toml`, `.env.example`, `.gitignore`, `uv.lock`) usam o nome exato que a ferramenta correspondente exige (uv, Python, git) — não são uma convenção nossa, então não seguem snake_case.
