@@ -177,10 +177,6 @@ class DiagnosticoService:
                 "Formato de imagem inválido. Envie JPEG, PNG ou WEBP."
             )
 
-        # Sprint 1: o processamento/qualidade clínica está mockado.
-        # Quando os critérios objetivos do RF15 forem definidos, a validação deve
-        # ser implementada aqui, sem alterar endpoint ou contrato da service.
-
     def _persistir_imagem(
         self,
         *,
@@ -199,7 +195,6 @@ class DiagnosticoService:
         nome_arquivo = f"{diagnostico_id}_{uuid4().hex}{extensao}"
         caminho = self._storage_dir / nome_arquivo
 
-        # RNF15: grava os bytes recebidos sem redimensionar, recomprimir ou filtrar.
         caminho.write_bytes(imagem_bytes)
 
         imagem_id = self._next_imagem_id
@@ -356,7 +351,6 @@ class DiagnosticoService:
     def _fixture_image(
         self, diagnostico_id: int, data_captura: datetime
     ) -> ImagemDiagnosticoResponse:
-        # PNG 1x1 transparente. É apenas um arquivo estático para o mock de FE.
         png_1x1 = bytes.fromhex(
             "89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C489"
             "0000000D49444154789C6360000000020001E221BC330000000049454E44AE426082"
