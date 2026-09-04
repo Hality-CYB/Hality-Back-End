@@ -5,7 +5,7 @@ Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 ## Sumário
 
 - [Como iniciar o projeto](#como-iniciar-o-projeto)
-- [Subindo tudo com Docker](#subindo-tudo-com-docker)
+- [Rodando a API com Docker](#rodando-a-api-com-docker)
 - [Banco de dados](#banco-de-dados)
 - [Arquitetura](#arquitetura)
 - [Detalhamento](#detalhamento)
@@ -13,13 +13,13 @@ Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 
 ## Como iniciar o projeto
 
-Existem dois caminhos: rodar **tudo em containers** (mais simples, sobe API + banco + frontend de uma vez — ver [Subindo tudo com Docker](#subindo-tudo-com-docker)) ou rodar a **API local com o banco em container** (melhor pro dia a dia de desenvolvimento, porque o reload automático é instantâneo). O passo a passo abaixo é o segundo caso.
+Existem dois caminhos: rodar a **API local com o banco em container** (melhor pro dia a dia de desenvolvimento, porque o reload automático é instantâneo) ou rodar a **API também em container** (ver [Rodando a API com Docker](#rodando-a-api-com-docker)). O passo a passo abaixo é o primeiro caso.
 
 ### Requisitos
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- [Docker](https://docs.docker.com/get-docker/) com Docker Compose (para o Postgres)
+- [Docker](https://docs.docker.com/get-docker/) (para o Postgres)
 
 ### Passo a passo (depois do clone)
 
@@ -34,7 +34,13 @@ uv sync
 cp .env.example .env
 
 # 4. subir só o banco em container (a API vai rodar local)
-docker compose up -d db
+docker run -d --name hality-db \
+  -e POSTGRES_USER=hality \
+  -e POSTGRES_PASSWORD=hality \
+  -e POSTGRES_DB=hality \
+  -p 5432:5432 \
+  -v hality_postgres_data:/var/lib/postgresql/data \
+  postgres:17-alpine
 
 # 5. aplicar as migrations no banco
 uv run alembic upgrade head
@@ -93,58 +99,50 @@ uv run ruff format .
 uv run fastapi deploy
 ```
 
-## Subindo tudo com Docker
+## Rodando a API com Docker
 
-O `docker-compose.yml` sobe a stack inteira do projeto:
-
-| Serviço | O que é | Porta (host) |
-|---|---|---|
-| `db` | Postgres 17 | `5432` |
-| `api` | este backend (FastAPI) | `8000` |
-| `web` | frontend Next.js (repositório [Hality-Front-End](https://github.com/Hality-CYB/Hality-Front-End)) | `3000` |
-
-> **Importante:** o serviço `web` faz build a partir de `../Hality-Front-End`, ou seja, os dois repositórios precisam estar clonados **lado a lado na mesma pasta**:
->
-> ```
-> hality/
->   Hality-Back-End/    ← você está aqui
->   Hality-Front-End/
-> ```
->
-> Se só o backend estiver clonado, use `docker compose up -d db api` para subir apenas banco + API.
+O `Dockerfile` empacota **só este backend**. O Postgres continua sendo um container separado (ver [passo a passo](#passo-a-passo-depois-do-clone)) — não há orquestração no repositório.
 
 ### Comandos
 
 ```bash
-# copiar as variáveis de ambiente (o compose lê esse .env)
-cp .env.example .env
+# buildar a imagem
+docker build -t hality-api .
 
-# buildar as imagens e subir tudo em background
-docker compose up -d --build
-
-# ver o estado dos containers
-docker compose ps
-
-# acompanhar os logs (ex.: só da API)
-docker compose logs -f api
-
-# derrubar os containers (o banco é preservado no volume)
-docker compose down
-
-# derrubar E apagar os dados do banco
-docker compose down -v
+# subir a API conectando no banco que já está rodando
+docker run --rm -p 8000:8000 --env-file .env \
+  -e POSTGRES_HOST=host.docker.internal \
+  --add-host=host.docker.internal:host-gateway \
+  hality-api
 ```
 
-Depois de subir: API em http://localhost:8000/docs e frontend em http://localhost:3000.
+`POSTGRES_HOST` precisa ser sobrescrito porque, de dentro do container, `localhost` é o próprio container e não a sua máquina.
 
-O container da API roda `alembic upgrade head` antes de iniciar o servidor, então o banco já sobe com as migrations aplicadas — não precisa rodar nada na mão.
+Alternativa mais limpa: colocar os dois containers na mesma rede e usar o nome do container do banco como host.
 
-### Detalhes das imagens
+```bash
+docker network create hality-net
+docker network connect hality-net hality-db
 
-Os dois `Dockerfile` são **multi-stage**: um estágio instala/builda as dependências e outro, bem menor, só recebe o resultado pronto. Isso evita mandar compilador, cache e ferramenta de build pra imagem final. Ambos rodam com usuário **não-root**.
+docker run --rm -p 8000:8000 --env-file .env \
+  --network hality-net \
+  -e POSTGRES_HOST=hality-db \
+  hality-api
+```
 
-- **Backend** — estágio `builder` usa a imagem oficial do `uv` e instala as dependências a partir do `uv.lock` (`uv sync --locked --no-dev`, sem as libs de desenvolvimento); o estágio `runtime` é um `python:3.12-slim` que recebe só o `.venv` e o código.
-- **Frontend** — usa `output: "standalone"` do Next.js, que gera um bundle autocontido em `.next/standalone`. As variáveis `NEXT_PUBLIC_*` são embutidas **em tempo de build** (não em tempo de execução), por isso `NEXT_PUBLIC_API_URL` é passada como `build arg` no compose — mudar essa URL exige rebuildar a imagem do `web`.
+A imagem sobe direto o `uvicorn` — as migrations **não** rodam sozinhas. Aplique antes (`uv run alembic upgrade head`) ou rode dentro do container:
+
+```bash
+docker run --rm --env-file .env --network hality-net \
+  -e POSTGRES_HOST=hality-db \
+  hality-api alembic upgrade head
+```
+
+### Detalhes da imagem
+
+O `Dockerfile` é **multi-stage**: um estágio instala as dependências e outro, bem menor, só recebe o resultado pronto. Isso evita mandar compilador, cache e ferramenta de build pra imagem final. O container roda com usuário **não-root**.
+
+O estágio `builder` usa a imagem oficial do `uv` e instala as dependências a partir do `uv.lock` (`uv sync --locked --no-dev`, sem as libs de desenvolvimento); o estágio `runtime` é um `python:3.12-slim` que recebe só o `.venv` e o código.
 
 ## Banco de dados
 
@@ -158,7 +156,7 @@ A URL de conexão não é escrita à mão: ela é **montada** em `app/core/confi
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `POSTGRES_HOST` | `localhost` | Host do banco. Use `db` quando a **API roda dentro do compose** (é o nome do serviço na rede do Docker). |
+| `POSTGRES_HOST` | `localhost` | Host do banco. Com a API **dentro de um container**, use o nome do container do banco (ex.: `hality-db`) ou `host.docker.internal`. |
 | `POSTGRES_PORT` | `5432` | Porta do banco. |
 | `POSTGRES_USER` | `hality` | Usuário. |
 | `POSTGRES_PASSWORD` | `hality` | Senha. Só serve para desenvolvimento — em produção deve vir de um segredo, nunca do `.env` versionado. |
@@ -171,7 +169,7 @@ O resultado é uma URL no formato:
 postgresql+asyncpg://<user>:<password>@<host>:<port>/<db>
 ```
 
-> A pegadinha mais comum: com a API **local** o host é `localhost`; com a API **dentro do compose** o host é `db`. O `docker-compose.yml` já injeta `POSTGRES_HOST=db` no container da API, então você não precisa mexer no seu `.env` para alternar entre os dois modos.
+> A pegadinha mais comum: com a API **local** o host é `localhost`; com a API **dentro de um container** `localhost` aponta pro próprio container. Nesse caso sobrescreva a variável no `docker run` (`-e POSTGRES_HOST=...`) em vez de mexer no seu `.env`.
 
 ### Usando o banco num endpoint
 
@@ -227,7 +225,7 @@ uv run alembic downgrade -1      # desfaz a última migration
 
 O `--autogenerate` compara os models com o schema real do banco, mas **não é infalível** — ele costuma não detectar renomeação de tabela/coluna (gera um `drop` + `create`, o que apaga dados) e mudanças em tipos customizados. Por isso o passo 3 não é opcional.
 
-Se a API estiver rodando via compose, use `docker compose exec api alembic <comando>` no lugar de `uv run alembic <comando>`.
+Se a API estiver rodando em container, use `docker exec <container> alembic <comando>` no lugar de `uv run alembic <comando>`.
 
 ## Arquitetura
 
@@ -274,7 +272,6 @@ tests/
 .env.example
 alembic.ini
 Dockerfile
-docker-compose.yml
 ```
 
 - **`app/main.py`** — ponto de entrada. Cria a instância do `FastAPI`, registra middlewares (CORS) e inclui o router principal (`api_router`).
@@ -297,7 +294,7 @@ docker-compose.yml
 
 - **`alembic/`** e **`alembic.ini`** — migrations. O `env.py` puxa a URL de conexão do `app/core/config.py` (em vez de duplicá-la no `.ini`) e roda em modo assíncrono; `versions/` guarda os arquivos de migration versionados no Git. Ver [Banco de dados](#banco-de-dados).
 
-- **`Dockerfile`** e **`docker-compose.yml`** — imagem da API e orquestração de banco + API + frontend. Ver [Subindo tudo com Docker](#subindo-tudo-com-docker).
+- **`Dockerfile`** — imagem da API (multi-stage, usuário não-root). Ver [Rodando a API com Docker](#rodando-a-api-com-docker).
 
 - **`tests/`** — testes com `pytest`. Espelha a estrutura do `app/` conforme cresce (ex.: `tests/api/v1/test_health.py`, quando fizer sentido separar por pasta).
 
