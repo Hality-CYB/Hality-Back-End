@@ -478,6 +478,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "pwdlib", extra = ["bcrypt"] },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -494,6 +495,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
     { name = "pwdlib", extras = ["bcrypt"], specifier = ">=0.3.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.44" },
 ]
 

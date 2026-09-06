@@ -7,6 +7,7 @@ Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 - [Como iniciar o projeto](#como-iniciar-o-projeto)
 - [Rodando a API com Docker](#rodando-a-api-com-docker)
 - [Banco de dados](#banco-de-dados)
+- [Seeds](#seeds)
 - [Arquitetura](#arquitetura)
 - [Detalhamento](#detalhamento)
 - [Convenções](#convenções)
@@ -226,6 +227,48 @@ uv run alembic downgrade -1      # desfaz a última migration
 O `--autogenerate` compara os models com o schema real do banco, mas **não é infalível** — ele costuma não detectar renomeação de tabela/coluna (gera um `drop` + `create`, o que apaga dados) e mudanças em tipos customizados. Por isso o passo 3 não é opcional.
 
 Se a API estiver rodando em container, use `docker exec <container> alembic <comando>` no lugar de `uv run alembic <comando>`.
+
+## Seeds
+
+O projeto tem um script (`scripts/seed.py`) que popula o banco local com dados de exemplo — usuários (admin, profissionais e pacientes), classificações de diagnóstico, conteúdos, diagnósticos e imagens. Serve pra ter dados prontos ao desenvolver ou testar endpoints manualmente, sem precisar cadastrar tudo na mão.
+
+### Como aplicar
+
+```bash
+# 1. banco em container e migrations em dia
+docker run -d --name hality-db \
+  -e POSTGRES_USER=hality \
+  -e POSTGRES_PASSWORD=hality \
+  -e POSTGRES_DB=hality \
+  -p 5432:5432 \
+  -v hality_postgres_data:/var/lib/postgresql/data \
+  postgres:17-alpine
+
+uv run alembic upgrade head
+
+# 2. rodar o seed
+uv run python -m scripts.seed
+```
+
+Se a API estiver rodando em container, use `docker exec <container> python -m scripts.seed` no lugar de `uv run python -m scripts.seed`.
+
+### O que o seed cria
+
+| Tabela | Registros |
+|---|---|
+| `users` | 1 admin, 2 profissionais, 3 pacientes |
+| `profissionais` | 2 (vinculados aos usuários profissionais) |
+| `pacientes_profissionais` | 3 vínculos paciente↔profissional |
+| `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
+| `conteudos_diagnostico` | 4 (dicas e protocolos, um deles genérico sem classificação) |
+| `diagnosticos` | 3 (um por paciente, em status diferentes: `gerado`, `revisado`, `em_revisao`) |
+| `imagens` | 4 (vinculadas aos diagnósticos) |
+
+Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) — só serve pra desenvolvimento local, nunca use esses dados em produção.
+
+### Idempotência
+
+O script **apaga** os dados das tabelas de negócio (na ordem reversa das foreign keys) antes de inserir de novo. Ou seja, pode rodar `uv run python -m scripts.seed` quantas vezes quiser — sempre termina com a mesma massa de dados, sem erro de chave duplicada. Isso também significa que ele **não deve rodar contra um banco com dados reais**.
 
 ## Arquitetura
 
