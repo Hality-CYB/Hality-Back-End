@@ -17,6 +17,13 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Banco de dados
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hality"
+
+    # JWT
+    secret_key: str = "change-me-in-production-hality-secret-key-32bytes"
+    access_token_expire_minutes: int = 60 * 24  # 24 horas
+
 
 @lru_cache
 def get_settings() -> Settings:
