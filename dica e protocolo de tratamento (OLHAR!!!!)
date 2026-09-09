@@ -1,0 +1,29 @@
+Enum tipo_midia_dica {
+   video
+   texto
+  imagem
+  audio
+ }
+
+
+  Table dicas_tratamento {
+   id integer [pk, increment]
+   classificacao_id integer [ref: > classificacoes_diagnostico.id]
+   titulo varchar
+   tipo_midia tipo_midia_dica [not null]
+   duracao_segundos integer
+   ativo boolean [default: true]
+   data_criacao timestamp [default: now()]
+ }
+
+ Table protocolos_tratamento {
+   id integer [pk, increment]
+   classificacao_id integer [ref: > classificacoes_diagnostico.id]
+   titulo varchar
+   numero_sessoes integer [not null]
+   descricao text
+   frequencia_semanal integer
+   duracao_sessao_minutos integer
+   ativo boolean [default: true]
+   data_criacao timestamp [default: now()]
+ }
