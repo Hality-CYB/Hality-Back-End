@@ -81,11 +81,11 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
     )
 
 
-def criar_anamnese(
+async def criar_anamnese(
     repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
     validar_respostas(get_questionario_ativo(), payload)
-    registro = repo.salvar(
+    registro = await repo.salvar(
         paciente_id=paciente_id,
         versao_questionario=payload.versao_questionario,
         respostas=payload.respostas,
@@ -97,27 +97,29 @@ def criar_anamnese(
     )
 
 
-def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
-    registros = repo.listar_por_paciente(paciente_id)
+async def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
+    registros = await repo.listar_por_paciente(paciente_id)
     registros.sort(key=lambda r: r.data_preenchimento, reverse=True)
     return [_para_detalhe(r) for r in registros]
 
 
-def obter_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> AnamneseDetail:
-    registro = repo.obter_por_id(anamnese_id)
+async def obter_anamnese(
+    repo: AnamneseRepository, paciente_id: int, anamnese_id: int
+) -> AnamneseDetail:
+    registro = await repo.obter_por_id(anamnese_id)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
     return _para_detalhe(registro)
 
 
-def atualizar_anamnese(
+async def atualizar_anamnese(
     repo: AnamneseRepository, paciente_id: int, anamnese_id: int, payload: AnamneseCreate
 ) -> AnamneseDetail:
-    registro = repo.obter_por_id(anamnese_id)
+    registro = await repo.obter_por_id(anamnese_id)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
     validar_respostas(get_questionario_ativo(), payload)
-    atualizado = repo.atualizar(
+    atualizado = await repo.atualizar(
         anamnese_id=anamnese_id,
         versao_questionario=payload.versao_questionario,
         respostas=payload.respostas,
@@ -127,8 +129,8 @@ def atualizar_anamnese(
     return _para_detalhe(atualizado)
 
 
-def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> None:
-    registro = repo.obter_por_id(anamnese_id)
+async def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> None:
+    registro = await repo.obter_por_id(anamnese_id)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    repo.deletar(anamnese_id)
+    await repo.deletar(anamnese_id)
