@@ -54,5 +54,4 @@ class AnamneseDetail(BaseModel):
     id: int
     paciente_id: int
     data_preenchimento: datetime
-    versao_questionario: str
     respostas: list[RespostaItem]

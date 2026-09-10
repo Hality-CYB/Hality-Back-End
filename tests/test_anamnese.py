@@ -115,14 +115,17 @@ def test_obter_anamnese_inexistente_retorna_404() -> None:
 def test_atualizar_anamnese() -> None:
     criada = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS).json()
     payload_atualizado = _payload_valido()
-    payload_atualizado["versao_questionario"] = "2026-09-v1"
+    for resposta in payload_atualizado["respostas"]:
+        if resposta["pergunta_id"] == "avaliacao_propria_halito":
+            resposta["valor"] = 5
 
     response = client.put(
         f"/api/v1/anamneses/{criada['id']}", json=payload_atualizado, headers=AUTH_HEADERS
     )
 
     assert response.status_code == 200
-    assert response.json()["versao_questionario"] == "2026-09-v1"
+    respostas = {r["pergunta_id"]: r["valor"] for r in response.json()["respostas"]}
+    assert respostas["avaliacao_propria_halito"] == 5
 
 
 def test_deletar_anamnese() -> None:

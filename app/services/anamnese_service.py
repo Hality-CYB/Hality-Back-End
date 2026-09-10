@@ -1,10 +1,14 @@
-from app.db.anamnese_store import AnamneseRecord, AnamneseRepository
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import anamnese_queries
+from app.models.anamnese import Anamnese
 from app.schemas.anamnese import (
     AnamneseCreate,
     AnamneseCreated,
     AnamneseDetail,
     Pergunta,
     Questionario,
+    RespostaItem,
     TipoPergunta,
 )
 from app.services.anamnese_questionnaire import get_questionario_ativo
@@ -71,66 +75,56 @@ def validar_respostas(questionario: Questionario, payload: AnamneseCreate) -> No
         raise AnamneseValidationError(erros)
 
 
-def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
+def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
     return AnamneseDetail(
-        id=registro.id,
-        paciente_id=registro.paciente_id,
-        data_preenchimento=registro.data_preenchimento,
-        versao_questionario=registro.versao_questionario,
-        respostas=registro.respostas,
+        id=anamnese.id,
+        paciente_id=anamnese.paciente_id,
+        data_preenchimento=anamnese.data_preenchimento,
+        respostas=[RespostaItem(**r) for r in anamnese.respostas],
     )
 
 
 async def criar_anamnese(
-    repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
+    db: AsyncSession, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
     validar_respostas(get_questionario_ativo(), payload)
-    registro = await repo.salvar(
-        paciente_id=paciente_id,
-        versao_questionario=payload.versao_questionario,
-        respostas=payload.respostas,
+    anamnese = await anamnese_queries.inserir(
+        db, paciente_id, [r.model_dump(mode="json") for r in payload.respostas]
     )
     return AnamneseCreated(
-        id=registro.id,
-        paciente_id=registro.paciente_id,
-        data_preenchimento=registro.data_preenchimento,
+        id=anamnese.id,
+        paciente_id=anamnese.paciente_id,
+        data_preenchimento=anamnese.data_preenchimento,
     )
 
 
-async def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
-    registros = await repo.listar_por_paciente(paciente_id)
-    registros.sort(key=lambda r: r.data_preenchimento, reverse=True)
-    return [_para_detalhe(r) for r in registros]
+async def listar_anamneses(db: AsyncSession, paciente_id: int) -> list[AnamneseDetail]:
+    anamneses = await anamnese_queries.listar_por_paciente(db, paciente_id)
+    return [_para_detalhe(a) for a in anamneses]
 
 
-async def obter_anamnese(
-    repo: AnamneseRepository, paciente_id: int, anamnese_id: int
-) -> AnamneseDetail:
-    registro = await repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
+async def obter_anamnese(db: AsyncSession, paciente_id: int, anamnese_id: int) -> AnamneseDetail:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    return _para_detalhe(registro)
+    return _para_detalhe(anamnese)
 
 
 async def atualizar_anamnese(
-    repo: AnamneseRepository, paciente_id: int, anamnese_id: int, payload: AnamneseCreate
+    db: AsyncSession, paciente_id: int, anamnese_id: int, payload: AnamneseCreate
 ) -> AnamneseDetail:
-    registro = await repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
     validar_respostas(get_questionario_ativo(), payload)
-    atualizado = await repo.atualizar(
-        anamnese_id=anamnese_id,
-        versao_questionario=payload.versao_questionario,
-        respostas=payload.respostas,
+    anamnese = await anamnese_queries.atualizar(
+        db, anamnese, [r.model_dump(mode="json") for r in payload.respostas]
     )
-    if atualizado is None:
-        raise AnamneseNaoEncontradaError
-    return _para_detalhe(atualizado)
+    return _para_detalhe(anamnese)
 
 
-async def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> None:
-    registro = await repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
+async def deletar_anamnese(db: AsyncSession, paciente_id: int, anamnese_id: int) -> None:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    await repo.deletar(anamnese_id)
+    await anamnese_queries.deletar(db, anamnese)
