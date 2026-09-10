@@ -7,6 +7,7 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_current_patient(authorization: Annotated[str | None, Header()] = None) -> int:
@@ -24,4 +25,3 @@ def get_current_patient(authorization: Annotated[str | None, Header()] = None) -
 
 
 CurrentPatientDep = Annotated[int, Depends(get_current_patient)]
-DbSession = Annotated[AsyncSession, Depends(get_db)]

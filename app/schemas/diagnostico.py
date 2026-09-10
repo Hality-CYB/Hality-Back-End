@@ -4,8 +4,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
-
-#Esta classe só será usada caso o dentista puxe o cliente para uma consulta!!!
+# Esta classe só será usada caso o dentista puxe o cliente para uma consulta!!!
 class StatusDiagnostico(StrEnum):
     GERADO = "gerado"
     EM_REVISAO = "em_revisao"
