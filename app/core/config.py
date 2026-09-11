@@ -11,19 +11,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    project_name: str = "hality-back"
-    api_v1_prefix: str = "/api/v1"
-    environment: str = "development"
-    debug: bool = True
+    project_name: str
+    api_v1_prefix: str
+    environment: str
+    debug: bool
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str]
 
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_user: str = "hality"
-    postgres_password: str = "hality"
-    postgres_db: str = "hality"
-    db_echo: bool = False
+    postgres_host: str
+    postgres_port: int
+    postgres_user: str
+    postgres_password: str
+    postgres_db: str
+    db_echo: bool
 
     @computed_field
     @property
