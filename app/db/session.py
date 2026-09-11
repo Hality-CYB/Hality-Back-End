@@ -20,7 +20,6 @@ async_session_factory = async_sessionmaker(
 )
 
 
-
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency que fornece uma sessão de banco para cada request."""
     async with async_session_factory() as session:

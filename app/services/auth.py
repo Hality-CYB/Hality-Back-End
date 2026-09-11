@@ -22,9 +22,7 @@ async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def authenticate_user(
-    session: AsyncSession, email: str, password: str
-) -> User | None:
+async def authenticate_user(session: AsyncSession, email: str, password: str) -> User | None:
     """Valida as credenciais de um usuário.
 
     Args:
