@@ -25,12 +25,22 @@ uv sync
 cp .env.example .env
 
 # 4. subir só o banco em container (a API vai rodar local)
+LINUX
 docker run -d --name hality-db \
   -e POSTGRES_USER=hality \
   -e POSTGRES_PASSWORD=hality \
   -e POSTGRES_DB=hality \
   -p 5432:5432 \
   -v hality_postgres_data:/var/lib/postgresql/data \
+  postgres:17-alpine
+
+WINDOWS
+  docker run -d --name hality-db 
+  -e POSTGRES_USER=hality 
+  -e POSTGRES_PASSWORD=hality 
+  -e POSTGRES_DB=hality 
+  -p 5432:5432 
+  -v hality_postgres_data:/var/lib/postgresql/data 
   postgres:17-alpine
 
 # 5. aplicar as migrations no banco
