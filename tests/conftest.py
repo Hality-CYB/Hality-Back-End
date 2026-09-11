@@ -6,7 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.session import Base, get_async_session, get_user_db
+from app.db.session import Base, get_async_session
 from app.main import app
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -35,18 +35,11 @@ async def db_session() -> AsyncGenerator[AsyncSession]:
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     """Fixture do AsyncClient da API configurado com o banco em memória."""
-    from fastapi_users.db import SQLAlchemyUserDatabase
-
-    from app.models.user import User
 
     async def override_get_async_session() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
-    async def override_get_user_db() -> AsyncGenerator[SQLAlchemyUserDatabase]:
-        yield SQLAlchemyUserDatabase(db_session, User)
-
     app.dependency_overrides[get_async_session] = override_get_async_session
-    app.dependency_overrides[get_user_db] = override_get_user_db
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as async_client:

@@ -1,24 +1,60 @@
-"""Testes unitários para o backend de autenticação JWT (app/core/security.py)."""
+"""Testes unitários para as funções de segurança (app/core/security.py)."""
 
-from app.core.security import auth_backend, get_jwt_strategy
+from datetime import timedelta
+
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    get_password_hash,
+    verify_password,
+)
+
+# ---------------------------------------------------------------------------
+# Hash de senha
+# ---------------------------------------------------------------------------
 
 
-def test_auth_backend_name() -> None:
-    """Garante que o backend de autenticação tem o nome correto."""
-    assert auth_backend.name == "jwt"
+def test_get_password_hash_is_not_plaintext() -> None:
+    """Garante que o hash gerado nunca é igual à senha em texto plano."""
+    password = "SenhaSegura123!"
+    hashed = get_password_hash(password)
+    assert hashed != password
 
 
-def test_jwt_strategy_configuration() -> None:
-    """Garante que a JWTStrategy usa os parâmetros corretos do Settings."""
-    strategy = get_jwt_strategy()
-    assert strategy.lifetime_seconds > 0
+def test_verify_password_correct() -> None:
+    """Garante que a verificação retorna True para a senha correta."""
+    password = "SenhaSegura123!"
+    hashed = get_password_hash(password)
+    assert verify_password(password, hashed) is True
 
 
-def test_jwt_strategy_lifetime_matches_settings() -> None:
-    """Garante que o lifetime do JWT corresponde ao configurado no Settings."""
-    from app.core.config import get_settings
+def test_verify_password_wrong() -> None:
+    """Garante que a verificação retorna False para senha errada."""
+    hashed = get_password_hash("SenhaSegura123!")
+    assert verify_password("SenhaErrada", hashed) is False
 
-    settings = get_settings()
-    strategy = get_jwt_strategy()
-    expected_seconds = settings.access_token_expire_minutes * 60
-    assert strategy.lifetime_seconds == expected_seconds
+
+# ---------------------------------------------------------------------------
+# JWT
+# ---------------------------------------------------------------------------
+
+
+def test_create_and_decode_access_token() -> None:
+    """Garante que um token criado pode ser decodificado corretamente."""
+    user_id = "123e4567-e89b-12d3-a456-426614174000"
+    token = create_access_token(subject=user_id)
+    decoded = decode_access_token(token)
+    assert decoded == user_id
+
+
+def test_decode_invalid_token_returns_none() -> None:
+    """Garante que um token inválido retorna None sem levantar exceção."""
+    result = decode_access_token("token.invalido.mesmo")
+    assert result is None
+
+
+def test_decode_expired_token_returns_none() -> None:
+    """Garante que um token com expiração negativa é rejeitado."""
+    token = create_access_token(subject="qualquer-id", expires_delta=timedelta(seconds=-1))
+    result = decode_access_token(token)
+    assert result is None

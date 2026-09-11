@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,11 +18,12 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    # Banco de dados
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hality"
+    # Banco de dados — obrigatório via .env
+    database_url: SecretStr
 
-    # JWT
-    secret_key: str = "change-me-in-production-hality-secret-key-32bytes"
+    # JWT — obrigatório via .env (ex.: openssl rand -hex 32)
+    secret_key: SecretStr
+    algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24  # 24 horas
 
 
