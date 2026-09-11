@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,8 +13,10 @@ from app.db.base import Base
 class Anamnese(Base):
     """Tabela `anamneses`.
 
-    `respostas` guarda a lista de `RespostaItem` (schemas/anamnese.py) como
-    veio no payload, preservando `enunciado` e `tipo` junto do `valor`.
+    `respostas` guarda a lista de `ItemRespostaRegistrada` (schemas/anamnese.py),
+    já validada e tipada pelo lexer (anamnese_lexer.py). `id_versao_questionario`
+    referencia a versão do questionário (app/models/questionario.py) usada no
+    preenchimento.
     """
 
     __tablename__ = "anamneses"
@@ -26,4 +28,5 @@ class Anamnese(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
+    id_versao_questionario: Mapped[str] = mapped_column(String(50), nullable=False)
     respostas: Mapped[list[dict]] = mapped_column(JSONB)
