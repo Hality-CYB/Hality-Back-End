@@ -1,15 +1,12 @@
 """Dependências reutilizáveis via Depends (settings, sessão de banco, usuário autenticado)."""
 
-import uuid
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.security import decode_access_token
+from app.core.users import current_active_user
 from app.db.session import get_db
 from app.models.user import User
 
@@ -19,43 +16,17 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 # Alias para compatibilidade com código legado
 DbDep = DbSession
 
+# Usuário autenticado e ativo injetado via JWT (fastapi-users)
+CurrentUser = Annotated[User, Depends(current_active_user)]
+
+
+# ---------------------------------------------------------------------------
+# Stub para endpoints de anamnese (a ser substituído quando auth for unificada)
+# ---------------------------------------------------------------------------
+
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # noqa: E402
+
 _bearer = HTTPBearer()
-
-
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
-    session: Annotated[AsyncSession, Depends(get_db)],
-) -> User:
-    """Dependency que extrai e valida o Bearer token e retorna o usuário autenticado.
-
-    Raises:
-        HTTPException 401: Se o token for inválido, expirado
-            ou o usuário não existir/estiver inativo.
-    """
-    token = credentials.credentials
-    user_id = decode_access_token(token)
-
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido ou expirado.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    result = await session.execute(select(User).where(User.id == uuid.UUID(user_id)))
-    user = result.scalar_one_or_none()
-
-    if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuário não encontrado ou inativo.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return user
-
-
-CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def get_current_patient(

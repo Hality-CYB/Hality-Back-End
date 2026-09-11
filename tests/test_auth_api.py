@@ -3,9 +3,9 @@
 import pytest
 from httpx import AsyncClient
 
+# fastapi-users usa /auth/register (JSON) e /auth/login (form-data com campo 'username')
 REGISTER_URL = "/api/v1/auth/register"
 LOGIN_URL = "/api/v1/auth/login"
-LOGOUT_URL = "/api/v1/auth/logout"
 ME_URL = "/api/v1/users/me"
 
 _DEFAULT_USER = {
@@ -20,8 +20,10 @@ async def _register_and_login(client: AsyncClient, user: dict | None = None) -> 
     """Helper: registra um usuário e retorna o access_token do login."""
     user = user or _DEFAULT_USER
     await client.post(REGISTER_URL, json=user)
+    # Login usa OAuth2PasswordRequestForm (form-data, campo 'username' em vez de 'email')
     response = await client.post(
-        LOGIN_URL, json={"email": user["email"], "password": user["password"]}
+        LOGIN_URL,
+        data={"username": user["email"], "password": user["password"]},
     )
     return response.json()["access_token"]
 
@@ -71,12 +73,14 @@ async def test_register_missing_name(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient) -> None:
-    """Testa login bem-sucedido via JSON body (status 200 + token JWT)."""
+    """Testa login bem-sucedido via form-data (status 200 + token JWT)."""
     user = {"email": "lucas@hality.com", "password": "SenhaCorreta123!", "name": "Lucas Santos"}
     await client.post(REGISTER_URL, json=user)
 
+    # fastapi-users usa OAuth2PasswordRequestForm: campo 'username' (não 'email')
     response = await client.post(
-        LOGIN_URL, json={"email": user["email"], "password": user["password"]}
+        LOGIN_URL,
+        data={"username": user["email"], "password": user["password"]},
     )
 
     assert response.status_code == 200
@@ -87,11 +91,12 @@ async def test_login_success(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_login_invalid_credentials(client: AsyncClient) -> None:
-    """Testa erro 401 ao tentar login com credenciais incorretas."""
+    """Testa erro 400 ao tentar login com credenciais incorretas."""
     response = await client.post(
-        LOGIN_URL, json={"email": "invalido@hality.com", "password": "SenhaErrada"}
+        LOGIN_URL,
+        data={"username": "invalido@hality.com", "password": "SenhaErrada"},
     )
-    assert response.status_code == 401
+    assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -132,17 +137,3 @@ async def test_get_me_unauthorized_invalid_token(client: AsyncClient) -> None:
     """Testa erro 401 ao acessar /users/me com token inválido."""
     response = await client.get(ME_URL, headers={"Authorization": "Bearer token-invalido"})
     assert response.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# Logout
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_logout_success(client: AsyncClient) -> None:
-    """Testa logout bem-sucedido (retorna 200 com mensagem de confirmação)."""
-    token = await _register_and_login(client)
-    response = await client.post(LOGOUT_URL, headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    assert "message" in response.json()

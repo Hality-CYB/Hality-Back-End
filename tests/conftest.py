@@ -3,10 +3,12 @@
 from collections.abc import AsyncGenerator
 
 import pytest_asyncio
+from fastapi_users.db import SQLAlchemyUserDatabase
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
+from app.core.users import get_user_db
 from app.db.session import get_db
 from app.main import app
 
@@ -54,7 +56,11 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
+    async def override_get_user_db() -> AsyncGenerator[SQLAlchemyUserDatabase]:
+        yield SQLAlchemyUserDatabase(db_session, _User)
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_user_db] = override_get_user_db
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as async_client:
