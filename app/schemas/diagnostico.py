@@ -1,109 +1,67 @@
 from datetime import datetime
-from typing import Any, Literal
+from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
-
-StatusDiagnostico = Literal[
-    "processando",
-    "aguardando_analise",
-    "aguardando_revisao",
-    "concluido",
-    "falha",
-]
+from pydantic import BaseModel, Field
 
 
-class ParametrosCaptura(BaseModel):
-    model_config = ConfigDict(extra="allow")
+# Esta classe só será usada caso o dentista puxe o cliente para uma consulta!!!
+class StatusDiagnostico(StrEnum):
+    GERADO = "gerado"
+    EM_REVISAO = "em_revisao"
+    REVISADO = "revisado"
 
-    flash: bool | None = None
-    orientacao: str | None = None
-    device: str | None = None
+
+class DiagnosticoCreate(BaseModel):
+    """Gerado automaticamente pela IA a partir das imagens já enviadas.
+
+    [confirmar] sem anamnese_id por enquanto - a padronização das perguntas
+    da anamnese ainda vai ser repensada.
+    """
+
+    paciente_id: int
+    classificacao_id: int
+    escala_saburra: int = Field(ge=0, le=6, description="Escala 0-6 usada pela clinica")
+    confianca_ia: float
 
 
-class DiagnosticoPostResponse(BaseModel):
+class DiagnosticoCreated(BaseModel):
+    """Resultado vai direto ao paciente assim que gerado."""
+
     id: int
+    paciente_id: int
+    classificacao_id: int
+    escala_saburra: int
+    confianca_ia: float
     status: StatusDiagnostico
     data_diagnostico: datetime
-    anamnese_id: int
 
 
-class ClassificacaoDiagnosticoResponse(BaseModel):
+class DiagnosticoRevisao(BaseModel):
+    """Corpo usado pelo profissional para revisar/validar um diagnóstico.
+
+    A revisão é apenas auditoria/validação clínica - NÃO alimenta retreino do modelo.
+    """
+
+    profissional_revisor_id: int
+    observacoes_revisao: str | None = None
+    status: StatusDiagnostico = StatusDiagnostico.REVISADO
+
+
+class DiagnosticoInteresseConsulta(BaseModel):
+    """Preenchido quando o paciente clica no CTA pós-diagnóstico (ex: "marque sua consulta")."""
+
+    interesse_consulta: datetime
+
+
+class DiagnosticoDetail(BaseModel):
     id: int
-    codigo: str
-    nome_exibicao: str
-    ordem: int
-
-
-class ImagemDiagnosticoResponse(BaseModel):
-    id: int
-    url_arquivo: str
-    ordem: int
-    data_captura: datetime
-
-
-class RespostaAnamneseResponse(BaseModel):
-    pergunta_id: str
-    enunciado: str
-    tipo: str
-    valor: Any
-
-
-class AnamneseDiagnosticoResponse(BaseModel):
-    id: int
-    data_preenchimento: datetime
-    respostas: list[RespostaAnamneseResponse]
-
-
-class RevisaoDiagnosticoResponse(BaseModel):
-    revisado: bool
-    profissional_nome: str | None = None
+    paciente_id: int
+    data_diagnostico: datetime
+    classificacao_id: int
+    escala_saburra: int
+    confianca_ia: float
+    status: StatusDiagnostico
+    profissional_revisor_id: int | None = None
     data_revisao: datetime | None = None
-    observacoes: str | None = None
-    nivel_corrigido: bool | None = None
-
-
-class ConteudoDadosResponse(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    icone: str
-    corpo: str
-
-
-class ConteudoDiagnosticoResponse(BaseModel):
-    id: int
-    tipo: str
-    titulo: str
-    dados: ConteudoDadosResponse
-
-
-class DiagnosticoGetResponse(BaseModel):
-    id: int
-    data_diagnostico: datetime
-    status: StatusDiagnostico
-
-    classificacao: ClassificacaoDiagnosticoResponse | None = None
-
-    escala_saburra: int | None = Field(
-        default=None,
-        ge=0,
-        le=100,
-    )
-
-    confianca_ia: float | None = Field(
-        default=None,
-        ge=0,
-        le=1,
-    )
-
-    imagens: list[ImagemDiagnosticoResponse]
-    anamnese: AnamneseDiagnosticoResponse
-
-    revisao: RevisaoDiagnosticoResponse | None = None
-
-    tem_profissional_vinculado: bool
-
-    conteudos: list[ConteudoDiagnosticoResponse]
-
-    aviso_legal: str
-
-    erro: str | None = None
+    observacoes_revisao: str | None = None
+    interesse_consulta: datetime | None = None
