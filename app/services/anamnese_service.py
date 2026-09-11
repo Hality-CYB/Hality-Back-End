@@ -1,3 +1,5 @@
+from collections import Counter
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import anamnese_queries
@@ -33,7 +35,9 @@ def _validar_valor(pergunta: Pergunta, valor: bool | str | int) -> str | None:
             if not isinstance(valor, bool):
                 return f"valor fora do tipo esperado para '{pergunta.id}' (esperado boolean)"
         case TipoPergunta.SINGLE_CHOICE:
-            if pergunta.opcoes and valor not in pergunta.opcoes:
+            if not pergunta.opcoes:
+                return f"pergunta '{pergunta.id}' não tem opções configuradas"
+            if not isinstance(valor, str) or valor not in pergunta.opcoes:
                 return f"valor fora das opções válidas para '{pergunta.id}'"
         case TipoPergunta.TEXT:
             if not isinstance(valor, str) or not valor.strip():
@@ -49,6 +53,18 @@ def _validar_valor(pergunta: Pergunta, valor: bool | str | int) -> str | None:
 
 def validar_respostas(questionario: Questionario, payload: AnamneseCreate) -> None:
     erros: list[str] = []
+
+    if payload.versao_questionario != questionario.versao:
+        erros.append(
+            f"versão do questionário desatualizada: esperado '{questionario.versao}', "
+            f"recebido '{payload.versao_questionario}'"
+        )
+
+    ids_recebidos = [r.pergunta_id for r in payload.respostas]
+    for pergunta_id, quantidade in Counter(ids_recebidos).items():
+        if quantidade > 1:
+            erros.append(f"resposta duplicada para pergunta '{pergunta_id}'")
+
     respostas_por_pergunta = {r.pergunta_id: r for r in payload.respostas}
     perguntas_por_id = {p.id: p for p in questionario.perguntas}
 
@@ -75,6 +91,21 @@ def validar_respostas(questionario: Questionario, payload: AnamneseCreate) -> No
         raise AnamneseValidationError(erros)
 
 
+def _respostas_para_persistir(questionario: Questionario, payload: AnamneseCreate) -> list[dict]:
+    """Usa enunciado/tipo do catálogo ativo, não os que vieram do front — evita
+    persistir texto divergente caso o questionário mude (comentário do PR)."""
+    perguntas_por_id = {p.id: p for p in questionario.perguntas}
+    return [
+        {
+            "pergunta_id": r.pergunta_id,
+            "enunciado": perguntas_por_id[r.pergunta_id].enunciado,
+            "tipo": perguntas_por_id[r.pergunta_id].tipo.value,
+            "valor": r.valor,
+        }
+        for r in payload.respostas
+    ]
+
+
 def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
     return AnamneseDetail(
         id=anamnese.id,
@@ -87,9 +118,10 @@ def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
 async def criar_anamnese(
     db: AsyncSession, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
-    validar_respostas(get_questionario_ativo(), payload)
+    questionario = get_questionario_ativo()
+    validar_respostas(questionario, payload)
     anamnese = await anamnese_queries.inserir(
-        db, paciente_id, [r.model_dump(mode="json") for r in payload.respostas]
+        db, paciente_id, _respostas_para_persistir(questionario, payload)
     )
     return AnamneseCreated(
         id=anamnese.id,
@@ -116,9 +148,10 @@ async def atualizar_anamnese(
     anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
     if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    validar_respostas(get_questionario_ativo(), payload)
+    questionario = get_questionario_ativo()
+    validar_respostas(questionario, payload)
     anamnese = await anamnese_queries.atualizar(
-        db, anamnese, [r.model_dump(mode="json") for r in payload.respostas]
+        db, anamnese, _respostas_para_persistir(questionario, payload)
     )
     return _para_detalhe(anamnese)
 
