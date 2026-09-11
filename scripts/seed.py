@@ -56,33 +56,33 @@ async def seed() -> None:
             name="Dra. Ana Souza",
             email="ana.souza@hality.com",
             hashed_password=SEED_PASSWORD,
-            role="profissional",
+            role="professional",
         )
         dentista2 = User(
             name="Dr. Bruno Lima",
             email="bruno.lima@hality.com",
             hashed_password=SEED_PASSWORD,
-            role="profissional",
+            role="professional",
         )
         paciente1 = User(
             name="Carla Mendes",
             email="carla.mendes@example.com",
             phone="51999990001",
             hashed_password=SEED_PASSWORD,
-            role="paciente",
+            role="patient",
         )
         paciente2 = User(
             name="Diego Fontana",
             email="diego.fontana@example.com",
             phone="51999990002",
             hashed_password=SEED_PASSWORD,
-            role="paciente",
+            role="patient",
         )
         paciente3 = User(
             name="Elisa Prado",
             email="elisa.prado@example.com",
             hashed_password=SEED_PASSWORD,
-            role="paciente",
+            role="patient",
         )
         db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3])
         await db.flush()

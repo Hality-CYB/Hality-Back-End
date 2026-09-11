@@ -49,7 +49,7 @@ async def _preparar() -> None:
                         name="Paciente de Teste",
                         email="paciente.teste@hality.local",
                         hashed_password="x",
-                        role="paciente",
+                        role="patient",
                     )
                 )
                 await db.commit()
