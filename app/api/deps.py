@@ -10,18 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.security import decode_access_token
-from app.db.session import get_async_session
+from app.db.session import get_db
 from app.models.user import User
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-DbDep = Annotated[AsyncSession, Depends(get_async_session)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+# Alias para compatibilidade com código legado
+DbDep = DbSession
 
 _bearer = HTTPBearer()
 
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
-    session: Annotated[AsyncSession, Depends(get_async_session)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """Dependency que extrai e valida o Bearer token e retorna o usuário autenticado.
 
@@ -53,3 +56,18 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def get_current_patient(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
+) -> int:
+    """Stub temporário: valida presença do token e retorna paciente_id fixo.
+
+    TODO: substituir pela decodificação real do JWT quando a issue de auth
+    para anamnese estiver implementada.
+    """
+    _ = credentials  # garante que o token existe
+    return 1
+
+
+CurrentPatientDep = Annotated[int, Depends(get_current_patient)]

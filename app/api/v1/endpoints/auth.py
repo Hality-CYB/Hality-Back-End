@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import CurrentUser, DbDep
+from app.api.deps import CurrentUser, DbSession
 from app.core.security import create_access_token
 from app.schemas.user import LoginRequest, Token, UserCreate, UserRead
 from app.services.auth import authenticate_user, register_user
@@ -16,7 +16,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Cadastrar novo usuário",
 )
-async def register(payload: UserCreate, session: DbDep) -> UserRead:
+async def register(payload: UserCreate, session: DbSession) -> UserRead:
     """Cria uma nova conta de usuário.
 
     - **email**: deve ser único no sistema
@@ -36,7 +36,7 @@ async def register(payload: UserCreate, session: DbDep) -> UserRead:
     response_model=Token,
     summary="Autenticar usuário e obter token JWT",
 )
-async def login(payload: LoginRequest, session: DbDep) -> Token:
+async def login(payload: LoginRequest, session: DbSession) -> Token:
     """Autentica o usuário com e-mail e senha e retorna um token JWT Bearer.
 
     O token deve ser enviado no header ``Authorization: Bearer <token>``

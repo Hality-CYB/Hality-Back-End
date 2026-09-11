@@ -7,10 +7,11 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.141.1",
     "pydantic-settings>=2.15.0",
+    "pyjwt[crypto]>=2.13.0",
+    "pwdlib[bcrypt]>=0.3.1",
+    "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",
     "sqlalchemy[asyncio]>=2.0.52",
-    "pyjwt[crypto]>=2.13.0",
-    "pwdlib[bcrypt]>=0.3.0",
 ]
 
 [dependency-groups]
@@ -21,6 +22,9 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.4",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
 
 [tool.ruff]
 line-length = 100
