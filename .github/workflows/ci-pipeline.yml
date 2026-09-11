@@ -40,6 +40,20 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hality
+          POSTGRES_PASSWORD: hality
+          POSTGRES_DB: hality
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hality"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -57,6 +71,9 @@ jobs:
 
       - name: Set up env vars
         run: cp .env.example .env
+
+      - name: Run migrations
+        run: uv run alembic upgrade head
 
       - name: Run tests
         run: uv run pytest
