@@ -1,39 +1,41 @@
 from app.schemas.anamnese import Pergunta, Questionario, TipoPergunta
 
-# Catálogo estático do questionário ativo. Isolado nesse módulo para ser fácil
+# Catálogo estático do questionário ativo. Isolado nesse módulo pra ser fácil
 # de trocar por uma fonte real (admin/CMS/banco) quando ela existir, sem
-# precisar mexer no service ou nos endpoints.
+# precisar mexer no service, no lexer ou nos endpoints - o contrato
+# (Questionario/Pergunta) é o mesmo nos dois casos.
+# A ideia deste código é servir de fallback caso o banco falhe ou de algum problema, este será responsável por não deixar a aplicação quebrar. 
 _QUESTIONARIO_ATIVO = Questionario(
-    versao="2026-08-v1",
+    versao="2026-09-v1",
     perguntas=[
         Pergunta(
-            id="mau_halito_ao_acordar",
-            enunciado="Você sente mau hálito ao acordar?",
-            tipo=TipoPergunta.BOOLEAN,
-            obrigatoria=True,
-        ),
-        Pergunta(
-            id="frequencia_escovacao",
-            enunciado="Com que frequência você escova os dentes?",
-            tipo=TipoPergunta.SINGLE_CHOICE,
-            obrigatoria=True,
-            opcoes=["1x ao dia", "2x ao dia", "3x ou mais"],
-        ),
-        Pergunta(
-            id="sintomas_adicionais",
-            enunciado="Descreva sintomas adicionais, se houver.",
-            tipo=TipoPergunta.TEXT,
-            obrigatoria=False,
-        ),
-        Pergunta(
-            id="avaliacao_propria_halito",
-            enunciado="Como você avalia o cheiro da sua respiração?",
+            id="higiene_bucal",
+            enunciado="Classifique sua higiene bucal",
             tipo=TipoPergunta.SCALE,
             obrigatoria=True,
             escala_min=1,
             escala_max=5,
             escala_label_min="Ruim",
             escala_label_max="Excelente",
+        ),
+        Pergunta(
+            id="medicacao_regular",
+            enunciado="Você usa alguma medicação regularmente?",
+            tipo=TipoPergunta.TEXT,
+            obrigatoria=True,
+        ),
+        Pergunta(
+            id="fumante",
+            enunciado="Você é fumante?",
+            tipo=TipoPergunta.BOOLEAN,
+            obrigatoria=True,
+        ),
+        Pergunta(
+            id="frequencia_escovacao",
+            enunciado="Com que frequência escova os dentes?",
+            tipo=TipoPergunta.SINGLE_CHOICE,
+            obrigatoria=True,
+            opcoes=["1x ao dia", "2x ao dia", "3x ao dia", "Mais de 3x ao dia"],
         ),
     ],
 )
