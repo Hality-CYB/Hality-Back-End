@@ -13,7 +13,7 @@ from app.schemas.anamnese import (
     RespostaItem,
     TipoPergunta,
 )
-from app.services.anamnese_questionnaire import get_questionario_ativo
+from app.services.anamnese_questionnaire import QUESTIONARIO_VIGENTE
 
 
 class AnamneseValidationError(Exception):
@@ -118,10 +118,9 @@ def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
 async def criar_anamnese(
     db: AsyncSession, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
-    questionario = get_questionario_ativo()
-    validar_respostas(questionario, payload)
+    validar_respostas(QUESTIONARIO_VIGENTE, payload)
     anamnese = await anamnese_queries.inserir(
-        db, paciente_id, _respostas_para_persistir(questionario, payload)
+        db, paciente_id, _respostas_para_persistir(QUESTIONARIO_VIGENTE, payload)
     )
     return AnamneseCreated(
         id=anamnese.id,
@@ -148,10 +147,9 @@ async def atualizar_anamnese(
     anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
     if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    questionario = get_questionario_ativo()
-    validar_respostas(questionario, payload)
+    validar_respostas(QUESTIONARIO_VIGENTE, payload)
     anamnese = await anamnese_queries.atualizar(
-        db, anamnese, _respostas_para_persistir(questionario, payload)
+        db, anamnese, _respostas_para_persistir(QUESTIONARIO_VIGENTE, payload)
     )
     return _para_detalhe(anamnese)
 
