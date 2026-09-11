@@ -41,9 +41,7 @@ _RESULTADOS = (
 def resultado_para(
     diagnostico_id: int,
 ) -> ResultadoMock:
-    indice = (
-        diagnostico_id - 1
-    ) % len(_RESULTADOS)
+    indice = (diagnostico_id - 1) % len(_RESULTADOS)
 
     return _RESULTADOS[indice]
 
@@ -55,41 +53,25 @@ async def processar_se_necessario(
     if diagnostico.status != "processando":
         return diagnostico
 
-    criado_em = (
-        diagnostico.data_diagnostico
-    )
+    criado_em = diagnostico.data_diagnostico
 
     if criado_em.tzinfo is None:
-        criado_em = criado_em.replace(
-            tzinfo=UTC
-        )
+        criado_em = criado_em.replace(tzinfo=UTC)
 
-    decorrido = (
-        datetime.now(UTC) - criado_em
-    ).total_seconds()
+    decorrido = (datetime.now(UTC) - criado_em).total_seconds()
 
-    if (
-        decorrido
-        < MOCK_PROCESSING_SECONDS
-    ):
+    if decorrido < MOCK_PROCESSING_SECONDS:
         return diagnostico
 
-    resultado_mock = resultado_para(
-        diagnostico.id
-    )
+    resultado_mock = resultado_para(diagnostico.id)
 
     result = await db.execute(
-        select(
-            ClassificacaoDiagnostico
-        ).where(
-            ClassificacaoDiagnostico.ordem
-            == resultado_mock.ordem_classificacao
+        select(ClassificacaoDiagnostico).where(
+            ClassificacaoDiagnostico.ordem == resultado_mock.ordem_classificacao
         )
     )
 
-    classificacao = (
-        result.scalar_one_or_none()
-    )
+    classificacao = result.scalar_one_or_none()
 
     if classificacao is None:
         diagnostico.status = "falha"
@@ -101,29 +83,18 @@ async def processar_se_necessario(
             diagnostico,
             "erro",
         ):
-            diagnostico.erro = (
-                "Classificação necessária "
-                "para o mock não está configurada."
-            )
+            diagnostico.erro = "Classificação necessária para o mock não está configurada."
 
         await db.commit()
-        await db.refresh(
-            diagnostico
-        )
+        await db.refresh(diagnostico)
 
         return diagnostico
 
-    diagnostico.classificacao_id = (
-        classificacao.id
-    )
+    diagnostico.classificacao_id = classificacao.id
 
-    diagnostico.escala_saburra = (
-        resultado_mock.escala_saburra
-    )
+    diagnostico.escala_saburra = resultado_mock.escala_saburra
 
-    diagnostico.confianca_ia = (
-        resultado_mock.confianca_ia
-    )
+    diagnostico.confianca_ia = resultado_mock.confianca_ia
 
     diagnostico.status = "concluido"
 
@@ -134,8 +105,6 @@ async def processar_se_necessario(
         diagnostico.erro = None
 
     await db.commit()
-    await db.refresh(
-        diagnostico
-    )
+    await db.refresh(diagnostico)
 
     return diagnostico

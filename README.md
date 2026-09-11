@@ -89,7 +89,7 @@ uv run pytest
 uv run ruff check .
 
 # formatar o código
-uv run ruff format .
+uv run ruff check . --fix
 ```
 
 > No VS Code, instale a extensão recomendada em `.vscode/extensions.json` (Ruff) — o `.vscode/settings.json` já está configurado para formatar e organizar imports automaticamente ao salvar.

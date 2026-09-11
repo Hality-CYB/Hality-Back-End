@@ -30,11 +30,7 @@ async def buscar_por_id(
     db: AsyncSession,
     diagnostico_id: int,
 ) -> Diagnostico | None:
-    result = await db.execute(
-        select(Diagnostico).where(
-            Diagnostico.id == diagnostico_id
-        )
-    )
+    result = await db.execute(select(Diagnostico).where(Diagnostico.id == diagnostico_id))
 
     return result.scalar_one_or_none()
 
@@ -43,11 +39,7 @@ async def buscar_por_anamnese(
     db: AsyncSession,
     anamnese_id: int,
 ) -> Diagnostico | None:
-    result = await db.execute(
-        select(Diagnostico).where(
-            Diagnostico.anamnese_id == anamnese_id
-        )
-    )
+    result = await db.execute(select(Diagnostico).where(Diagnostico.anamnese_id == anamnese_id))
 
     return result.scalar_one_or_none()
 
@@ -92,11 +84,7 @@ async def listar_imagens(
     diagnostico_id: int,
 ) -> list[Imagem]:
     result = await db.execute(
-        select(Imagem)
-        .where(
-            Imagem.diagnostico_id == diagnostico_id
-        )
-        .order_by(Imagem.ordem.asc())
+        select(Imagem).where(Imagem.diagnostico_id == diagnostico_id).order_by(Imagem.ordem.asc())
     )
 
     return list(result.scalars().all())
@@ -107,10 +95,7 @@ async def buscar_classificacao(
     classificacao_id: int,
 ) -> ClassificacaoDiagnostico | None:
     result = await db.execute(
-        select(ClassificacaoDiagnostico).where(
-            ClassificacaoDiagnostico.id
-            == classificacao_id
-        )
+        select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.id == classificacao_id)
     )
 
     return result.scalar_one_or_none()
@@ -121,10 +106,7 @@ async def buscar_classificacao_por_ordem(
     ordem: int,
 ) -> ClassificacaoDiagnostico | None:
     result = await db.execute(
-        select(ClassificacaoDiagnostico).where(
-            ClassificacaoDiagnostico.ordem
-            == ordem
-        )
+        select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.ordem == ordem)
     )
 
     return result.scalar_one_or_none()
@@ -136,13 +118,8 @@ async def listar_conteudos_por_classificacao(
 ) -> list[ConteudoDiagnostico]:
     result = await db.execute(
         select(ConteudoDiagnostico)
-        .where(
-            ConteudoDiagnostico.classificacao_id
-            == classificacao_id
-        )
-        .order_by(
-            ConteudoDiagnostico.id.asc()
-        )
+        .where(ConteudoDiagnostico.classificacao_id == classificacao_id)
+        .order_by(ConteudoDiagnostico.id.asc())
     )
 
     return list(result.scalars().all())
@@ -154,28 +131,18 @@ async def tem_profissional_vinculado(
 ) -> bool:
     result = await db.execute(
         select(PacienteProfissional.id)
-        .where(
-            PacienteProfissional.paciente_id
-            == paciente_id
-        )
+        .where(PacienteProfissional.paciente_id == paciente_id)
         .limit(1)
     )
 
-    return (
-        result.scalar_one_or_none()
-        is not None
-    )
+    return result.scalar_one_or_none() is not None
 
 
 async def buscar_nome_usuario(
     db: AsyncSession,
     usuario_id: int,
 ) -> str | None:
-    result = await db.execute(
-        select(User.name).where(
-            User.id == usuario_id
-        )
-    )
+    result = await db.execute(select(User.name).where(User.id == usuario_id))
 
     return result.scalar_one_or_none()
 
@@ -190,43 +157,30 @@ async def buscar_dados_detalhe(
     )
 
     classificacao = None
-    conteudos: list[
-        ConteudoDiagnostico
-    ] = []
+    conteudos: list[ConteudoDiagnostico] = []
 
     if diagnostico.classificacao_id is not None:
-        classificacao = (
-            await buscar_classificacao(
-                db,
-                diagnostico.classificacao_id,
-            )
-        )
-
-        conteudos = (
-            await listar_conteudos_por_classificacao(
-                db,
-                diagnostico.classificacao_id,
-            )
-        )
-
-    vinculado = (
-        await tem_profissional_vinculado(
+        classificacao = await buscar_classificacao(
             db,
-            diagnostico.paciente_id,
+            diagnostico.classificacao_id,
         )
+
+        conteudos = await listar_conteudos_por_classificacao(
+            db,
+            diagnostico.classificacao_id,
+        )
+
+    vinculado = await tem_profissional_vinculado(
+        db,
+        diagnostico.paciente_id,
     )
 
     profissional_nome = None
 
-    if (
-        diagnostico.profissional_revisor_id
-        is not None
-    ):
-        profissional_nome = (
-            await buscar_nome_usuario(
-                db,
-                diagnostico.profissional_revisor_id,
-            )
+    if diagnostico.profissional_revisor_id is not None:
+        profissional_nome = await buscar_nome_usuario(
+            db,
+            diagnostico.profissional_revisor_id,
         )
 
     return DadosDetalheDiagnostico(
@@ -245,17 +199,11 @@ async def concluir_mock(
     escala_saburra: int,
     confianca_ia: float,
 ) -> Diagnostico:
-    diagnostico.classificacao_id = (
-        classificacao_id
-    )
+    diagnostico.classificacao_id = classificacao_id
 
-    diagnostico.escala_saburra = (
-        escala_saburra
-    )
+    diagnostico.escala_saburra = escala_saburra
 
-    diagnostico.confianca_ia = (
-        confianca_ia
-    )
+    diagnostico.confianca_ia = confianca_ia
 
     diagnostico.status = "concluido"
 
