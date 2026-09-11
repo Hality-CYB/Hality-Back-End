@@ -2,16 +2,6 @@
 
 Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 
-## Sumário
-
-- [Como iniciar o projeto](#como-iniciar-o-projeto)
-- [Rodando a API com Docker](#rodando-a-api-com-docker)
-- [Banco de dados](#banco-de-dados)
-- [Seeds](#seeds)
-- [Arquitetura](#arquitetura)
-- [Detalhamento](#detalhamento)
-- [Convenções](#convenções)
-
 ## Como iniciar o projeto
 
 Existem dois caminhos: rodar a **API local com o banco em container** (melhor pro dia a dia de desenvolvimento, porque o reload automático é instantâneo) ou rodar a **API também em container** (ver [Rodando a API com Docker](#rodando-a-api-com-docker)). O passo a passo abaixo é o primeiro caso.
@@ -35,12 +25,22 @@ uv sync
 cp .env.example .env
 
 # 4. subir só o banco em container (a API vai rodar local)
+LINUX
 docker run -d --name hality-db \
   -e POSTGRES_USER=hality \
   -e POSTGRES_PASSWORD=hality \
   -e POSTGRES_DB=hality \
   -p 5432:5432 \
   -v hality_postgres_data:/var/lib/postgresql/data \
+  postgres:17-alpine
+
+WINDOWS
+  docker run -d --name hality-db 
+  -e POSTGRES_USER=hality 
+  -e POSTGRES_PASSWORD=hality 
+  -e POSTGRES_DB=hality 
+  -p 5432:5432 
+  -v hality_postgres_data:/var/lib/postgresql/data 
   postgres:17-alpine
 
 # 5. aplicar as migrations no banco
@@ -99,6 +99,15 @@ uv run ruff check . --fix
 ```bash
 uv run fastapi deploy
 ```
+
+## Sumário
+
+- [Rodando a API com Docker](#rodando-a-api-com-docker)
+- [Banco de dados](#banco-de-dados)
+- [Seeds](#seeds)
+- [Arquitetura](#arquitetura)
+- [Detalhamento](#detalhamento)
+- [Convenções](#convenções)
 
 ## Rodando a API com Docker
 
@@ -174,26 +183,53 @@ postgresql+asyncpg://<user>:<password>@<host>:<port>/<db>
 
 ### Usando o banco num endpoint
 
-A sessão vem por injeção de dependência, através do atalho `DbSession` (definido em `app/api/deps.py`):
+A sessão vem por injeção de dependência, através do atalho `DbSession` (definido em `app/api/deps.py`). O SQL fica isolado num módulo `app/db/<recurso>_queries.py` — funções simples, sem regra de negócio; quem decide o que fazer com o resultado é o service:
 
 ```python
-from fastapi import APIRouter
+# app/db/user_queries.py — só SQL, nenhuma regra de negócio
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.user import User
+
+
+async def listar(db: AsyncSession) -> list[User]:
+    resultado = await db.execute(select(User))
+    return list(resultado.scalars().all())
+```
+
+```python
+# app/services/user_service.py — regra de negócio, chama o módulo de queries
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import user_queries
+from app.schemas.user import UserRead
+
+
+async def listar_usuarios(db: AsyncSession) -> list[UserRead]:
+    usuarios = await user_queries.listar(db)
+    return [UserRead.model_validate(u) for u in usuarios]
+```
+
+```python
+# app/api/v1/endpoints/user.py — só HTTP
+from fastapi import APIRouter
 
 from app.api.deps import DbSession
-from app.models.user import User
 from app.schemas.user import UserRead
+from app.services import user_service
 
 router = APIRouter(tags=["users"])
 
 
 @router.get("/users")
 async def list_users(db: DbSession) -> list[UserRead]:
-    result = await db.execute(select(User))
-    return [UserRead.model_validate(user) for user in result.scalars().all()]
+    return await user_service.listar_usuarios(db)
 ```
 
-Repare que a query usa o **model** (`User`) e a resposta sai como **schema** (`UserRead`) — é a separação descrita em [Arquitetura](#arquitetura). Em um endpoint real, a query em si moraria em `app/services/user_service.py`.
+Repare a cadeia: o endpoint só recebe a requisição e chama o service; o service concentra a regra de negócio e chama o módulo de queries; o módulo de queries só sabe SQL (usa o **model**, `User`) e nunca decide formato de resposta — quem monta o **schema** (`UserRead`) de volta é o service. É a separação descrita em [Arquitetura](#arquitetura).
+
+Não existe uma camada de `Repository`/interface trocável entre o service e o banco — de propósito. Esse projeto usa um único banco (Postgres) e os testes já batem no banco real (não mockam acesso a dados), então uma interface pensada pra "trocar a implementação de persistência" não tem, hoje, nenhuma implementação alternativa pra justificar existir. Se isso mudar, essa decisão deve ser revisitada — mas não antes disso. Ver `app/db/anamnese_queries.py` para um exemplo completo, com `INSERT`/`SELECT`/`UPDATE`/`DELETE`.
 
 O `get_db` (em `app/db/session.py`) abre a sessão no início da request e a fecha no final, mesmo se o endpoint levantar exceção. Nunca instancie uma sessão na mão dentro do endpoint.
 
@@ -277,7 +313,7 @@ O projeto segue uma organização **por camada** (horizontal): os arquivos são 
 Fluxo de uma requisição:
 
 ```
-Request → api/ (endpoint)  →  services/ (regra de negócio)  →  db/ + models/ (persistência)
+Request → api/ (endpoint) → services/ (regra de negócio) → db/*_queries.py (SQL) → models/ (tabela)
                 ↓                        ↓
             schemas/ (valida        schemas/ (formata
              entrada)                  saída)
@@ -285,6 +321,7 @@ Request → api/ (endpoint)  →  services/ (regra de negócio)  →  db/ + mode
 
 - **api** é o único ponto que conhece HTTP (status code, path, query params). Não deve ter regra de negócio.
 - **services** concentra a lógica de negócio e não depende do FastAPI — poderia ser chamado por um script, um worker, um CLI, etc.
+- **db** guarda a conexão (`base.py`, `session.py`) e, por recurso, um módulo `<recurso>_queries.py` com funções simples de acesso a dados — sem classe, sem interface trocável (`Repository`/`Protocol`). O service chama essas funções em vez de escrever SQL direto ou de passar por uma abstração de "múltiplas implementações possíveis" que, neste projeto, não existe (um único banco, testes de integração contra banco real). Ver [Usando o banco num endpoint](#usando-o-banco-num-endpoint).
 - **models** e **schemas** são propositalmente separados: `models` é o formato salvo no banco (ORM), `schemas` é o formato trafegado pela API (Pydantic). Nem sempre são iguais (ex.: senha existe no model, nunca no schema de resposta).
 
 Por que não tem pasta `controllers/`: no FastAPI, o módulo de `api/.../endpoints/` já cumpre esse papel (recebe request, chama service, devolve schema) — é o "controller" do framework, então uma pasta separada seria redundante.
@@ -302,12 +339,16 @@ app/
       api.py
       endpoints/
         health.py
+        anamnese.py
   models/
+    user.py
+    anamnese.py
   schemas/
   services/
   db/
     base.py
     session.py
+    anamnese_queries.py
 alembic/
   env.py
   versions/
@@ -325,15 +366,15 @@ Dockerfile
 
 - **`app/api/v1/api.py`** — agrega os routers de cada recurso da v1 num único `api_router`, que é incluído em `main.py` com o prefixo `/api/v1`. Versionar assim (`v1`, `v2`, ...) permite quebrar contrato de API no futuro sem afetar clientes antigos.
 
-- **`app/api/v1/endpoints/`** — um arquivo por recurso, cada um com seu próprio `APIRouter` (ex.: `health.py`). É aqui que futuros recursos (ex.: `auth.py`, `users.py`) devem entrar, com o service correspondente registrado em `services/` e o model em `models/`.
+- **`app/api/v1/endpoints/`** — um arquivo por recurso, cada um com seu próprio `APIRouter` (ex.: `health.py`, `anamnese.py`). É aqui que futuros recursos (ex.: `auth.py`, `diagnostico.py`) devem entrar, com o service correspondente em `services/`, as queries em `db/` e o model em `models/`.
 
-- **`app/models/`** — entidades de banco de dados (ORM), todas herdando de `Base`. Ainda vazia. Todo model novo precisa ser importado em `app/models/__init__.py`, senão o Alembic não o enxerga na hora do `--autogenerate`.
+- **`app/models/`** — entidades de banco de dados (ORM), todas herdando de `Base` (ex.: `user.py`, `anamnese.py`). Todo model novo precisa ser importado em `app/models/__init__.py`, senão o Alembic não o enxerga na hora do `--autogenerate`.
 
 - **`app/schemas/`** — schemas Pydantic de entrada e saída da API (request/response). É aqui que ficam os DTOs — não existe pasta separada para isso, o schema já cumpre esse papel.
 
-- **`app/services/`** — regras de negócio. Recebe/devolve dados (schemas ou tipos simples), chama `models`/`db` quando precisa persistir algo, e não sabe nada sobre HTTP.
+- **`app/services/`** — regras de negócio. Recebe/devolve dados (schemas ou tipos simples), chama `db/` quando precisa ler/persistir algo, e não sabe nada sobre HTTP.
 
-- **`app/db/`** — conexão com o banco. `base.py` define a classe `Base` (`DeclarativeBase`) da qual todo model herda e que carrega o `metadata` usado pelas migrations; `session.py` cria o engine assíncrono e a dependência `get_db`, que abre e fecha uma sessão por request.
+- **`app/db/`** — conexão com o banco e acesso a dados. `base.py` define a classe `Base` (`DeclarativeBase`) da qual todo model herda e que carrega o `metadata` usado pelas migrations; `session.py` cria o engine assíncrono e a dependência `get_db`, que abre e fecha uma sessão por request; e um arquivo `<recurso>_queries.py` por entidade (ex.: `anamnese_queries.py`) com as funções que fazem `SELECT`/`INSERT`/`UPDATE`/`DELETE` daquele recurso — só SQL, chamadas pelo service correspondente. Ver [Usando o banco num endpoint](#usando-o-banco-num-endpoint).
 
 - **`alembic/`** e **`alembic.ini`** — migrations. O `env.py` puxa a URL de conexão do `app/core/config.py` (em vez de duplicá-la no `.ini`) e roda em modo assíncrono; `versions/` guarda os arquivos de migration versionados no Git. Ver [Banco de dados](#banco-de-dados).
 
@@ -380,6 +421,7 @@ Além da regra geral, cada pasta tem sua própria convenção de nome de arquivo
 
 - **`app/api/v1/endpoints/<recurso>.py`** — nome do recurso no singular (ex.: `user.py`, `auth.py`). Cada arquivo contém um único `APIRouter` daquele recurso.
 - **`app/services/<recurso>_service.py`** — nome do recurso + sufixo `_service`, pra deixar explícito que é a camada de regra de negócio (ex.: `user_service.py`, `auth_service.py`).
+- **`app/db/<recurso>_queries.py`** — nome do recurso + sufixo `_queries`, pra deixar explícito que só tem acesso a dados (SQL), sem regra de negócio (ex.: `anamnese_queries.py`). Funções `async def` simples — sem classe, sem interface. Ver [Arquitetura](#arquitetura).
 - **`app/models/<recurso>.py`** — nome do recurso no singular; dentro do arquivo fica a classe da entidade (ex.: `user.py` define a classe `User`).
 - **`app/schemas/<recurso>.py`** — mesmo nome do recurso; dentro do arquivo ficam as classes Pydantic relacionadas àquele recurso (ex.: `user.py` define `UserCreate`, `UserRead`, etc.).
 - **`tests/test_<caminho_espelhado>.py`** — sempre com o prefixo `test_`. Não é estética: é assim que o `pytest` **descobre os testes automaticamente** (ele procura por arquivos `test_*.py`). Ex.: o teste de `app/api/v1/endpoints/health.py` fica em `tests/test_health.py`.
