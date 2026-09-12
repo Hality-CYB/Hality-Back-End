@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class TipoPergunta(StrEnum):
@@ -56,12 +56,18 @@ class RespostaBruta(BaseModel):
     isso é sempre resolvido a partir da pergunta correspondente, pelo lexer
     (`anamnese_lexer.py`)."""
 
+    model_config = ConfigDict(extra="ignore")
+
     pergunta_id: str
-    valor_bruto: str | bool | int
+    valor_bruto: str | bool | int = Field(
+        validation_alias=AliasChoices("valor_bruto", "valor")
+    )
 
 
 class AnamneseCreate(BaseModel):
-    id_versao_questionario: str
+    versao_questionario: str = Field(
+        validation_alias=AliasChoices("versao_questionario", "id_versao_questionario")
+    )
     respostas: list[RespostaBruta]
 
 
@@ -74,9 +80,18 @@ class ItemRespostaRegistrada(BaseModel):
     qualquer leitura/filtro programático."""
 
     pergunta_id: str
-    des_pergunta: str
-    tipo_pergunta: TipoPergunta
-    des_resposta: str
+    des_pergunta: str = Field(
+        validation_alias=AliasChoices("des_pergunta", "enunciado"),
+        serialization_alias="enunciado",
+    )
+    tipo_pergunta: TipoPergunta = Field(
+        validation_alias=AliasChoices("tipo_pergunta", "tipo"),
+        serialization_alias="tipo",
+    )
+    des_resposta: str = Field(
+        validation_alias=AliasChoices("des_resposta", "resposta"),
+        serialization_alias="resposta",
+    )
     valor: bool | str | int
     tipo_resposta: TipoValor
 
@@ -84,7 +99,7 @@ class ItemRespostaRegistrada(BaseModel):
 class AnamneseCreated(BaseModel):
     """Corpo de resposta do POST, exatamente como especificado na issue #18."""
 
-    id_resp: int
+    id: int = Field(validation_alias=AliasChoices("id", "id_resp"))
     paciente_id: int
     data_preenchimento: datetime
 
@@ -95,8 +110,10 @@ class AnamneseDetail(BaseModel):
     id_versao_questionario e o JSON de respostas (des_pergunta/des_resposta
     + tipos)."""
 
-    id_resp: int
+    id: int = Field(validation_alias=AliasChoices("id", "id_resp"))
     paciente_id: int
     data_preenchimento: datetime
-    id_versao_questionario: str
+    versao_questionario: str = Field(
+        validation_alias=AliasChoices("versao_questionario", "id_versao_questionario")
+    )
     respostas: list[ItemRespostaRegistrada]

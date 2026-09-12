@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,4 +25,5 @@ class Anamnese(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
+    id_versao_questionario: Mapped[str] = mapped_column(String(50), nullable=False)
     respostas: Mapped[list[dict]] = mapped_column(JSONB)

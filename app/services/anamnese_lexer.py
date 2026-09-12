@@ -151,6 +151,18 @@ def lexar_respostas(
 
     erros: list[str] = []
     itens: list[ItemRespostaRegistrada] = []
+    if payload.versao_questionario != questionario.versao:
+        erros.append(
+            f"versão de questionário inválida: '{payload.versao_questionario}'"
+        )
+
+    ids_recebidos = [r.pergunta_id for r in payload.respostas]
+    duplicadas = {
+        pergunta_id for pergunta_id in ids_recebidos if ids_recebidos.count(pergunta_id) > 1
+    }
+    for pergunta_id in sorted(duplicadas):
+        erros.append(f"resposta duplicada para pergunta: '{pergunta_id}'")
+
     brutas_por_pergunta = {r.pergunta_id: r for r in payload.respostas}
     perguntas_por_id = {p.id: p for p in questionario.perguntas}
 
