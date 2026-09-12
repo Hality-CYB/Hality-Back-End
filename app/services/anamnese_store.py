@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.db.base import Base
 from app.db.session import get_db
 from app.schemas.anamnese import ItemRespostaRegistrada
+from typing import Annotated
 
 
 class AnamneseORM(Base):
@@ -97,5 +98,8 @@ class AnamneseRepository:
             self.db.commit()
 
 
-def get_anamnese_repository(db: Session = Depends(get_db)) -> AnamneseRepository:
+DbSession = Annotated[Session, Depends(get_db)]
+
+
+def get_anamnese_repository(db: DbSession) -> AnamneseRepository:
     return AnamneseRepository(db)
