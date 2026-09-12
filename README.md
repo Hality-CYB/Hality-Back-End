@@ -22,10 +22,13 @@ cd hality-back
 uv sync
 
 # 3. copiar o arquivo de variáveis de ambiente
-cp .env.example .env
+cp .env.example .env        # Windows: copy .env.example .env
+```
 
+```bash
 # 4. subir só o banco em container (a API vai rodar local)
-LINUX
+
+# Linux/macOS
 docker run -d --name hality-db \
   -e POSTGRES_USER=hality \
   -e POSTGRES_PASSWORD=hality \
@@ -33,16 +36,20 @@ docker run -d --name hality-db \
   -p 5432:5432 \
   -v hality_postgres_data:/var/lib/postgresql/data \
   postgres:17-alpine
+```
 
-WINDOWS
-  docker run -d --name hality-db 
-  -e POSTGRES_USER=hality 
-  -e POSTGRES_PASSWORD=hality 
-  -e POSTGRES_DB=hality 
-  -p 5432:5432 
-  -v hality_postgres_data:/var/lib/postgresql/data 
+```powershell
+# Windows (PowerShell)
+docker run -d --name hality-db `
+  -e POSTGRES_USER=hality `
+  -e POSTGRES_PASSWORD=hality `
+  -e POSTGRES_DB=hality `
+  -p 5432:5432 `
+  -v hality_postgres_data:/var/lib/postgresql/data `
   postgres:17-alpine
+```
 
+```bash
 # 5. aplicar as migrations no banco
 uv run alembic upgrade head
 
@@ -116,13 +123,25 @@ O `Dockerfile` empacota **só este backend**. O Postgres continua sendo um conta
 ### Comandos
 
 ```bash
-# buildar a imagem
+# buildar a imagem (Linux/macOS/Windows — mesmo comando)
 docker build -t hality-api .
+```
 
+```bash
 # subir a API conectando no banco que já está rodando
+
+# Linux/macOS
 docker run --rm -p 8000:8000 --env-file .env \
   -e POSTGRES_HOST=host.docker.internal \
   --add-host=host.docker.internal:host-gateway \
+  hality-api
+```
+
+```powershell
+# Windows (PowerShell)
+docker run --rm -p 8000:8000 --env-file .env `
+  -e POSTGRES_HOST=host.docker.internal `
+  --add-host=host.docker.internal:host-gateway `
   hality-api
 ```
 
@@ -131,20 +150,40 @@ docker run --rm -p 8000:8000 --env-file .env \
 Alternativa mais limpa: colocar os dois containers na mesma rede e usar o nome do container do banco como host.
 
 ```bash
+# Linux/macOS/Windows — mesmo comando
 docker network create hality-net
 docker network connect hality-net hality-db
+```
 
+```bash
+# Linux/macOS
 docker run --rm -p 8000:8000 --env-file .env \
   --network hality-net \
   -e POSTGRES_HOST=hality-db \
   hality-api
 ```
 
+```powershell
+# Windows (PowerShell)
+docker run --rm -p 8000:8000 --env-file .env `
+  --network hality-net `
+  -e POSTGRES_HOST=hality-db `
+  hality-api
+```
+
 A imagem sobe direto o `uvicorn` — as migrations **não** rodam sozinhas. Aplique antes (`uv run alembic upgrade head`) ou rode dentro do container:
 
 ```bash
+# Linux/macOS
 docker run --rm --env-file .env --network hality-net \
   -e POSTGRES_HOST=hality-db \
+  hality-api alembic upgrade head
+```
+
+```powershell
+# Windows (PowerShell)
+docker run --rm --env-file .env --network hality-net `
+  -e POSTGRES_HOST=hality-db `
   hality-api alembic upgrade head
 ```
 
@@ -272,6 +311,8 @@ O projeto tem um script (`scripts/seed.py`) que popula o banco local com dados d
 
 ```bash
 # 1. banco em container e migrations em dia
+
+# Linux/macOS
 docker run -d --name hality-db \
   -e POSTGRES_USER=hality \
   -e POSTGRES_PASSWORD=hality \
@@ -279,7 +320,20 @@ docker run -d --name hality-db \
   -p 5432:5432 \
   -v hality_postgres_data:/var/lib/postgresql/data \
   postgres:17-alpine
+```
 
+```powershell
+# Windows (PowerShell)
+docker run -d --name hality-db `
+  -e POSTGRES_USER=hality `
+  -e POSTGRES_PASSWORD=hality `
+  -e POSTGRES_DB=hality `
+  -p 5432:5432 `
+  -v hality_postgres_data:/var/lib/postgresql/data `
+  postgres:17-alpine
+```
+
+```bash
 uv run alembic upgrade head
 
 # 2. rodar o seed
