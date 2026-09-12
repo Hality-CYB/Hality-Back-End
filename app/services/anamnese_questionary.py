@@ -4,7 +4,8 @@ from app.schemas.anamnese import Pergunta, Questionario, TipoPergunta
 # de trocar por uma fonte real (admin/CMS/banco) quando ela existir, sem
 # precisar mexer no service, no lexer ou nos endpoints - o contrato
 # (Questionario/Pergunta) é o mesmo nos dois casos.
-# A ideia deste código é servir de fallback caso o banco falhe ou de algum problema, este será responsável por não deixar a aplicação quebrar. 
+# A ideia é servir de fallback caso o banco falhe ou tenha algum problema,
+# garantindo que a aplicação não quebre por falta de uma fonte de dados real.
 _QUESTIONARIO_ATIVO = Questionario(
     versao="2026-09-v1",
     perguntas=[

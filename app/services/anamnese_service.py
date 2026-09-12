@@ -1,4 +1,4 @@
-from app.db.anamnese_store import AnamneseRecord, AnamneseRepository
+from app.services.anamnese_store import AnamneseRecord, AnamneseRepository
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail
 from app.services.anamnese_lexer import AnamneseValidationError, lexar_respostas
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -28,8 +28,8 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
     )
 
 
-async def criar_anamnese(
-    db: AsyncSession, paciente_id: int, payload: AnamneseCreate
+def criar_anamnese(
+    repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
     respostas_lexadas = lexar_respostas(get_questionario_ativo(), payload)
     registro = repo.salvar(
@@ -44,16 +44,17 @@ async def criar_anamnese(
     )
 
 
-async def listar_anamneses(db: AsyncSession, paciente_id: int) -> list[AnamneseDetail]:
-    anamneses = await anamnese_queries.listar_por_paciente(db, paciente_id)
-    return [_para_detalhe(a) for a in anamneses]
+def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
+    registros = repo.listar_por_paciente(paciente_id)
+    registros.sort(key=lambda r: r.data_preenchimento, reverse=True)
+    return [_para_detalhe(r) for r in registros]
 
 
 def obter_anamnese(repo: AnamneseRepository, paciente_id: int, id_resp: int) -> AnamneseDetail:
     registro = repo.obter_por_id(id_resp)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    return _para_detalhe(anamnese)
+    return _para_detalhe(registro)
 
 
 def atualizar_anamnese(
@@ -68,7 +69,9 @@ def atualizar_anamnese(
         id_versao_questionario=payload.id_versao_questionario,
         respostas=respostas_lexadas,
     )
-    return _para_detalhe(anamnese)
+    if atualizado is None:
+        raise AnamneseNaoEncontradaError
+    return _para_detalhe(atualizado)
 
 
 def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, id_resp: int) -> None:
