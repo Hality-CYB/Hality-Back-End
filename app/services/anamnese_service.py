@@ -28,8 +28,8 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
     )
 
 
-def criar_anamnese(
-    repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
+async def criar_anamnese(
+    db: AsyncSession, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
     respostas_lexadas = lexar_respostas(get_questionario_ativo(), payload)
     registro = repo.salvar(
@@ -44,17 +44,16 @@ def criar_anamnese(
     )
 
 
-def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
-    registros = repo.listar_por_paciente(paciente_id)
-    registros.sort(key=lambda r: r.data_preenchimento, reverse=True)
-    return [_para_detalhe(r) for r in registros]
+async def listar_anamneses(db: AsyncSession, paciente_id: int) -> list[AnamneseDetail]:
+    anamneses = await anamnese_queries.listar_por_paciente(db, paciente_id)
+    return [_para_detalhe(a) for a in anamneses]
 
 
 def obter_anamnese(repo: AnamneseRepository, paciente_id: int, id_resp: int) -> AnamneseDetail:
     registro = repo.obter_por_id(id_resp)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    return _para_detalhe(registro)
+    return _para_detalhe(anamnese)
 
 
 def atualizar_anamnese(
@@ -69,9 +68,7 @@ def atualizar_anamnese(
         id_versao_questionario=payload.id_versao_questionario,
         respostas=respostas_lexadas,
     )
-    if atualizado is None:
-        raise AnamneseNaoEncontradaError
-    return _para_detalhe(atualizado)
+    return _para_detalhe(anamnese)
 
 
 def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, id_resp: int) -> None:
