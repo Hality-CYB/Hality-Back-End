@@ -12,11 +12,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import CurrentPatientDep, DbSession
-from app.db.anamnese_store import AnamneseRepositoryDep
-from app.services import (
-    diagnostico_service,
-    diagnostico_storage,
-)
+from app.services import diagnostico_service, diagnostico_storage
 
 router = APIRouter(
     prefix="/diagnosticos",
@@ -29,7 +25,9 @@ router = APIRouter(
     include_in_schema=False,
 )
 def obter_imagem(nome_arquivo: str) -> FileResponse:
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+    caminho = diagnostico_storage.resolver_caminho(
+        nome_arquivo
+    )
 
     if caminho is None:
         raise HTTPException(
@@ -51,10 +49,11 @@ async def criar_diagnostico(
     parametros_captura: Annotated[str, Form()],
     paciente_id: CurrentPatientDep,
     db: DbSession,
-    repo_anamnese: AnamneseRepositoryDep,
 ) -> dict[str, Any] | JSONResponse:
     try:
-        parametros = json.loads(parametros_captura)
+        parametros = json.loads(
+            parametros_captura
+        )
 
         if not isinstance(parametros, dict):
             raise ValueError
@@ -62,15 +61,21 @@ async def criar_diagnostico(
     except (json.JSONDecodeError, ValueError):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"motivo": ("parametros_captura deve ser um objeto JSON válido.")},
+            content={
+                "motivo": (
+                    "parametros_captura deve ser "
+                    "um objeto JSON válido."
+                )
+            },
         )
 
-    imagem_bytes = await imagem.read(diagnostico_storage.MAX_IMAGE_BYTES + 1)
+    imagem_bytes = await imagem.read(
+        diagnostico_storage.MAX_IMAGE_BYTES + 1
+    )
 
     try:
         return await diagnostico_service.criar_diagnostico(
             db=db,
-            repo_anamnese=repo_anamnese,
             paciente_id=paciente_id,
             anamnese_id=anamnese_id,
             imagem=imagem_bytes,
@@ -87,7 +92,9 @@ async def criar_diagnostico(
     except diagnostico_service.ArquivoMuitoGrandeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=("arquivo acima do tamanho máximo permitido"),
+            detail=(
+                "arquivo acima do tamanho máximo permitido"
+            ),
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:
@@ -99,7 +106,10 @@ async def criar_diagnostico(
     except diagnostico_service.AnamneseJaUtilizadaError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=("anamnese já vinculada a outro diagnóstico"),
+            detail=(
+                "anamnese já vinculada "
+                "a outro diagnóstico"
+            ),
         ) from exc
 
 
@@ -108,12 +118,10 @@ async def obter_diagnostico(
     diagnostico_id: int,
     paciente_id: CurrentPatientDep,
     db: DbSession,
-    repo_anamnese: AnamneseRepositoryDep,
 ) -> dict[str, Any]:
     try:
         return await diagnostico_service.obter_diagnostico(
             db=db,
-            repo_anamnese=repo_anamnese,
             paciente_id=paciente_id,
             diagnostico_id=diagnostico_id,
         )
@@ -127,11 +135,15 @@ async def obter_diagnostico(
     except diagnostico_service.DiagnosticoAcessoNegadoError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=("diagnóstico pertence a outro paciente"),
+            detail=(
+                "diagnóstico pertence a outro paciente"
+            ),
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=("anamnese do diagnóstico não encontrada"),
+            detail=(
+                "anamnese do diagnóstico não encontrada"
+            ),
         ) from exc
