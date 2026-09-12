@@ -4,7 +4,7 @@ from app.api.deps import CurrentPatientDep
 from app.db.anamnese_store import AnamneseRepositoryDep
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail, Questionario
 from app.services import anamnese_service
-from app.services.anamnese_questionnaire import get_questionario_ativo
+from app.services.anamnese_questionary import get_questionario_ativo
 
 router = APIRouter(prefix="/anamneses", tags=["anamnese"])
 
