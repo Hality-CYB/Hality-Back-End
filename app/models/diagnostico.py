@@ -7,23 +7,21 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-
 class Diagnostico(Base):
-    """Tabela `diagnosticos`.
-
-    `status` segue os valores de `StatusDiagnostico` (schemas/diagnostico.py):
-    gerado, em_revisao, revisado. A revisão é feita por um profissional e é
-    apenas auditoria/validação clínica - NÃO alimenta retreino do modelo.
-    """
-
     __tablename__ = "diagnosticos"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     paciente_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    classificacao_id: Mapped[int] = mapped_column(ForeignKey("classificacoes_diagnostico.id"))
-    escala_saburra: Mapped[int] = mapped_column(Integer)
-    confianca_ia: Mapped[float] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(20), default="gerado")
+    anamnese_id: Mapped[int] = mapped_column(
+        ForeignKey("anamneses.id", ondelete="CASCADE"), unique=True
+    )
+    classificacao_id: Mapped[int | None] = mapped_column(
+        ForeignKey("classificacoes_diagnostico.id"), nullable=True
+    )
+    escala_saburra: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    confianca_ia: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="processando")
+    erro: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_diagnostico: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
