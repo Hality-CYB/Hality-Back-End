@@ -70,6 +70,50 @@ def test_criar_anamnese_com_valor_fora_da_escala_retorna_400() -> None:
     assert response.status_code == 400
 
 
+def test_criar_anamnese_com_versao_desatualizada_retorna_400() -> None:
+    payload = _payload_valido()
+    payload["versao_questionario"] = "2020-01-v0"
+
+    response = client.post("/api/v1/anamneses", json=payload, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+
+
+def test_criar_anamnese_com_resposta_duplicada_retorna_400() -> None:
+    payload = _payload_valido()
+    payload["respostas"].append(payload["respostas"][0])
+
+    response = client.post("/api/v1/anamneses", json=payload, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+
+
+def test_criar_anamnese_com_opcao_invalida_retorna_400() -> None:
+    payload = _payload_valido()
+    for resposta in payload["respostas"]:
+        if resposta["pergunta_id"] == "frequencia_escovacao":
+            resposta["valor"] = "nunca escovo"
+
+    response = client.post("/api/v1/anamneses", json=payload, headers=AUTH_HEADERS)
+
+    assert response.status_code == 400
+
+
+def test_criar_anamnese_ignora_enunciado_do_front_e_usa_catalogo() -> None:
+    payload = _payload_valido()
+    for resposta in payload["respostas"]:
+        if resposta["pergunta_id"] == "mau_halito_ao_acordar":
+            resposta["enunciado"] = "texto divergente mandado pelo front"
+
+    criada = client.post("/api/v1/anamneses", json=payload, headers=AUTH_HEADERS).json()
+
+    response = client.get(f"/api/v1/anamneses/{criada['id']}", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    respostas = {r["pergunta_id"]: r["enunciado"] for r in response.json()["respostas"]}
+    assert respostas["mau_halito_ao_acordar"] == "Você sente mau hálito ao acordar?"
+
+
 def test_criar_anamnese_valida_retorna_201_com_corpo_minimo() -> None:
     response = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS)
 
@@ -115,14 +159,17 @@ def test_obter_anamnese_inexistente_retorna_404() -> None:
 def test_atualizar_anamnese() -> None:
     criada = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS).json()
     payload_atualizado = _payload_valido()
-    payload_atualizado["versao_questionario"] = "2026-09-v1"
+    for resposta in payload_atualizado["respostas"]:
+        if resposta["pergunta_id"] == "avaliacao_propria_halito":
+            resposta["valor"] = 5
 
     response = client.put(
         f"/api/v1/anamneses/{criada['id']}", json=payload_atualizado, headers=AUTH_HEADERS
     )
 
     assert response.status_code == 200
-    assert response.json()["versao_questionario"] == "2026-09-v1"
+    respostas = {r["pergunta_id"]: r["valor"] for r in response.json()["respostas"]}
+    assert respostas["avaliacao_propria_halito"] == 5
 
 
 def test_deletar_anamnese() -> None:
