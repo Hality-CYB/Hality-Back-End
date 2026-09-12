@@ -1,9 +1,9 @@
 import uuid
 
-from app.db.anamnese_store import AnamneseRecord, AnamneseRepository
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail
 from app.services.anamnese_lexer import AnamneseValidationError, lexar_respostas
 from app.services.anamnese_questionary import get_questionario_ativo
+from app.services.anamnese_store import AnamneseRecord, AnamneseRepository
 
 __all__ = [
     "AnamneseValidationError",

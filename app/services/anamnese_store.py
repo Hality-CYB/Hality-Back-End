@@ -1,41 +1,32 @@
+"""Acesso a dados da anamnese via repository - devolve `AnamneseRecord`
+(DTO simples), nunca o objeto ORM, pra não vazar SQLAlchemy pro service."""
+
+import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
+from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.base import Base
 from app.db.session import get_db
+from app.models.anamnese import Anamnese
 from app.schemas.anamnese import ItemRespostaRegistrada
-
-
-class AnamneseORM(Base):
-    __tablename__ = "anamnese"
-
-    id_resp: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    paciente_id: Mapped[int] = mapped_column(
-        ForeignKey("paciente.id"), nullable=False, index=True
-    )
-    data_preenchimento: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    id_versao_questionario: Mapped[str] = mapped_column(String, nullable=False)
-    respostas: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
 
 
 @dataclass
 class AnamneseRecord:
     id_resp: int
-    paciente_id: int
+    paciente_id: uuid.UUID
     data_preenchimento: datetime
     id_versao_questionario: str
     respostas: list[ItemRespostaRegistrada]
 
 
-def _para_record(orm: AnamneseORM) -> AnamneseRecord:
+def _para_record(orm: Anamnese) -> AnamneseRecord:
     return AnamneseRecord(
-        id_resp=orm.id_resp,
+        id_resp=orm.id,
         paciente_id=orm.paciente_id,
         data_preenchimento=orm.data_preenchimento,
         id_versao_questionario=orm.id_versao_questionario,
@@ -44,58 +35,65 @@ def _para_record(orm: AnamneseORM) -> AnamneseRecord:
 
 
 def _para_json(respostas: list[ItemRespostaRegistrada]) -> list[dict]:
-    return [r.model_dump(mode="json") for r in respostas]
+    return [resposta.model_dump(mode="json") for resposta in respostas]
 
 
 class AnamneseRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    def salvar(
+    async def salvar(
         self,
-        paciente_id: int,
+        paciente_id: uuid.UUID,
         id_versao_questionario: str,
         respostas: list[ItemRespostaRegistrada],
     ) -> AnamneseRecord:
-        orm = AnamneseORM(
+        orm = Anamnese(
             paciente_id=paciente_id,
             id_versao_questionario=id_versao_questionario,
             respostas=_para_json(respostas),
         )
         self.db.add(orm)
-        self.db.commit()
-        self.db.refresh(orm)
+        await self.db.commit()
+        await self.db.refresh(orm)
         return _para_record(orm)
 
-    def listar_por_paciente(self, paciente_id: int) -> list[AnamneseRecord]:
-        orms = self.db.query(AnamneseORM).filter(AnamneseORM.paciente_id == paciente_id).all()
-        return [_para_record(orm) for orm in orms]
+    async def listar_por_paciente(self, paciente_id: uuid.UUID) -> list[AnamneseRecord]:
+        resultado = await self.db.execute(
+            select(Anamnese)
+            .where(Anamnese.paciente_id == paciente_id)
+            .order_by(Anamnese.data_preenchimento.desc())
+        )
+        return [_para_record(orm) for orm in resultado.scalars().all()]
 
-    def obter_por_id(self, id_resp: int) -> AnamneseRecord | None:
-        orm = self.db.get(AnamneseORM, id_resp)
+    async def obter_por_id(self, id_resp: int) -> AnamneseRecord | None:
+        orm = await self.db.get(Anamnese, id_resp)
         return _para_record(orm) if orm is not None else None
 
-    def atualizar(
+    async def atualizar(
         self,
         id_resp: int,
         id_versao_questionario: str,
         respostas: list[ItemRespostaRegistrada],
     ) -> AnamneseRecord | None:
-        orm = self.db.get(AnamneseORM, id_resp)
+        orm = await self.db.get(Anamnese, id_resp)
         if orm is None:
             return None
         orm.id_versao_questionario = id_versao_questionario
         orm.respostas = _para_json(respostas)
-        self.db.commit()
-        self.db.refresh(orm)
+        await self.db.commit()
+        await self.db.refresh(orm)
         return _para_record(orm)
 
-    def deletar(self, id_resp: int) -> None:
-        orm = self.db.get(AnamneseORM, id_resp)
+    async def deletar(self, id_resp: int) -> None:
+        orm = await self.db.get(Anamnese, id_resp)
         if orm is not None:
-            self.db.delete(orm)
-            self.db.commit()
+            await self.db.delete(orm)
+            await self.db.commit()
 
 
-def get_anamnese_repository(db: Session = Depends(get_db)) -> AnamneseRepository:
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+def get_anamnese_repository(db: DbSession) -> AnamneseRepository:
     return AnamneseRepository(db)

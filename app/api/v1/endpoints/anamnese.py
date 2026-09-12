@@ -3,10 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import CurrentPatientDep, DbSession
-from app.db.anamnese_store import AnamneseRepository, get_anamnese_repository
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail, Questionario
 from app.services import anamnese_service
 from app.services.anamnese_questionary import get_questionario_ativo
+from app.services.anamnese_store import AnamneseRepository, get_anamnese_repository
 
 router = APIRouter(prefix="/anamneses", tags=["anamnese"])
 AnamneseRepoDep = Annotated[AnamneseRepository, Depends(get_anamnese_repository)]
