@@ -8,14 +8,6 @@ import pytest
 from app.services import diagnostico_mock, diagnostico_service
 
 
-class AnamneseRepoFake:
-    def __init__(self, anamnese=None):
-        self.anamnese = anamnese
-
-    def obter_por_id(self, anamnese_id):
-        return self.anamnese
-
-
 def _anamnese(paciente_id=1):
     return SimpleNamespace(
         id=128,
@@ -50,6 +42,12 @@ def test_criar_diagnostico(monkeypatch):
     diagnostico = _diagnostico()
 
     monkeypatch.setattr(
+        diagnostico_service.anamnese_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=_anamnese()),
+    )
+
+    monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "buscar_por_anamnese",
         AsyncMock(return_value=None),
@@ -76,7 +74,6 @@ def test_criar_diagnostico(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=AsyncMock(),
-            repo_anamnese=AnamneseRepoFake(_anamnese()),
             paciente_id=1,
             anamnese_id=128,
             imagem=b"imagem",
@@ -90,12 +87,19 @@ def test_criar_diagnostico(monkeypatch):
     assert resultado["anamnese_id"] == 128
 
 
-def test_anamnese_de_outro_paciente():
+def test_anamnese_de_outro_paciente(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        diagnostico_service.anamnese_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=_anamnese(paciente_id=2)),
+    )
+
     with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                repo_anamnese=AnamneseRepoFake(_anamnese(paciente_id=2)),
                 paciente_id=1,
                 anamnese_id=128,
                 imagem=b"imagem",
@@ -105,7 +109,15 @@ def test_anamnese_de_outro_paciente():
         )
 
 
-def test_anamnese_ja_utilizada(monkeypatch):
+def test_anamnese_ja_utilizada(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        diagnostico_service.anamnese_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=_anamnese()),
+    )
+
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "buscar_por_anamnese",
@@ -116,7 +128,6 @@ def test_anamnese_ja_utilizada(monkeypatch):
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                repo_anamnese=AnamneseRepoFake(_anamnese()),
                 paciente_id=1,
                 anamnese_id=128,
                 imagem=b"imagem",
