@@ -52,9 +52,7 @@ def _lex_boolean(pergunta: Pergunta, bruta: RespostaBruta) -> ItemRespostaRegist
         elif normalizado in ("não", "nao", "false", "0"):
             valor, des_resposta = False, valor_bruto
         else:
-            raise ValueError(
-                f"valor fora do tipo esperado para '{pergunta.id}' (esperado boolean)"
-            )
+            raise ValueError(f"valor fora do tipo esperado para '{pergunta.id}' (esperado boolean)")
     else:
         raise ValueError(f"valor fora do tipo esperado para '{pergunta.id}' (esperado boolean)")
     return ItemRespostaRegistrada(
@@ -152,9 +150,7 @@ def lexar_respostas(
     erros: list[str] = []
     itens: list[ItemRespostaRegistrada] = []
     if payload.versao_questionario != questionario.versao:
-        erros.append(
-            f"versão de questionário inválida: '{payload.versao_questionario}'"
-        )
+        erros.append(f"versão de questionário inválida: '{payload.versao_questionario}'")
 
     ids_recebidos = [r.pergunta_id for r in payload.respostas]
     duplicadas = {

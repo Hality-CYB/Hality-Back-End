@@ -1,7 +1,7 @@
 """adiciona versao do questionario as anamneses
 
 Revision ID: c3e9d4a7f1b2
-Revises: 652cbc54920d
+Revises: b4c99c48b0f2
 """
 
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c3e9d4a7f1b2"
-down_revision: str | None = "652cbc54920d"
+down_revision: str | None = "b4c99c48b0f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

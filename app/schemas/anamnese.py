@@ -59,9 +59,7 @@ class RespostaBruta(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     pergunta_id: str
-    valor_bruto: str | bool | int = Field(
-        validation_alias=AliasChoices("valor_bruto", "valor")
-    )
+    valor_bruto: str | bool | int = Field(validation_alias=AliasChoices("valor_bruto", "valor"))
 
 
 class AnamneseCreate(BaseModel):
