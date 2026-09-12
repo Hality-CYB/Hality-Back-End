@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.db.base import Base  # noqa: F401 — re-exportado para uso nos modelos
@@ -10,7 +11,7 @@ settings = get_settings()
 engine = create_async_engine(
     settings.database_url,
     echo=settings.db_echo,
-    pool_pre_ping=True,
+    poolclass=NullPool,
 )
 
 async_session_factory = async_sessionmaker(

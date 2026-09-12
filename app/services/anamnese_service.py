@@ -1,13 +1,20 @@
-from app.db.anamnese_store import AnamneseRecord, AnamneseRepository
+import uuid
+from collections import Counter
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import anamnese_queries
+from app.models.anamnese import Anamnese
 from app.schemas.anamnese import (
     AnamneseCreate,
     AnamneseCreated,
     AnamneseDetail,
     Pergunta,
     Questionario,
+    RespostaItem,
     TipoPergunta,
 )
-from app.services.anamnese_questionnaire import get_questionario_ativo
+from app.services.anamnese_questionnaire import QUESTIONARIO_VIGENTE
 
 
 class AnamneseValidationError(Exception):
@@ -29,7 +36,9 @@ def _validar_valor(pergunta: Pergunta, valor: bool | str | int) -> str | None:
             if not isinstance(valor, bool):
                 return f"valor fora do tipo esperado para '{pergunta.id}' (esperado boolean)"
         case TipoPergunta.SINGLE_CHOICE:
-            if pergunta.opcoes and valor not in pergunta.opcoes:
+            if not pergunta.opcoes:
+                return f"pergunta '{pergunta.id}' não tem opções configuradas"
+            if not isinstance(valor, str) or valor not in pergunta.opcoes:
                 return f"valor fora das opções válidas para '{pergunta.id}'"
         case TipoPergunta.TEXT:
             if not isinstance(valor, str) or not valor.strip():
@@ -45,6 +54,18 @@ def _validar_valor(pergunta: Pergunta, valor: bool | str | int) -> str | None:
 
 def validar_respostas(questionario: Questionario, payload: AnamneseCreate) -> None:
     erros: list[str] = []
+
+    if payload.versao_questionario != questionario.versao:
+        erros.append(
+            f"versão do questionário desatualizada: esperado '{questionario.versao}', "
+            f"recebido '{payload.versao_questionario}'"
+        )
+
+    ids_recebidos = [r.pergunta_id for r in payload.respostas]
+    for pergunta_id, quantidade in Counter(ids_recebidos).items():
+        if quantidade > 1:
+            erros.append(f"resposta duplicada para pergunta '{pergunta_id}'")
+
     respostas_por_pergunta = {r.pergunta_id: r for r in payload.respostas}
     perguntas_por_id = {p.id: p for p in questionario.perguntas}
 
@@ -71,64 +92,73 @@ def validar_respostas(questionario: Questionario, payload: AnamneseCreate) -> No
         raise AnamneseValidationError(erros)
 
 
-def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
+def _respostas_para_persistir(questionario: Questionario, payload: AnamneseCreate) -> list[dict]:
+    """Usa enunciado/tipo do catálogo ativo, não os que vieram do front — evita
+    persistir texto divergente caso o questionário mude (comentário do PR)."""
+    perguntas_por_id = {p.id: p for p in questionario.perguntas}
+    return [
+        {
+            "pergunta_id": r.pergunta_id,
+            "enunciado": perguntas_por_id[r.pergunta_id].enunciado,
+            "tipo": perguntas_por_id[r.pergunta_id].tipo.value,
+            "valor": r.valor,
+        }
+        for r in payload.respostas
+    ]
+
+
+def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
     return AnamneseDetail(
-        id=registro.id,
-        paciente_id=registro.paciente_id,
-        data_preenchimento=registro.data_preenchimento,
-        versao_questionario=registro.versao_questionario,
-        respostas=registro.respostas,
+        id=anamnese.id,
+        paciente_id=anamnese.paciente_id,
+        data_preenchimento=anamnese.data_preenchimento,
+        respostas=[RespostaItem(**r) for r in anamnese.respostas],
     )
 
 
-def criar_anamnese(
-    repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
+async def criar_anamnese(
+    db: AsyncSession, paciente_id: uuid.UUID, payload: AnamneseCreate
 ) -> AnamneseCreated:
-    validar_respostas(get_questionario_ativo(), payload)
-    registro = repo.salvar(
-        paciente_id=paciente_id,
-        versao_questionario=payload.versao_questionario,
-        respostas=payload.respostas,
+    validar_respostas(QUESTIONARIO_VIGENTE, payload)
+    anamnese = await anamnese_queries.inserir(
+        db, paciente_id, _respostas_para_persistir(QUESTIONARIO_VIGENTE, payload)
     )
     return AnamneseCreated(
-        id=registro.id,
-        paciente_id=registro.paciente_id,
-        data_preenchimento=registro.data_preenchimento,
+        id=anamnese.id,
+        paciente_id=anamnese.paciente_id,
+        data_preenchimento=anamnese.data_preenchimento,
     )
 
 
-def listar_anamneses(repo: AnamneseRepository, paciente_id: int) -> list[AnamneseDetail]:
-    registros = repo.listar_por_paciente(paciente_id)
-    registros.sort(key=lambda r: r.data_preenchimento, reverse=True)
-    return [_para_detalhe(r) for r in registros]
+async def listar_anamneses(db: AsyncSession, paciente_id: uuid.UUID) -> list[AnamneseDetail]:
+    anamneses = await anamnese_queries.listar_por_paciente(db, paciente_id)
+    return [_para_detalhe(a) for a in anamneses]
 
 
-def obter_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> AnamneseDetail:
-    registro = repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
-        raise AnamneseNaoEncontradaError
-    return _para_detalhe(registro)
-
-
-def atualizar_anamnese(
-    repo: AnamneseRepository, paciente_id: int, anamnese_id: int, payload: AnamneseCreate
+async def obter_anamnese(
+    db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int
 ) -> AnamneseDetail:
-    registro = repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    validar_respostas(get_questionario_ativo(), payload)
-    atualizado = repo.atualizar(
-        anamnese_id=anamnese_id,
-        versao_questionario=payload.versao_questionario,
-        respostas=payload.respostas,
+    return _para_detalhe(anamnese)
+
+
+async def atualizar_anamnese(
+    db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int, payload: AnamneseCreate
+) -> AnamneseDetail:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
+        raise AnamneseNaoEncontradaError
+    validar_respostas(QUESTIONARIO_VIGENTE, payload)
+    anamnese = await anamnese_queries.atualizar(
+        db, anamnese, _respostas_para_persistir(QUESTIONARIO_VIGENTE, payload)
     )
-    if atualizado is None:
-        raise AnamneseNaoEncontradaError
-    return _para_detalhe(atualizado)
+    return _para_detalhe(anamnese)
 
 
-def deletar_anamnese(repo: AnamneseRepository, paciente_id: int, anamnese_id: int) -> None:
-    registro = repo.obter_por_id(anamnese_id)
-    if registro is None or registro.paciente_id != paciente_id:
+async def deletar_anamnese(db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int) -> None:
+    anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
+    if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    repo.deletar(anamnese_id)
+    await anamnese_queries.deletar(db, anamnese)

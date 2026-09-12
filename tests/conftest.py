@@ -1,16 +1,44 @@
-"""Fixtures do pytest para testes de integração e unitários do backend."""
+"""Fixtures compartilhadas pelos testes.
 
-from collections.abc import AsyncGenerator
+Hoje convivem DUAS estratégias de banco, uma por suíte:
 
+* **Auth (`test_auth_api.py`) — SQLite em memória.** Usa `client`/`db_session`,
+  que sobrescrevem `get_db`/`get_user_db`. Só a tabela `users` é criada (ver
+  `TestBase` abaixo), então não precisa de container para rodar.
+
+* **Anamnese (`test_anamnese.py`) — Postgres real do `.env`.** Exercita a API
+  completa (TestClient -> service -> repositório) sem override nenhum, contra
+  o banco migrado. Depende da fixture `_paciente_de_teste`.
+
+A convivência é proposital e temporária: unificar as duas é trabalho de outra
+branch. Por isso cada fixture declara seu escopo em vez de valer para todo
+mundo — `_paciente_de_teste` não faz sentido para os testes de auth (que nem
+falam com o Postgres), e criar tabelas no SQLite não faz sentido para os de
+anamnese.
+"""
+
+import asyncio
+from collections.abc import AsyncGenerator, Iterator
+
+import pytest
 import pytest_asyncio
 from fastapi_users.db import SQLAlchemyUserDatabase
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
+from app.api.deps import PACIENTE_STUB_ID
+from app.core.config import get_settings
 from app.core.users import get_user_db
 from app.db.session import get_db
 from app.main import app
+from app.models import Anamnese, User
+
+# ---------------------------------------------------------------------------
+# Suíte de auth — SQLite em memória
+# ---------------------------------------------------------------------------
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -24,17 +52,13 @@ class TestBase(DeclarativeBase):
     pass
 
 
-# Importar User faz a tabela ser registrada na metadata global.
-# Copiamos apenas ela para o TestBase.
-from app.models.user import User as _User  # noqa: E402
-
 if "users" not in TestBase.metadata.tables:
-    _User.__table__.to_metadata(TestBase.metadata)
+    User.__table__.to_metadata(TestBase.metadata)
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture
 async def setup_db() -> AsyncGenerator[None]:
-    """Cria as tabelas no banco SQLite em memória antes de cada teste e remove ao finalizar."""
+    """Cria as tabelas no banco SQLite em memória antes do teste e remove ao finalizar."""
     async with engine.begin() as conn:
         await conn.run_sync(TestBase.metadata.create_all)
     yield
@@ -43,7 +67,7 @@ async def setup_db() -> AsyncGenerator[None]:
 
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncGenerator[AsyncSession]:
+async def db_session(setup_db: None) -> AsyncGenerator[AsyncSession]:
     """Fixture que injeta uma sessão limpa do banco de testes."""
     async with TestingSessionLocal() as session:
         yield session
@@ -57,7 +81,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         yield db_session
 
     async def override_get_user_db() -> AsyncGenerator[SQLAlchemyUserDatabase]:
-        yield SQLAlchemyUserDatabase(db_session, _User)
+        yield SQLAlchemyUserDatabase(db_session, User)
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_user_db] = override_get_user_db
@@ -66,3 +90,60 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     ) as async_client:
         yield async_client
     app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Suíte de anamnese — Postgres real
+# ---------------------------------------------------------------------------
+
+# O paciente_id vem de um stub fixo (`get_current_patient`, em app/api/deps.py).
+# Este fixture garante que esse id exista em `users`, independente do que outros
+# processos (como o seed) já tenham inserido, e limpa as anamneses do teste.
+#
+# Roda em um `asyncio.run()` próprio, num loop diferente do usado pelo TestClient
+# para as requisições. Por isso usa uma engine descartável (NullPool, sem pooling)
+# em vez da engine compartilhada de `app.db.session` — evita que uma conexão criada
+# aqui seja reaproveitada depois por outro loop, o que causa
+# `RuntimeError: Event loop is closed`.
+
+
+@pytest.fixture(autouse=True)
+def _paciente_de_teste(request: pytest.FixtureRequest) -> Iterator[None]:
+    if request.module.__name__.rsplit(".", 1)[-1] != "test_anamnese":
+        yield
+        return
+    asyncio.run(_preparar())
+    yield
+    asyncio.run(_limpar())
+
+
+async def _preparar() -> None:
+    engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+    try:
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            usuario = await db.get(User, PACIENTE_STUB_ID)
+            if usuario is None:
+                db.add(
+                    User(
+                        id=PACIENTE_STUB_ID,
+                        name="Paciente de Teste",
+                        email="paciente.teste@hality.local",
+                        hashed_password="x",
+                        role="paciente",
+                    )
+                )
+                await db.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _limpar() -> None:
+    engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+    try:
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            await db.execute(delete(Anamnese).where(Anamnese.paciente_id == PACIENTE_STUB_ID))
+            await db.commit()
+    finally:
+        await engine.dispose()

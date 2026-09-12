@@ -1,7 +1,7 @@
 """migra users para uuid do fastapi-users
 
 Revision ID: b0c76688b722
-Revises: 65cb67e51405
+Revises: b4c99c48b0f2
 Create Date: 2026-09-11 21:02:26.008501
 
 """
@@ -14,13 +14,14 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b0c76688b722"
-down_revision: str | None = "65cb67e51405"
+down_revision: str | None = "b4c99c48b0f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 # Tabelas esvaziadas na ordem reversa das foreign keys.
 _TABELAS_DEPENDENTES = (
+    "anamneses",
     "imagens",
     "pacientes_profissionais",
     "diagnosticos",
@@ -30,6 +31,7 @@ _TABELAS_DEPENDENTES = (
 
 # (tabela, coluna, nullable) — colunas que referenciam users.id / profissionais.usuario_id.
 _COLUNAS_FK = (
+    ("anamneses", "paciente_id", False),
     ("diagnosticos", "paciente_id", False),
     ("diagnosticos", "profissional_revisor_id", True),
     ("pacientes_profissionais", "paciente_id", False),
@@ -42,6 +44,7 @@ def upgrade() -> None:
         op.execute(f"DELETE FROM {tabela}")
 
     # 1. soltar as constraints que travam a troca de tipo
+    op.drop_constraint("anamneses_paciente_id_fkey", "anamneses", type_="foreignkey")
     op.drop_constraint("diagnosticos_paciente_id_fkey", "diagnosticos", type_="foreignkey")
     op.drop_constraint(
         "diagnosticos_profissional_revisor_id_fkey", "diagnosticos", type_="foreignkey"
@@ -89,6 +92,14 @@ def upgrade() -> None:
         )
 
     # 4. refazer as foreign keys
+    op.create_foreign_key(
+        "anamneses_paciente_id_fkey",
+        "anamneses",
+        "users",
+        ["paciente_id"],
+        ["id"],
+        ondelete="CASCADE",
+    )
     op.create_foreign_key(
         "profissionais_usuario_id_fkey",
         "profissionais",
@@ -175,6 +186,7 @@ def downgrade() -> None:
     op.drop_column("users", "is_verified")
     op.drop_column("users", "is_superuser")
 
+    op.drop_constraint("anamneses_paciente_id_fkey", "anamneses", type_="foreignkey")
     op.drop_constraint("diagnosticos_paciente_id_fkey", "diagnosticos", type_="foreignkey")
     op.drop_constraint(
         "diagnosticos_profissional_revisor_id_fkey", "diagnosticos", type_="foreignkey"
@@ -208,6 +220,14 @@ def downgrade() -> None:
     op.execute("ALTER TABLE users ALTER COLUMN id SET DEFAULT nextval('users_id_seq')")
     op.create_primary_key("users_pkey", "users", ["id"])
 
+    op.create_foreign_key(
+        "anamneses_paciente_id_fkey",
+        "anamneses",
+        "users",
+        ["paciente_id"],
+        ["id"],
+        ondelete="CASCADE",
+    )
     op.create_foreign_key(
         "profissionais_usuario_id_fkey",
         "profissionais",

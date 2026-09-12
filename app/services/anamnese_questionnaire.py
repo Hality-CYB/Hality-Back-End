@@ -3,7 +3,11 @@ from app.schemas.anamnese import Pergunta, Questionario, TipoPergunta
 # Catálogo estático do questionário ativo. Isolado nesse módulo para ser fácil
 # de trocar por uma fonte real (admin/CMS/banco) quando ela existir, sem
 # precisar mexer no service ou nos endpoints.
-_QUESTIONARIO_ATIVO = Questionario(
+#
+# É um objeto público (sem "_") de propósito: quem precisa da mesma referência
+# durante toda uma operação (ver anamnese_service.py) importa QUESTIONARIO_VIGENTE
+# direto, em vez de chamar get_questionario_ativo() de novo a cada uso.
+QUESTIONARIO_VIGENTE = Questionario(
     versao="2026-08-v1",
     perguntas=[
         Pergunta(
@@ -40,4 +44,4 @@ _QUESTIONARIO_ATIVO = Questionario(
 
 
 def get_questionario_ativo() -> Questionario:
-    return _QUESTIONARIO_ATIVO
+    return QUESTIONARIO_VIGENTE
