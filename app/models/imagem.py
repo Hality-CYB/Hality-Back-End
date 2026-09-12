@@ -3,8 +3,8 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
-from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
