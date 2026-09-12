@@ -25,7 +25,7 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
         id=registro.id_resp,
         paciente_id=registro.paciente_id,
         data_preenchimento=registro.data_preenchimento,
-        id_versao_questionario=registro.id_versao_questionario,
+        versao_questionario=registro.id_versao_questionario,
         respostas=registro.respostas,
     )
 
@@ -37,7 +37,7 @@ async def criar_anamnese(
     respostas_lexadas = lexar_respostas(questionario, payload)
     registro = await repo.salvar(
         paciente_id=paciente_id,
-        id_versao_questionario=payload.id_versao_questionario,
+        id_versao_questionario=payload.versao_questionario,
         respostas=respostas_lexadas,
     )
     return AnamneseCreated(
@@ -73,7 +73,7 @@ async def atualizar_anamnese(
     respostas_lexadas = lexar_respostas(questionario, payload)
     atualizado = await repo.atualizar(
         id_resp=id_resp,
-        id_versao_questionario=payload.id_versao_questionario,
+        id_versao_questionario=payload.versao_questionario,
         respostas=respostas_lexadas,
     )
     if atualizado is None:
