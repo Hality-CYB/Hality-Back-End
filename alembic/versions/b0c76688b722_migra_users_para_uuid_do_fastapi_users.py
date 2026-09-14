@@ -1,7 +1,7 @@
 """migra users para uuid do fastapi-users
 
 Revision ID: b0c76688b722
-Revises: b4c99c48b0f2
+Revises: 594b04654498
 Create Date: 2026-09-11 21:02:26.008501
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b0c76688b722"
-down_revision: str | None = "b4c99c48b0f2"
+down_revision: str | None = "594b04654498"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
