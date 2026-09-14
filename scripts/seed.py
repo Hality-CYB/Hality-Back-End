@@ -15,13 +15,13 @@ para esse id.
 
 import asyncio
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from dotenv import load_dotenv
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy import delete
 
-from app.api.deps import PACIENTE_STUB_ID
 from app.auth.users import UserManager
 from app.db.session import async_session_factory
 from app.models import (
@@ -39,6 +39,9 @@ from app.models import (
 load_dotenv()
 
 SEED_PASSWORD = os.getenv("SEED_PASSWORD")
+
+# Mesmo id fixo usado pelas suítes de teste (tests/conftest.py, tests/test_diagnostico.py).
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # Parâmetros de captura são um JSONB livre: o endpoint só exige "objeto JSON
 # válido" e o service repassa sem validar. Não existe schema para o campo.

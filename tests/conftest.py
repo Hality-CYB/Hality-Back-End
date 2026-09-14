@@ -32,8 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
+from app.auth.users import current_active_user, get_user_db
 from app.core.config import get_settings
-from app.core.users import current_active_user, get_user_db
 from app.db.session import get_db
 from app.main import app
 from app.models import Anamnese, User
