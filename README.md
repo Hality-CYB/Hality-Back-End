@@ -26,27 +26,8 @@ cp .env.example .env        # Windows: copy .env.example .env
 ```
 
 ```bash
-# 4. subir só o banco em container (a API vai rodar local)
-
-# Linux/macOS
-docker run -d --name hality-db \
-  -e POSTGRES_USER=hality \
-  -e POSTGRES_PASSWORD=hality \
-  -e POSTGRES_DB=hality \
-  -p 5432:5432 \
-  -v hality_postgres_data:/var/lib/postgresql/data \
-  postgres:17-alpine
-```
-
-```powershell
-# Windows (PowerShell)
-docker run -d --name hality-db `
-  -e POSTGRES_USER=hality `
-  -e POSTGRES_PASSWORD=hality `
-  -e POSTGRES_DB=hality `
-  -p 5432:5432 `
-  -v hality_postgres_data:/var/lib/postgresql/data `
-  postgres:17-alpine
+# 4. subir só o banco em container (a API vai rodar local) — mesmo comando em qualquer SO
+docker compose up -d db
 ```
 
 ```bash
@@ -118,73 +99,32 @@ uv run fastapi deploy
 
 ## Rodando a API com Docker
 
-O `Dockerfile` empacota **só este backend**. O Postgres continua sendo um container separado (ver [passo a passo](#passo-a-passo-depois-do-clone)) — não há orquestração no repositório.
+O `docker-compose.yml` sobe **banco + API** juntos: o Postgres (`db`) e a API buildada a partir do `Dockerfile` (`api`), já na mesma rede. Ao subir, a API aplica as migrations sozinha (`alembic upgrade head`) antes de iniciar o `uvicorn`.
+
+> **Não** rode `uv run fastapi dev` enquanto o serviço `api` do compose estiver de pé — os dois disputam a porta 8000. Pra desenvolver no back com reload local, suba só o banco (`docker compose up -d db`, ver [passo a passo](#passo-a-passo-depois-do-clone)) ou pare a API do compose (`docker compose stop api`). O banco não tem esse problema: a API local (`POSTGRES_HOST=localhost`) e a API do compose (`POSTGRES_HOST=db`) apontam pro mesmo Postgres, cada uma pelo seu host.
+>
+> Se você já tinha o container `hality-db` de um `docker run` antigo, remova-o antes (`docker rm -f hality-db`) — ele ocupa a porta 5432 e conflita com o `db` do compose.
 
 ### Comandos
 
 ```bash
-# buildar a imagem (Linux/macOS/Windows — mesmo comando)
-docker build -t hality-api .
+# buildar e subir banco + API (mesmo comando em qualquer SO)
+docker compose up -d --build
 ```
 
 ```bash
-# subir a API conectando no banco que já está rodando
-
-# Linux/macOS
-docker run --rm -p 8000:8000 --env-file .env \
-  -e POSTGRES_HOST=host.docker.internal \
-  --add-host=host.docker.internal:host-gateway \
-  hality-api
-```
-
-```powershell
-# Windows (PowerShell)
-docker run --rm -p 8000:8000 --env-file .env `
-  -e POSTGRES_HOST=host.docker.internal `
-  --add-host=host.docker.internal:host-gateway `
-  hality-api
-```
-
-`POSTGRES_HOST` precisa ser sobrescrito porque, de dentro do container, `localhost` é o próprio container e não a sua máquina.
-
-Alternativa mais limpa: colocar os dois containers na mesma rede e usar o nome do container do banco como host.
-
-```bash
-# Linux/macOS/Windows — mesmo comando
-docker network create hality-net
-docker network connect hality-net hality-db
+# acompanhar os logs da API (ex.: conferir se as migrations rodaram)
+docker compose logs -f api
 ```
 
 ```bash
-# Linux/macOS
-docker run --rm -p 8000:8000 --env-file .env \
-  --network hality-net \
-  -e POSTGRES_HOST=hality-db \
-  hality-api
+# rodar o seed dentro do container da API
+docker compose exec api python -m scripts.seed
 ```
-
-```powershell
-# Windows (PowerShell)
-docker run --rm -p 8000:8000 --env-file .env `
-  --network hality-net `
-  -e POSTGRES_HOST=hality-db `
-  hality-api
-```
-
-A imagem sobe direto o `uvicorn` — as migrations **não** rodam sozinhas. Aplique antes (`uv run alembic upgrade head`) ou rode dentro do container:
 
 ```bash
-# Linux/macOS
-docker run --rm --env-file .env --network hality-net \
-  -e POSTGRES_HOST=hality-db \
-  hality-api alembic upgrade head
-```
-
-```powershell
-# Windows (PowerShell)
-docker run --rm --env-file .env --network hality-net `
-  -e POSTGRES_HOST=hality-db `
-  hality-api alembic upgrade head
+# derrubar os containers (adicione -v para também apagar os dados do banco)
+docker compose down
 ```
 
 ### Detalhes da imagem
@@ -205,7 +145,7 @@ A URL de conexão não é escrita à mão: ela é **montada** em `app/core/confi
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `POSTGRES_HOST` | `localhost` | Host do banco. Com a API **dentro de um container**, use o nome do container do banco (ex.: `hality-db`) ou `host.docker.internal`. |
+| `POSTGRES_HOST` | `localhost` | Host do banco. Com a API rodando local aponta pro `localhost`; no `docker-compose.yml` o serviço `api` já sobrescreve para `db` (nome do serviço do Postgres na mesma rede do compose). |
 | `POSTGRES_PORT` | `5432` | Porta do banco. |
 | `POSTGRES_USER` | `hality` | Usuário. |
 | `POSTGRES_PASSWORD` | `hality` | Senha. Só serve para desenvolvimento — em produção deve vir de um segredo, nunca do `.env` versionado. |
@@ -218,7 +158,7 @@ O resultado é uma URL no formato:
 postgresql+asyncpg://<user>:<password>@<host>:<port>/<db>
 ```
 
-> A pegadinha mais comum: com a API **local** o host é `localhost`; com a API **dentro de um container** `localhost` aponta pro próprio container. Nesse caso sobrescreva a variável no `docker run` (`-e POSTGRES_HOST=...`) em vez de mexer no seu `.env`.
+> A pegadinha mais comum: com a API **local** o host é `localhost`; com a API **dentro de um container** `localhost` aponta pro próprio container, não pro Postgres. É por isso que o `docker-compose.yml` sobrescreve `POSTGRES_HOST=db` só para o serviço `api`, sem precisar mexer no `.env`.
 
 ### Usando o banco num endpoint
 
@@ -311,29 +251,7 @@ O projeto tem um script (`scripts/seed.py`) que popula o banco local com dados d
 
 ```bash
 # 1. banco em container e migrations em dia
-
-# Linux/macOS
-docker run -d --name hality-db \
-  -e POSTGRES_USER=hality \
-  -e POSTGRES_PASSWORD=hality \
-  -e POSTGRES_DB=hality \
-  -p 5432:5432 \
-  -v hality_postgres_data:/var/lib/postgresql/data \
-  postgres:17-alpine
-```
-
-```powershell
-# Windows (PowerShell)
-docker run -d --name hality-db `
-  -e POSTGRES_USER=hality `
-  -e POSTGRES_PASSWORD=hality `
-  -e POSTGRES_DB=hality `
-  -p 5432:5432 `
-  -v hality_postgres_data:/var/lib/postgresql/data `
-  postgres:17-alpine
-```
-
-```bash
+docker compose up -d db
 uv run alembic upgrade head
 
 # 2. rodar o seed
