@@ -233,35 +233,58 @@ async def seed() -> None:
             [
                 Dica(
                     titulo="O que é halitose?",
-                    conteudo=(
-                        "Halitose é o nome dado ao mau hálito persistente. Na maioria "
-                        "dos casos ela tem origem na própria boca, em restos de comida "
-                        "e bactérias acumuladas na língua e entre os dentes."
-                    ),
+                    categoria="saude",
+                    tipo_conteudo="texto",
+                    conteudo={
+                        "texto": (
+                            "Halitose é o nome dado ao mau hálito persistente. Na maioria "
+                            "dos casos ela tem origem na própria boca, em restos de comida "
+                            "e bactérias acumuladas na língua e entre os dentes."
+                        )
+                    },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=1,
                 ),
                 Dica(
                     titulo="Limpe a língua todos os dias",
-                    conteudo=(
-                        "A saburra lingual, aquela camada esbranquiçada no fundo da "
-                        "língua, é a causa mais comum de mau hálito. Use um limpador "
-                        "de língua do fundo para a frente, sem forçar, uma vez ao dia."
-                    ),
+                    categoria="higiene",
+                    tipo_conteudo="texto",
+                    conteudo={
+                        "texto": (
+                            "A saburra lingual, aquela camada esbranquiçada no fundo da "
+                            "língua, é a causa mais comum de mau hálito. Use um limpador "
+                            "de língua do fundo para a frente, sem forçar, uma vez ao dia."
+                        )
+                    },
+                    classificacao_ids=[halitose_leve.id, halitose_social.id],
+                    status="publicado",
+                    ordem=1,
                 ),
                 Dica(
                     titulo="Beba água ao longo do dia",
-                    conteudo=(
-                        "A boca seca favorece o mau hálito porque a saliva é o que "
-                        "limpa naturalmente os resíduos. Beba água com frequência, "
-                        "principalmente ao acordar e depois de exercícios."
-                    ),
+                    categoria="rotina",
+                    tipo_conteudo="video",
+                    conteudo={
+                        "file_url": "https://cdn.hality.com/seed/beba-agua.mp4",
+                        "descricao": "A hidratação ajuda a manter o fluxo salivar.",
+                    },
+                    classificacao_ids=[halitose_severa.id],
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=2,
                 ),
                 Dica(
                     titulo="Mau hálito não se resolve só com enxaguante",
-                    conteudo=(
-                        "Enxaguantes mascaram o odor por algumas horas, mas não removem "
-                        "a causa. Se o mau hálito continua mesmo com boa higiene, "
-                        "procure um dentista para investigar a origem."
-                    ),
+                    categoria="tratamento",
+                    tipo_conteudo="imagem",
+                    conteudo={
+                        "file_url": "https://cdn.hality.com/seed/enxaguante.jpg",
+                        "descricao": "O enxaguante não substitui a investigação da causa.",
+                    },
+                    classificacao_ids=[halitose_social.id, halitose_severa.id],
+                    status="rascunho",
+                    ordem=2,
                 ),
             ]
         )
