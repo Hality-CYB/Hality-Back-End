@@ -18,10 +18,13 @@ anamnese.
 """
 
 import asyncio
+import uuid
 from collections.abc import AsyncGenerator, Iterator
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException, Request, status
 from fastapi_users.db import SQLAlchemyUserDatabase
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
@@ -29,12 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
-from app.api.deps import PACIENTE_STUB_ID
 from app.core.config import get_settings
-from app.core.users import get_user_db
+from app.core.users import current_active_user, get_user_db
 from app.db.session import get_db
 from app.main import app
 from app.models import Anamnese, User
+
+# Paciente fixo usado pela suíte de anamnese (Postgres real).
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # ---------------------------------------------------------------------------
 # Suíte de auth — SQLite em memória
@@ -107,14 +112,29 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 # `RuntimeError: Event loop is closed`.
 
 
+async def _current_active_user_de_teste(request: Request) -> SimpleNamespace:
+    """Override de `current_active_user` para a suíte de anamnese.
+
+    Reproduz só a checagem de "token presente" do antigo stub (sem decodificar
+    JWT de verdade) — o teste de auth "real" (login, token inválido, etc.)
+    fica a cargo de `test_auth_api.py`, não desta suíte.
+    """
+    if not request.headers.get("authorization"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sem token")
+    return SimpleNamespace(id=PACIENTE_STUB_ID)
+
+
 @pytest.fixture(autouse=True)
 def _paciente_de_teste(request: pytest.FixtureRequest) -> Iterator[None]:
     if request.module.__name__.rsplit(".", 1)[-1] != "test_anamnese":
         yield
         return
+
+    app.dependency_overrides[current_active_user] = _current_active_user_de_teste
     asyncio.run(_preparar())
     yield
     asyncio.run(_limpar())
+    del app.dependency_overrides[current_active_user]
 
 
 async def _preparar() -> None:

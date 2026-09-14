@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.api.deps import PACIENTE_STUB_ID
 from app.services import diagnostico_mock, diagnostico_service
 
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 _OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 
 
