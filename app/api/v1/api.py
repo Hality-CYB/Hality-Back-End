@@ -5,7 +5,7 @@ from app.api.v1.endpoints import (
     diagnostico,
     health,
 )
-from app.core.users import fastapi_users, jwt_backend
+from app.auth.users import fastapi_users, jwt_backend
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 api_router = APIRouter()
