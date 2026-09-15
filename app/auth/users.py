@@ -1,4 +1,4 @@
-"""Configuração central do fastapi-users: adaptador DB, UserManager, JWT e instância principal."""
+﻿"""Configuração central do fastapi-users: adaptador DB, UserManager, JWT e instância principal."""
 
 import uuid
 from collections.abc import AsyncGenerator
@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
-from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
+from fastapi_users.authentication import AuthenticationBackend, CookieTransport, JWTStrategy
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,10 +59,23 @@ async def get_user_manager(  # noqa: B008
 
 
 # ---------------------------------------------------------------------------
-# Transporte e estratégia JWT
+# Transporte Cookie e estratégia JWT
 # ---------------------------------------------------------------------------
 
-bearer_transport = BearerTransport(tokenUrl="/api/v1/auth/login")
+
+def _get_cookie_transport() -> CookieTransport:
+    """Cria o CookieTransport com TTL sincronizado com o Settings."""
+    settings = get_settings()
+    return CookieTransport(
+        cookie_name="fastapiusersauth",
+        cookie_max_age=settings.access_token_expire_minutes * 60,
+        cookie_httponly=True,
+        cookie_samesite="lax",
+        cookie_secure=settings.environment == "production",
+    )
+
+
+cookie_transport = _get_cookie_transport()
 
 
 def get_jwt_strategy() -> JWTStrategy:
@@ -76,7 +89,7 @@ def get_jwt_strategy() -> JWTStrategy:
 
 jwt_backend = AuthenticationBackend(
     name="jwt",
-    transport=bearer_transport,
+    transport=cookie_transport,
     get_strategy=get_jwt_strategy,
 )
 
