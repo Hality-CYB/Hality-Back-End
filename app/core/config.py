@@ -36,9 +36,9 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
-    # JWT — obrigatório via .env (ex.: openssl rand -hex 32)
+    
     secret_key: SecretStr
-    access_token_expire_minutes: int = 60 * 24  # 24 horas
+    access_token_expire_minutes: int = 60 * 24
 
 
 @lru_cache
