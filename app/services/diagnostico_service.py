@@ -102,9 +102,7 @@ def _normalizar_data_parametro(
         data_hora = datetime.fromisoformat(valor.replace("Z", "+00:00"))
 
     except ValueError as exc:
-        raise DiagnosticoFiltroInvalidoError(
-            f"{nome} deve estar em formato ISO valido"
-        ) from exc
+        raise DiagnosticoFiltroInvalidoError(f"{nome} deve estar em formato ISO valido") from exc
 
     if data_hora.tzinfo is None:
         return data_hora.replace(tzinfo=UTC)
@@ -156,9 +154,7 @@ def _validar_filtros_listagem(
         and data_fim_normalizada is not None
         and data_inicio_normalizada > data_fim_normalizada
     ):
-        raise DiagnosticoFiltroInvalidoError(
-            "data_inicio deve ser menor ou igual a data_fim"
-        )
+        raise DiagnosticoFiltroInvalidoError("data_inicio deve ser menor ou igual a data_fim")
 
     return data_inicio_normalizada, data_fim_normalizada, ordem
 
@@ -226,14 +222,12 @@ async def listar_diagnosticos(
     limite: int = 20,
     ordem: str = "data_desc",
 ) -> DiagnosticoListResponse:
-    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = (
-        _validar_filtros_listagem(
-            data_inicio=data_inicio,
-            data_fim=data_fim,
-            pagina=pagina,
-            limite=limite,
-            ordem=ordem,
-        )
+    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem,
     )
 
     resultado = await diagnostico_queries.listar_por_paciente(

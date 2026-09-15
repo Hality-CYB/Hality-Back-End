@@ -69,9 +69,7 @@ async def listar_por_paciente(
     if status is not None:
         filtros.append(Diagnostico.status == status)
 
-    total_result = await db.execute(
-        select(func.count()).select_from(Diagnostico).where(*filtros)
-    )
+    total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
     total = total_result.scalar_one()
 
     if ordem == "data_asc":
