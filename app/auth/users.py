@@ -1,4 +1,4 @@
-﻿"""Configuração central do fastapi-users: adaptador DB, UserManager, JWT e instância principal."""
+"""Configuração central do fastapi-users: adaptador DB, UserManager, JWT e instância principal."""
 
 import uuid
 from collections.abc import AsyncGenerator

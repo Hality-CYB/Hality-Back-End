@@ -17,7 +17,7 @@ _DEFAULT_USER = {
 
 
 async def _register_and_login(client: AsyncClient, user: dict | None = None) -> str:
-    """Helper: registra um usuário e retorna o access_token do login."""
+    """Helper: registra um usuário e retorna o valor do cookie 'fastapiusersauth' do login."""
     user = user or _DEFAULT_USER
     await client.post(REGISTER_URL, json=user)
     # Login usa OAuth2PasswordRequestForm (form-data, campo 'username' em vez de 'email')
@@ -25,7 +25,7 @@ async def _register_and_login(client: AsyncClient, user: dict | None = None) -> 
         LOGIN_URL,
         data={"username": user["email"], "password": user["password"]},
     )
-    return response.json()["access_token"]
+    return response.cookies.get("fastapiusersauth")
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ async def test_register_missing_name(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient) -> None:
-    """Testa login bem-sucedido via form-data (status 200 + token JWT)."""
+    """Testa login bem-sucedido via form-data (status 200 + cookie fastapiusersauth)."""
     user = {"email": "lucas@hality.com", "password": "SenhaCorreta123!", "name": "Lucas Santos"}
     await client.post(REGISTER_URL, json=user)
 
@@ -83,10 +83,8 @@ async def test_login_success(client: AsyncClient) -> None:
         data={"username": user["email"], "password": user["password"]},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert "access_token" in data
-    assert data["token_type"] == "bearer"
+    assert response.status_code == 204
+    assert "fastapiusersauth" in response.cookies
 
 
 @pytest.mark.asyncio
@@ -115,7 +113,7 @@ async def test_get_me_success(client: AsyncClient) -> None:
     }
     token = await _register_and_login(client, user)
 
-    response = await client.get(ME_URL, headers={"Authorization": f"Bearer {token}"})
+    response = await client.get(ME_URL, cookies={"fastapiusersauth": token})
 
     assert response.status_code == 200
     data = response.json()
@@ -134,6 +132,6 @@ async def test_get_me_unauthorized_no_token(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_get_me_unauthorized_invalid_token(client: AsyncClient) -> None:
-    """Testa erro 401 ao acessar /users/me com token inválido."""
-    response = await client.get(ME_URL, headers={"Authorization": "Bearer token-invalido"})
+    """Testa erro 401 ao acessar /users/me com token inválido no cookie."""
+    response = await client.get(ME_URL, cookies={"fastapiusersauth": "token-invalido"})
     assert response.status_code == 401
