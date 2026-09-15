@@ -37,7 +37,8 @@ class Settings(BaseSettings):
         )
 
     secret_key: SecretStr
-    access_token_expire_minutes: int = 60 * 24
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
 
 
 @lru_cache

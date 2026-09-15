@@ -7,11 +7,14 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
+from fastapi_users.authentication.strategy import DatabaseStrategy
 from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,36 @@ jwt_backend = AuthenticationBackend(
     transport=bearer_transport,
     get_strategy=get_jwt_strategy,
 )
+
+# ---------------------------------------------------------------------------
+# Refresh token — DatabaseStrategy do fastapi-users (token opaco em banco)
+# ---------------------------------------------------------------------------
+#
+# Só é usado pela rota customizada POST /auth/refresh (app/api/v1/endpoints/
+# auth.py) — nunca autentica as rotas normais da API, essas continuam 100%
+# no JWT acima. Mantém o "caminho crítico" (toda request autenticada) sem
+# tocar banco, e limita o token de banco só ao endpoint que precisa dele.
+
+
+async def get_refresh_token_db(  # noqa: B008
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> AsyncGenerator[SQLAlchemyAccessTokenDatabase, None]:
+    """Fornece o adaptador SQLAlchemy do refresh token para o fastapi-users."""
+    yield SQLAlchemyAccessTokenDatabase(session, RefreshToken)
+
+
+def get_refresh_strategy(
+    refresh_token_db: Annotated[
+        SQLAlchemyAccessTokenDatabase, Depends(get_refresh_token_db)
+    ],
+) -> DatabaseStrategy:
+    """Cria a strategy do refresh token com o tempo de vida do Settings."""
+    settings = get_settings()
+    return DatabaseStrategy(
+        refresh_token_db,
+        lifetime_seconds=settings.refresh_token_expire_days * 24 * 60 * 60,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Instância principal do FastAPIUsers

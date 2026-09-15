@@ -26,17 +26,18 @@ import pytest
 import pytest_asyncio
 from fastapi import HTTPException, Request, status
 from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
-from app.auth.users import current_active_user, get_user_db
+from app.auth.users import current_active_user, get_refresh_token_db, get_user_db
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
-from app.models import Anamnese, User
+from app.models import Anamnese, RefreshToken, User
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -59,6 +60,8 @@ class TestBase(DeclarativeBase):
 
 if "users" not in TestBase.metadata.tables:
     User.__table__.to_metadata(TestBase.metadata)
+if "refresh_tokens" not in TestBase.metadata.tables:
+    RefreshToken.__table__.to_metadata(TestBase.metadata)
 
 
 @pytest_asyncio.fixture
@@ -88,8 +91,12 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_get_user_db() -> AsyncGenerator[SQLAlchemyUserDatabase]:
         yield SQLAlchemyUserDatabase(db_session, User)
 
+    async def override_get_refresh_token_db() -> AsyncGenerator[SQLAlchemyAccessTokenDatabase]:
+        yield SQLAlchemyAccessTokenDatabase(db_session, RefreshToken)
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_user_db] = override_get_user_db
+    app.dependency_overrides[get_refresh_token_db] = override_get_refresh_token_db
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as async_client:
