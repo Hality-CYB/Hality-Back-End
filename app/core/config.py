@@ -36,7 +36,6 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
-    
     secret_key: SecretStr
     access_token_expire_minutes: int = 60 * 24
 
