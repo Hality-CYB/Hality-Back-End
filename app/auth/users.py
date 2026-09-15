@@ -101,9 +101,7 @@ async def get_refresh_token_db(  # noqa: B008
 
 
 def get_refresh_strategy(
-    refresh_token_db: Annotated[
-        SQLAlchemyAccessTokenDatabase, Depends(get_refresh_token_db)
-    ],
+    refresh_token_db: Annotated[SQLAlchemyAccessTokenDatabase, Depends(get_refresh_token_db)],
 ) -> DatabaseStrategy:
     """Cria a strategy do refresh token com o tempo de vida do Settings."""
     settings = get_settings()
