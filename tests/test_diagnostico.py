@@ -23,6 +23,7 @@ AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 TEST_PATIENT_ID = 1
 PACIENTE_ID_QUERY_IGNORADO = 998
 CLASSIFICACAO_TESTE_PREFIX = "TESTE_LISTAGEM_"
+USUARIO_AUXILIAR_ID_BASE = 1_000_000_000
 DATA_BASE_LISTAGEM = datetime(2099, 8, 1, 9, 14, tzinfo=UTC)
 DATA_INICIO_LISTAGEM = DATA_BASE_LISTAGEM.date().isoformat()
 DATA_FIM_LISTAGEM = (DATA_BASE_LISTAGEM + timedelta(days=11)).date().isoformat()
@@ -81,6 +82,16 @@ async def _abrir_sessao_teste() -> tuple[AsyncSession, object]:
     return session_factory(), engine
 
 
+async def _gerar_outro_paciente_id(db: AsyncSession) -> int:
+    for _ in range(10):
+        candidato = USUARIO_AUXILIAR_ID_BASE + uuid4().int % 1_000_000_000
+
+        if await db.get(User, candidato) is None:
+            return candidato
+
+    raise RuntimeError("nao foi possivel gerar id unico para paciente auxiliar")
+
+
 async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
     db, engine = await _abrir_sessao_teste()
     criados = DiagnosticosListagemCriados()
@@ -88,7 +99,9 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
     try:
         async with db:
             token = uuid4().hex
+            outro_paciente_id = await _gerar_outro_paciente_id(db)
             outro_paciente = User(
+                id=outro_paciente_id,
                 name="Paciente Fora da Listagem",
                 email=f"paciente.fora.listagem.{token}@hality.local",
                 hashed_password="x",
