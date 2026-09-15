@@ -1,6 +1,7 @@
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.classificacao_diagnostico import (
@@ -26,6 +27,18 @@ class DadosDetalheDiagnostico:
     profissional_nome: str | None
 
 
+@dataclass
+class DiagnosticoListado:
+    diagnostico: Diagnostico
+    classificacao: ClassificacaoDiagnostico | None
+
+
+@dataclass
+class DiagnosticosPaginados:
+    itens: list[DiagnosticoListado]
+    total: int
+
+
 async def buscar_por_id(
     db: AsyncSession,
     diagnostico_id: int,
@@ -33,6 +46,59 @@ async def buscar_por_id(
     result = await db.execute(select(Diagnostico).where(Diagnostico.id == diagnostico_id))
 
     return result.scalar_one_or_none()
+
+
+async def listar_por_paciente(
+    db: AsyncSession,
+    paciente_id: int,
+    data_inicio: datetime | None,
+    data_fim: datetime | None,
+    status: str | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> DiagnosticosPaginados:
+    filtros = [Diagnostico.paciente_id == paciente_id]
+
+    if data_inicio is not None:
+        filtros.append(Diagnostico.data_diagnostico >= data_inicio)
+
+    if data_fim is not None:
+        filtros.append(Diagnostico.data_diagnostico <= data_fim)
+
+    if status is not None:
+        filtros.append(Diagnostico.status == status)
+
+    total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
+    total = total_result.scalar_one()
+
+    if ordem == "data_asc":
+        ordenacao = (Diagnostico.data_diagnostico.asc(), Diagnostico.id.asc())
+    else:
+        ordenacao = (Diagnostico.data_diagnostico.desc(), Diagnostico.id.desc())
+
+    result = await db.execute(
+        select(Diagnostico, ClassificacaoDiagnostico)
+        .outerjoin(
+            ClassificacaoDiagnostico,
+            Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .where(*filtros)
+        .order_by(*ordenacao)
+        .offset((pagina - 1) * limite)
+        .limit(limite)
+    )
+
+    return DiagnosticosPaginados(
+        itens=[
+            DiagnosticoListado(
+                diagnostico=diagnostico,
+                classificacao=classificacao,
+            )
+            for diagnostico, classificacao in result.all()
+        ],
+        total=total,
+    )
 
 
 async def buscar_por_anamnese(
