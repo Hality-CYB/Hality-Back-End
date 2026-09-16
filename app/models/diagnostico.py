@@ -21,12 +21,19 @@ class Diagnostico(Base):
     )
     escala_saburra: Mapped[int | None] = mapped_column(Integer, nullable=True)
     confianca_ia: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="processando")
+    provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     erro: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_diagnostico: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
+    )
+    data_envio: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_processamento: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     profissional_revisor_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"), nullable=True

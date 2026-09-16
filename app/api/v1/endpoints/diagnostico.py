@@ -57,7 +57,7 @@ async def criar_diagnostico(
     except (json.JSONDecodeError, ValueError):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content={"motivo": ("parametros_captura deve ser um objeto JSON válido.")},
+            content={"motivo": "parametros_captura deve ser um objeto JSON válido."},
         )
 
     imagem_bytes = await imagem.read(diagnostico_storage.MAX_IMAGE_BYTES + 1)
@@ -81,7 +81,7 @@ async def criar_diagnostico(
     except diagnostico_service.ArquivoMuitoGrandeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=("arquivo acima do tamanho máximo permitido"),
+            detail="arquivo acima do tamanho máximo permitido",
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:
@@ -93,7 +93,7 @@ async def criar_diagnostico(
     except diagnostico_service.AnamneseJaUtilizadaError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=("anamnese já vinculada a outro diagnóstico"),
+            detail="anamnese já vinculada a outro diagnóstico",
         ) from exc
 
 
@@ -119,11 +119,59 @@ async def obter_diagnostico(
     except diagnostico_service.DiagnosticoAcessoNegadoError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=("diagnóstico pertence a outro paciente"),
+            detail="diagnóstico pertence a outro paciente",
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=("anamnese do diagnóstico não encontrada"),
+            detail="anamnese do diagnóstico não encontrada",
         ) from exc
+
+
+@router.post(
+    "/{diagnostico_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=None,
+)
+async def retry_diagnostico(
+    diagnostico_id: int,
+    paciente_id: CurrentPatientDep,
+    db: DbSession,
+) -> dict[str, Any] | JSONResponse:
+    try:
+        return await diagnostico_service.retry_diagnostico(
+            db=db,
+            paciente_id=paciente_id,
+            diagnostico_id=diagnostico_id,
+        )
+
+    except diagnostico_service.DiagnosticoNaoEncontradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="diagnóstico não encontrado",
+        ) from exc
+
+    except diagnostico_service.DiagnosticoAcessoNegadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="diagnóstico pertence a outro paciente",
+        ) from exc
+
+    except diagnostico_service.DiagnosticoRetryInvalidoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="somente diagnósticos com falha podem ser reenviados",
+        ) from exc
+
+    except diagnostico_service.AnamneseNaoEncontradaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="anamnese do diagnóstico não encontrada",
+        ) from exc
+
+    except diagnostico_service.ImagemInvalidaError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"motivo": exc.motivo},
+        )

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services import diagnostico_mock, diagnostico_service
+from app.services import diagnostico_service
 
 
 def _anamnese(paciente_id=1):
@@ -30,11 +30,15 @@ def _diagnostico(
         classificacao_id=None,
         escala_saburra=None,
         confianca_ia=None,
+        score=None,
+        provider=None,
+        model_version=None,
+        erro=None,
+        data_envio=None,
+        data_processamento=None,
         profissional_revisor_id=None,
         data_revisao=None,
         observacoes_revisao=None,
-        nivel_corrigido=False,
-        erro=None,
     )
 
 
@@ -46,25 +50,26 @@ def test_criar_diagnostico(monkeypatch):
         "buscar_por_id",
         AsyncMock(return_value=_anamnese()),
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "buscar_por_anamnese",
         AsyncMock(return_value=None),
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "inserir",
         AsyncMock(return_value=diagnostico),
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_storage,
         "salvar",
         AsyncMock(return_value="/imagem.jpg"),
     )
-
+    monkeypatch.setattr(
+        diagnostico_service,
+        "_processar_com_provider",
+        AsyncMock(return_value=diagnostico),
+    )
     monkeypatch.setattr(
         diagnostico_service,
         "get_settings",
@@ -87,9 +92,7 @@ def test_criar_diagnostico(monkeypatch):
     assert resultado["anamnese_id"] == 128
 
 
-def test_anamnese_de_outro_paciente(
-    monkeypatch,
-):
+def test_anamnese_de_outro_paciente(monkeypatch):
     monkeypatch.setattr(
         diagnostico_service.anamnese_queries,
         "buscar_por_id",
@@ -109,15 +112,12 @@ def test_anamnese_de_outro_paciente(
         )
 
 
-def test_anamnese_ja_utilizada(
-    monkeypatch,
-):
+def test_anamnese_ja_utilizada(monkeypatch):
     monkeypatch.setattr(
         diagnostico_service.anamnese_queries,
         "buscar_por_id",
         AsyncMock(return_value=_anamnese()),
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "buscar_por_anamnese",
@@ -137,9 +137,197 @@ def test_anamnese_ja_utilizada(
         )
 
 
-def test_mock_cobre_os_tres_niveis():
-    assert diagnostico_mock.resultado_para(1).ordem_classificacao == 1
+def test_retry_diagnostico_com_falha(monkeypatch):
+    diagnostico = _diagnostico(status="falha")
+    processado = _diagnostico(status="concluido")
 
-    assert diagnostico_mock.resultado_para(2).ordem_classificacao == 2
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=diagnostico),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.anamnese_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=_anamnese()),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "listar_imagens",
+        AsyncMock(return_value=[SimpleNamespace(url_arquivo="/imagem.jpg")]),
+    )
+    monkeypatch.setattr(
+        diagnostico_service,
+        "_processar_com_provider",
+        AsyncMock(return_value=processado),
+    )
 
-    assert diagnostico_mock.resultado_para(3).ordem_classificacao == 3
+    resultado = asyncio.run(
+        diagnostico_service.retry_diagnostico(
+            db=AsyncMock(),
+            paciente_id=1,
+            diagnostico_id=4,
+        )
+    )
+
+    assert resultado["id"] == 4
+    assert resultado["status"] == "concluido"
+    assert resultado["anamnese_id"] == 128
+
+
+def test_retry_so_permite_diagnostico_com_falha(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "buscar_por_id",
+        AsyncMock(return_value=_diagnostico(status="concluido")),
+    )
+
+    with pytest.raises(diagnostico_service.DiagnosticoRetryInvalidoError):
+        asyncio.run(
+            diagnostico_service.retry_diagnostico(
+                db=AsyncMock(),
+                paciente_id=1,
+                diagnostico_id=4,
+            )
+        )
+
+
+def test_processar_com_provider_success(monkeypatch):
+    diagnostico = _diagnostico()
+
+    monkeypatch.setattr(
+        diagnostico_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            diagnostic_provider="mock",
+            diagnostic_mock_level=2,
+            diagnostic_mock_scenario="success",
+        ),
+    )
+
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "buscar_classificacao_por_ordem",
+        AsyncMock(return_value=SimpleNamespace(id=2)),
+    )
+
+    async def salvar_resultado(
+        db,
+        diagnostico,
+        classificacao_id,
+        provider,
+        model_version,
+        score,
+        confianca_ia,
+        data_processamento,
+    ):
+        diagnostico.classificacao_id = classificacao_id
+        diagnostico.status = "concluido"
+        diagnostico.provider = provider
+        diagnostico.model_version = model_version
+        diagnostico.score = score
+        diagnostico.confianca_ia = confianca_ia
+        diagnostico.data_processamento = data_processamento
+        return diagnostico
+
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "salvar_resultado",
+        salvar_resultado,
+    )
+
+    resultado = asyncio.run(
+        diagnostico_service._processar_com_provider(
+            db=AsyncMock(),
+            diagnostico=diagnostico,
+            anamnese=_anamnese(),
+            url_arquivo="/imagem.jpg",
+        )
+    )
+
+    assert resultado.status == "concluido"
+    assert resultado.classificacao_id == 2
+    assert resultado.provider == "mock"
+    assert resultado.model_version == "mock-v1"
+
+
+@pytest.mark.parametrize(
+    ("scenario", "status", "model_version"),
+    [
+        ("processing", "processando", "mock-v1"),
+        ("failure", "falha", "mock-v1"),
+        ("invalid_response", "falha", "unknown"),
+    ],
+)
+def test_processar_com_provider_cenarios(
+    monkeypatch,
+    scenario,
+    status,
+    model_version,
+):
+    diagnostico = _diagnostico()
+
+    monkeypatch.setattr(
+        diagnostico_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            diagnostic_provider="mock",
+            diagnostic_mock_level=2,
+            diagnostic_mock_scenario=scenario,
+        ),
+    )
+
+    async def marcar_processando(
+        db,
+        diagnostico,
+        provider,
+        model_version,
+    ):
+        diagnostico.status = "processando"
+        diagnostico.provider = provider
+        diagnostico.model_version = model_version
+        return diagnostico
+
+    async def marcar_falha(
+        db,
+        diagnostico,
+        erro,
+        provider,
+        model_version,
+        data_processamento,
+    ):
+        diagnostico.status = "falha"
+        diagnostico.erro = erro
+        diagnostico.provider = provider
+        diagnostico.model_version = model_version
+        diagnostico.data_processamento = data_processamento
+        return diagnostico
+
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "marcar_processando",
+        marcar_processando,
+    )
+
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "marcar_falha",
+        marcar_falha,
+    )
+
+    resultado = asyncio.run(
+        diagnostico_service._processar_com_provider(
+            db=AsyncMock(),
+            diagnostico=diagnostico,
+            anamnese=_anamnese(),
+            url_arquivo="/imagem.jpg",
+        )
+    )
+
+    assert resultado.status == status
+    assert resultado.model_version == model_version
+
+    if status == "falha":
+        assert resultado.erro == diagnostico_service.ERRO_PROCESSAMENTO

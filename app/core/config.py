@@ -1,6 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import computed_field
+from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,13 +26,43 @@ class Settings(BaseSettings):
     postgres_db: str
     db_echo: bool
 
+    diagnostic_provider: str = "mock"
+
+    diagnostic_mock_level: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+    )
+
+    diagnostic_mock_scenario: Literal[
+        "success",
+        "processing",
+        "failure",
+        "invalid_response",
+    ] = "success"
+
     @computed_field
     @property
     def database_url(self) -> str:
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            "postgresql+asyncpg://"
+            f"{self.postgres_user}:"
+            f"{self.postgres_password}"
+            f"@{self.postgres_host}:"
+            f"{self.postgres_port}/"
+            f"{self.postgres_db}"
         )
+
+    @model_validator(mode="after")
+    def validate_diagnostic_provider(
+        self,
+    ) -> "Settings":
+        environment = self.environment.lower()
+
+        if environment in {"production", "prod"} and self.diagnostic_provider == "mock":
+            raise ValueError("DIAGNOSTIC_PROVIDER=mock não pode ser usado em produção.")
+
+        return self
 
 
 @lru_cache
