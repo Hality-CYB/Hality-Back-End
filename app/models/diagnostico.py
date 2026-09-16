@@ -32,9 +32,7 @@ class Diagnostico(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
-    data_envio: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    data_envio: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     data_processamento: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

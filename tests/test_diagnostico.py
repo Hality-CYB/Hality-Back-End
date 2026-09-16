@@ -158,7 +158,13 @@ def test_retry_diagnostico_com_falha(monkeypatch):
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "listar_imagens",
-        AsyncMock(return_value=[SimpleNamespace(url_arquivo="/imagem.jpg")]),
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    url_arquivo="/imagem.jpg",
+                )
+            ]
+        ),
     )
     monkeypatch.setattr(
         diagnostico_service,
@@ -169,7 +175,7 @@ def test_retry_diagnostico_com_falha(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.retry_diagnostico(
             db=AsyncMock(),
-            paciente_id=1,
+            paciente_id=PACIENTE_STUB_ID,
             diagnostico_id=4,
         )
     )
@@ -188,11 +194,13 @@ def test_retry_so_permite_diagnostico_com_falha(
         AsyncMock(return_value=_diagnostico(status="concluido")),
     )
 
-    with pytest.raises(diagnostico_service.DiagnosticoRetryInvalidoError):
+    with pytest.raises(
+        diagnostico_service.DiagnosticoRetryInvalidoError,
+    ):
         asyncio.run(
             diagnostico_service.retry_diagnostico(
                 db=AsyncMock(),
-                paciente_id=1,
+                paciente_id=PACIENTE_STUB_ID,
                 diagnostico_id=4,
             )
         )
@@ -210,7 +218,6 @@ def test_processar_com_provider_success(monkeypatch):
             diagnostic_mock_scenario="success",
         ),
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "buscar_classificacao_por_ordem",
@@ -314,7 +321,6 @@ def test_processar_com_provider_cenarios(
         "marcar_processando",
         marcar_processando,
     )
-
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "marcar_falha",
