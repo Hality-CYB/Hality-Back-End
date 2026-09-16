@@ -15,12 +15,28 @@ branch. Por isso cada fixture declara seu escopo em vez de valer para todo
 mundo — `_paciente_de_teste` não faz sentido para os testes de auth (que nem
 falam com o Postgres), e criar tabelas no SQLite não faz sentido para os de
 anamnese.
+
+Os testes de anamnese também assumem que `get_questionario_ativo` está
+usando o catálogo estático de fallback (anamnese_questionary.py), não uma
+versão real cadastrada em `questionarios` (via scripts/seed.py, por exemplo)
+- por isso a fixture tira um "snapshot" da tabela, esvazia ela pro teste
+rodar determinístico, e restaura o snapshot no final. Isso evita que rodar
+`pytest` depois do seed apague dado seedado, e evita que o seed quebre os
+testes que têm payload fixo baseado no catálogo estático.
+
+A fixture roda em um `asyncio.run()` próprio, num loop diferente do usado
+pelo TestClient para as requisições. Por isso usa uma engine descartável
+(NullPool, sem pooling) só para esse setup/teardown, em vez da engine
+compartilhada de `app.db.session` — evitar que uma conexão criada aqui seja
+reaproveitada depois por outro loop, o que causa `RuntimeError: Event loop
+is closed`.
 """
 
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Iterator
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -28,7 +44,7 @@ from fastapi import HTTPException, Request, status
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -37,7 +53,7 @@ from app.auth.users import current_active_user, get_refresh_token_db, get_user_d
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
-from app.models import Anamnese, RefreshToken, User
+from app.models import Anamnese, Questionario, RefreshToken, User
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -138,13 +154,13 @@ def _paciente_de_teste(request: pytest.FixtureRequest) -> Iterator[None]:
         return
 
     app.dependency_overrides[current_active_user] = _current_active_user_de_teste
-    asyncio.run(_preparar())
+    questionarios_snapshot = asyncio.run(_preparar())
     yield
-    asyncio.run(_limpar())
+    asyncio.run(_limpar(questionarios_snapshot))
     del app.dependency_overrides[current_active_user]
 
 
-async def _preparar() -> None:
+async def _preparar() -> list[dict[str, Any]]:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -161,16 +177,29 @@ async def _preparar() -> None:
                     )
                 )
                 await db.commit()
+
+            resultado = await db.execute(select(Questionario))
+            snapshot = [
+                {"versao": q.versao, "perguntas": q.perguntas, "criado_em": q.criado_em}
+                for q in resultado.scalars().all()
+            ]
+            if snapshot:
+                await db.execute(delete(Questionario))
+                await db.commit()
+            return snapshot
     finally:
         await engine.dispose()
 
 
-async def _limpar() -> None:
+async def _limpar(questionarios_snapshot: list[dict[str, Any]]) -> None:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as db:
             await db.execute(delete(Anamnese).where(Anamnese.paciente_id == PACIENTE_STUB_ID))
+            if questionarios_snapshot:
+                await db.execute(delete(Questionario))
+                db.add_all(Questionario(**item) for item in questionarios_snapshot)
             await db.commit()
     finally:
         await engine.dispose()

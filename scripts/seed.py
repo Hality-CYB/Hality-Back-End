@@ -33,6 +33,7 @@ from app.models import (
     Imagem,
     PacienteProfissional,
     Profissional,
+    Questionario,
     User,
 )
 
@@ -49,25 +50,33 @@ PARAMETROS_CAPTURA = {"iluminacao": "natural", "distancia_cm": 20}
 
 
 def _respostas(frequencia: str, avaliacao: int, *, mau_halito: bool) -> list[dict]:
-    """Respostas no formato de `RespostaItem`, conforme o QUESTIONARIO_VIGENTE."""
+    """Respostas no formato de `ItemRespostaRegistrada` (já "lexadas"), no
+    formato do catálogo estático de fallback (anamnese_questionary.py,
+    versão "2026-08-v1")."""
     return [
         {
             "pergunta_id": "mau_halito_ao_acordar",
-            "enunciado": "Você sente mau hálito ao acordar?",
-            "tipo": "boolean",
+            "des_pergunta": "Você sente mau hálito ao acordar?",
+            "tipo_pergunta": "boolean",
+            "des_resposta": "Sim" if mau_halito else "Não",
             "valor": mau_halito,
+            "tipo_resposta": "bool",
         },
         {
             "pergunta_id": "frequencia_escovacao",
-            "enunciado": "Com que frequência você escova os dentes?",
-            "tipo": "single_choice",
+            "des_pergunta": "Com que frequência você escova os dentes?",
+            "tipo_pergunta": "single_choice",
+            "des_resposta": frequencia,
             "valor": frequencia,
+            "tipo_resposta": "str",
         },
         {
             "pergunta_id": "avaliacao_propria_halito",
-            "enunciado": "Como você avalia o cheiro da sua respiração?",
-            "tipo": "scale",
+            "des_pergunta": "Como você avalia o cheiro da sua respiração?",
+            "tipo_pergunta": "scale",
+            "des_resposta": str(avaliacao),
             "valor": avaliacao,
+            "tipo_resposta": "int",
         },
     ]
 
@@ -90,6 +99,7 @@ async def seed() -> None:
             PacienteProfissional,
             Profissional,
             ClassificacaoDiagnostico,
+            Questionario,
             User,
         ):
             await db.execute(delete(model))
@@ -135,6 +145,141 @@ async def seed() -> None:
         )
         db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3])
         await db.flush()
+
+        # Perguntas extraídas de "Tabela anamnese Hality-2.xlsx" (colunas B a L:
+        # IDADE, Q1-Q10). Tipo inferido a partir dos valores de exemplo na
+        # planilha: sim/não -> boolean; Fraco/Moderado/Forte -> single_choice
+        # (opções já vêm do próprio enunciado da coluna); IDADE é numérica e
+        # não tem um tipo dedicado no schema, então usa scale sem rótulos.
+        questionario = Questionario(
+            versao="2026-09-v1",
+            perguntas=[
+                {
+                    "id": "idade",
+                    "enunciado": "Qual a sua idade?",
+                    "tipo": "scale",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": 0,
+                    "escala_max": 120,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "boca_seca",
+                    "enunciado": "Você sente/ Tem boca seca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "respira_pela_boca",
+                    "enunciado": "Você respira pela boca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "gosto_ruim_na_boca",
+                    "enunciado": "Você sente/ tem frequentemente um gosto ruim na boca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "acha_que_tem_mau_halito",
+                    "enunciado": "Você acha que tem mau hálito?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "intensidade_mau_halito",
+                    "enunciado": "Como você avalia a intensidade do seu mau hálito?",
+                    "tipo": "single_choice",
+                    "obrigatoria": True,
+                    "opcoes": ["Fraco", "Moderado", "Forte"],
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "ja_falaram_que_tem_mau_halito",
+                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "ja_consultou_especialista",
+                    "enunciado": "Você já consultou algum especialista sobre esse problema?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "escova_a_lingua",
+                    "enunciado": "Você costuma escovar a língua?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "se_afasta_de_pessoas",
+                    "enunciado": "Você se afasta das pessoas por causa do seu mau hálito?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "usa_algo_para_disfarcar",
+                    "enunciado": (
+                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?"
+                    ),
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+            ],
+        )
+        db.add(questionario)
 
         profissional1 = Profissional(
             usuario_id=dentista1.id,
@@ -226,31 +371,37 @@ async def seed() -> None:
         anamnese_concluido = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=3),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("2x ao dia", 2, mau_halito=True),
         )
         anamnese_revisado = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=10),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("1x ao dia", 1, mau_halito=True),
         )
         anamnese_processando = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(hours=6),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("3x ou mais", 4, mau_halito=False),
         )
         anamnese_falha = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=1),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("2x ao dia", 3, mau_halito=True),
         )
         anamnese_diego = Anamnese(
             paciente_id=paciente2.id,
             data_preenchimento=agora - timedelta(days=5),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("1x ao dia", 1, mau_halito=True),
         )
         anamnese_elisa = Anamnese(
             paciente_id=paciente3.id,
             data_preenchimento=agora - timedelta(days=2),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("3x ou mais", 5, mau_halito=False),
         )
         db.add_all(
@@ -434,7 +585,8 @@ async def seed() -> None:
 
     print(
         "Seed concluído: 6 usuarios, 2 profissionais, 4 classificacoes, "
-        "4 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, 4 dicas.\n"
+        "4 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, 4 dicas, "
+        "1 questionario (11 perguntas).\n"
     )
     print(f"Senha de todos os usuarios: {SEED_PASSWORD}\n")
     print("Credenciais:")
