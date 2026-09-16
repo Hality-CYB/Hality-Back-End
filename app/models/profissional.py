@@ -1,5 +1,7 @@
 """Dados de profissional — extensão de `users` quando role = profissional."""
 
+import uuid
+
 from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,7 +13,7 @@ class Profissional(Base):
 
     __tablename__ = "profissionais"
 
-    usuario_id: Mapped[int] = mapped_column(
+    usuario_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     registro_profissional: Mapped[str | None] = mapped_column(String(50), nullable=True)

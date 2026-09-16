@@ -12,19 +12,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    project_name: str
-    api_v1_prefix: str
-    environment: str
-    debug: bool
+    project_name: str = "hality-back"
+    api_v1_prefix: str = "/api/v1"
+    environment: str = "development"
+    debug: bool = True
 
-    cors_origins: list[str]
+    cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Banco de dados — variáveis individuais (obrigatórias via .env)
     postgres_host: str
     postgres_port: int
     postgres_user: str
-    postgres_password: str
+    postgres_password: SecretStr
     postgres_db: str
-    db_echo: bool
+    db_echo: bool = False
 
     diagnostic_provider: str = "mock"
 
@@ -47,11 +48,13 @@ class Settings(BaseSettings):
         return (
             "postgresql+asyncpg://"
             f"{self.postgres_user}:"
-            f"{self.postgres_password}"
-            f"@{self.postgres_host}:"
-            f"{self.postgres_port}/"
-            f"{self.postgres_db}"
+            f"{self.postgres_password.get_secret_value()}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    secret_key: SecretStr
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
 
     @model_validator(mode="after")
     def validate_diagnostic_provider(

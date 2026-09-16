@@ -6,6 +6,8 @@ from app.models.dica import Dica
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import PacienteProfissional
 from app.models.profissional import Profissional
+from app.models.questionario import Questionario
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "Imagem",
     "PacienteProfissional",
     "Profissional",
+    "Questionario",
+    "RefreshToken",
     "User",
 ]

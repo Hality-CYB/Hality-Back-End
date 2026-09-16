@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -188,7 +189,7 @@ async def _processar_com_provider(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
@@ -266,7 +267,7 @@ async def criar_diagnostico(
 
 async def obter_diagnostico(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(

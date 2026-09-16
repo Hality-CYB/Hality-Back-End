@@ -1,6 +1,10 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
+from app.db.session import async_session_factory
 from app.main import app
+from app.models import Questionario
 
 client = TestClient(app)
 
@@ -40,6 +44,44 @@ def test_obter_questionario() -> None:
     corpo = response.json()
     tipos = {p["tipo"] for p in corpo["perguntas"]}
     assert tipos == {"boolean", "single_choice", "text", "scale"}
+
+
+def test_obter_questionario_usa_fallback_estatico_quando_banco_esta_vazio() -> None:
+    # tests/conftest.py garante a tabela `questionarios` vazia em cada teste,
+    # então aqui o fallback (anamnese_questionary.py) tem que ser usado.
+    response = client.get("/api/v1/anamneses/questionario")
+
+    assert response.status_code == 200
+    assert response.json()["versao"] == "2026-08-v1"
+
+
+def test_obter_questionario_usa_o_banco_quando_ha_um_cadastrado() -> None:
+    pergunta_do_banco = {
+        "id": "pergunta_so_do_banco",
+        "enunciado": "Essa pergunta só existe se vier do banco, não do mock.",
+        "tipo": "boolean",
+        "obrigatoria": True,
+        "opcoes": None,
+        "escala_min": None,
+        "escala_max": None,
+        "escala_label_min": None,
+        "escala_label_max": None,
+    }
+
+    async def _inserir_questionario_de_teste() -> None:
+        async with async_session_factory() as db:
+            db.add(Questionario(versao="teste-banco-v1", perguntas=[pergunta_do_banco]))
+            await db.commit()
+
+    asyncio.run(_inserir_questionario_de_teste())
+
+    response = client.get("/api/v1/anamneses/questionario")
+
+    assert response.status_code == 200
+    corpo = response.json()
+    # se ainda viesse do catálogo estático, a versão seria "2026-08-v1"
+    assert corpo["versao"] == "teste-banco-v1"
+    assert corpo["perguntas"] == [pergunta_do_banco]
 
 
 def test_criar_anamnese_sem_token_retorna_401() -> None:
