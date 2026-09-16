@@ -50,25 +50,33 @@ PARAMETROS_CAPTURA = {"iluminacao": "natural", "distancia_cm": 20}
 
 
 def _respostas(frequencia: str, avaliacao: int, *, mau_halito: bool) -> list[dict]:
-    """Respostas no formato de `RespostaItem`, conforme o QUESTIONARIO_VIGENTE."""
+    """Respostas no formato de `ItemRespostaRegistrada` (já "lexadas"), no
+    formato do catálogo estático de fallback (anamnese_questionary.py,
+    versão "2026-08-v1")."""
     return [
         {
             "pergunta_id": "mau_halito_ao_acordar",
-            "enunciado": "Você sente mau hálito ao acordar?",
-            "tipo": "boolean",
+            "des_pergunta": "Você sente mau hálito ao acordar?",
+            "tipo_pergunta": "boolean",
+            "des_resposta": "Sim" if mau_halito else "Não",
             "valor": mau_halito,
+            "tipo_resposta": "bool",
         },
         {
             "pergunta_id": "frequencia_escovacao",
-            "enunciado": "Com que frequência você escova os dentes?",
-            "tipo": "single_choice",
+            "des_pergunta": "Com que frequência você escova os dentes?",
+            "tipo_pergunta": "single_choice",
+            "des_resposta": frequencia,
             "valor": frequencia,
+            "tipo_resposta": "str",
         },
         {
             "pergunta_id": "avaliacao_propria_halito",
-            "enunciado": "Como você avalia o cheiro da sua respiração?",
-            "tipo": "scale",
+            "des_pergunta": "Como você avalia o cheiro da sua respiração?",
+            "tipo_pergunta": "scale",
+            "des_resposta": str(avaliacao),
             "valor": avaliacao,
+            "tipo_resposta": "int",
         },
     ]
 
@@ -363,31 +371,37 @@ async def seed() -> None:
         anamnese_concluido = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=3),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("2x ao dia", 2, mau_halito=True),
         )
         anamnese_revisado = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=10),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("1x ao dia", 1, mau_halito=True),
         )
         anamnese_processando = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(hours=6),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("3x ou mais", 4, mau_halito=False),
         )
         anamnese_falha = Anamnese(
             paciente_id=paciente1.id,
             data_preenchimento=agora - timedelta(days=1),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("2x ao dia", 3, mau_halito=True),
         )
         anamnese_diego = Anamnese(
             paciente_id=paciente2.id,
             data_preenchimento=agora - timedelta(days=5),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("1x ao dia", 1, mau_halito=True),
         )
         anamnese_elisa = Anamnese(
             paciente_id=paciente3.id,
             data_preenchimento=agora - timedelta(days=2),
+            id_versao_questionario="2026-08-v1",
             respostas=_respostas("3x ou mais", 5, mau_halito=False),
         )
         db.add_all(
