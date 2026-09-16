@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentPatientDep
+from app.api.deps import CurrentPatientDep, DbSession
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail, Questionario
 from app.services import anamnese_service
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -13,8 +13,8 @@ AnamneseRepoDep = Annotated[AnamneseRepository, Depends(get_anamnese_repository)
 
 
 @router.get("/questionario", response_model=Questionario)
-def obter_questionario() -> Questionario:
-    return get_questionario_ativo()
+async def obter_questionario(db: DbSession) -> Questionario:
+    return await get_questionario_ativo(db)
 
 
 @router.post("", response_model=AnamneseCreated, status_code=status.HTTP_201_CREATED)

@@ -31,7 +31,8 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
 async def criar_anamnese(
     repo: AnamneseRepository, paciente_id: int, payload: AnamneseCreate
 ) -> AnamneseCreated:
-    respostas_lexadas = lexar_respostas(get_questionario_ativo(), payload)
+    questionario = await get_questionario_ativo(repo.db)
+    respostas_lexadas = lexar_respostas(questionario, payload)
     registro = await repo.salvar(
         paciente_id=paciente_id,
         id_versao_questionario=payload.versao_questionario,
@@ -65,7 +66,8 @@ async def atualizar_anamnese(
     registro = await repo.obter_por_id(id_resp)
     if registro is None or registro.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
-    respostas_lexadas = lexar_respostas(get_questionario_ativo(), payload)
+    questionario = await get_questionario_ativo(repo.db)
+    respostas_lexadas = lexar_respostas(questionario, payload)
     atualizado = await repo.atualizar(
         id_resp=id_resp,
         id_versao_questionario=payload.versao_questionario,
