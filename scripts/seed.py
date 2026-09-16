@@ -21,6 +21,7 @@ from app.models import (
     ClassificacaoDiagnostico,
     ConteudoDiagnostico,
     Diagnostico,
+    Dica,
     Imagem,
     PacienteProfissional,
     Profissional,
@@ -38,6 +39,7 @@ async def seed() -> None:
         for model in (
             Imagem,
             Diagnostico,
+            Dica,
             ConteudoDiagnostico,
             PacienteProfissional,
             Profissional,
@@ -227,11 +229,48 @@ async def seed() -> None:
             ]
         )
 
+        db.add_all(
+            [
+                Dica(
+                    titulo="O que é halitose?",
+                    conteudo=(
+                        "Halitose é o nome dado ao mau hálito persistente. Na maioria "
+                        "dos casos ela tem origem na própria boca, em restos de comida "
+                        "e bactérias acumuladas na língua e entre os dentes."
+                    ),
+                ),
+                Dica(
+                    titulo="Limpe a língua todos os dias",
+                    conteudo=(
+                        "A saburra lingual, aquela camada esbranquiçada no fundo da "
+                        "língua, é a causa mais comum de mau hálito. Use um limpador "
+                        "de língua do fundo para a frente, sem forçar, uma vez ao dia."
+                    ),
+                ),
+                Dica(
+                    titulo="Beba água ao longo do dia",
+                    conteudo=(
+                        "A boca seca favorece o mau hálito porque a saliva é o que "
+                        "limpa naturalmente os resíduos. Beba água com frequência, "
+                        "principalmente ao acordar e depois de exercícios."
+                    ),
+                ),
+                Dica(
+                    titulo="Mau hálito não se resolve só com enxaguante",
+                    conteudo=(
+                        "Enxaguantes mascaram o odor por algumas horas, mas não removem "
+                        "a causa. Se o mau hálito continua mesmo com boa higiene, "
+                        "procure um dentista para investigar a origem."
+                    ),
+                ),
+            ]
+        )
+
         await db.commit()
 
     print(
         "Seed concluído: 6 usuarios, 2 profissionais, 4 classificacoes, "
-        "4 conteudos, 3 diagnosticos, 4 imagens."
+        "4 conteudos, 3 diagnosticos, 4 imagens, 4 dicas."
     )
 
 
