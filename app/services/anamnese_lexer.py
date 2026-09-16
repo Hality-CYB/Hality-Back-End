@@ -10,8 +10,8 @@ concreto (TipoValor) já resolvido - ou reportamos um erro léxico, se o valor
 não bater com a gramática esperada pra aquele tipo de pergunta.
 
 Centraliza aqui toda a lógica de "qual é o tipo dessa pergunta/resposta" -
-tanto o catálogo em estágio inicial (`anamnese_questionnaire.py`) quanto um
-futuro catálogo vindo do banco usam o mesmo lexer, sem duplicar regras.
+tanto o catálogo estático de fallback quanto o catálogo vigente vindo do
+banco (`anamnese_questionary.py`) usam o mesmo lexer, sem duplicar regras.
 """
 
 from collections.abc import Callable

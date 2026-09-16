@@ -17,8 +17,8 @@ class Questionario(Base):
     opcoes, escala_min, escala_max, escala_label_min, escala_label_max.
 
     A versão vigente é a de `criado_em` mais recente. Se a tabela estiver
-    vazia (ou a consulta falhar), `anamnese_questionnaire.py` cai pro
-    catálogo estático como fallback - a aplicação nunca fica sem questionário.
+    vazia (ou a consulta falhar), `anamnese_questionary.py` cai pro catálogo
+    estático como fallback — a aplicação nunca fica sem questionário.
     """
 
     __tablename__ = "questionarios"

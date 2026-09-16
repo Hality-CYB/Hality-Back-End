@@ -54,9 +54,9 @@ _QUESTIONARIO_FALLBACK = Questionario(
 async def get_questionario_ativo(db: AsyncSession) -> Questionario:
     """Busca a versão vigente do questionário na tabela `questionarios`
     (a de `criado_em` mais recente). Se a tabela estiver vazia ou a consulta
-    falhar por qualquer motivo, cai pro catálogo estático
-    (`_QUESTIONARIO_FALLBACK`) em vez de propagar o erro - o preenchimento
-    da anamnese não pode ficar fora do ar por causa disso."""
+    falhar por qualquer motivo, cai pro catálogo estático (`_QUESTIONARIO_FALLBACK`)
+    em vez de propagar o erro - o preenchimento da anamnese não pode ficar
+    fora do ar por causa disso."""
 
     try:
         resultado = await db.execute(
