@@ -7,6 +7,14 @@ autenticação real é outra issue), então este fixture garante que esse id
 exista em `users`, independente do que outros processos (como o seed) já
 tenham inserido, e limpa as anamneses criadas durante o teste.
 
+Os testes também assumem que `get_questionario_ativo` está usando o
+catálogo estático de fallback (anamnese_questionary.py), não uma versão
+real cadastrada em `questionarios` (via scripts/seed.py, por exemplo) - por
+isso a fixture tira um "snapshot" da tabela, esvazia ela pro teste rodar
+determinístico, e restaura o snapshot no final. Isso evita que rodar
+`pytest` depois do seed apague dado seedado, e evita que o seed quebre os
+testes que têm payload fixo baseado no catálogo estático.
+
 A fixture roda em um `asyncio.run()` próprio, num loop diferente do usado
 pelo TestClient para as requisições. Por isso usa uma engine descartável
 (NullPool, sem pooling) só para esse setup/teardown, em vez da engine
@@ -17,26 +25,27 @@ is closed`.
 
 import asyncio
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
-from app.models import Anamnese, User
+from app.models import Anamnese, Questionario, User
 
 TEST_PATIENT_ID = 1
 
 
 @pytest.fixture(autouse=True)
 def _paciente_de_teste() -> Iterator[None]:
-    asyncio.run(_preparar())
+    questionarios_snapshot = asyncio.run(_preparar())
     yield
-    asyncio.run(_limpar())
+    asyncio.run(_limpar(questionarios_snapshot))
 
 
-async def _preparar() -> None:
+async def _preparar() -> list[dict[str, Any]]:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -53,16 +62,29 @@ async def _preparar() -> None:
                     )
                 )
                 await db.commit()
+
+            resultado = await db.execute(select(Questionario))
+            snapshot = [
+                {"versao": q.versao, "perguntas": q.perguntas, "criado_em": q.criado_em}
+                for q in resultado.scalars().all()
+            ]
+            if snapshot:
+                await db.execute(delete(Questionario))
+                await db.commit()
+            return snapshot
     finally:
         await engine.dispose()
 
 
-async def _limpar() -> None:
+async def _limpar(questionarios_snapshot: list[dict[str, Any]]) -> None:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as db:
             await db.execute(delete(Anamnese).where(Anamnese.paciente_id == TEST_PATIENT_ID))
+            if questionarios_snapshot:
+                await db.execute(delete(Questionario))
+                db.add_all(Questionario(**item) for item in questionarios_snapshot)
             await db.commit()
     finally:
         await engine.dispose()
