@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from enum import StrEnum
 
@@ -44,7 +45,7 @@ class AnamneseCreated(BaseModel):
     """Corpo de resposta do POST, exatamente como especificado na issue #18."""
 
     id: int
-    paciente_id: int
+    paciente_id: uuid.UUID
     data_preenchimento: datetime
 
 
@@ -52,6 +53,6 @@ class AnamneseDetail(BaseModel):
     """Usado nos GETs/PUT do CRUD, onde faz sentido devolver o conteúdo completo."""
 
     id: int
-    paciente_id: int
+    paciente_id: uuid.UUID
     data_preenchimento: datetime
     respostas: list[RespostaItem]

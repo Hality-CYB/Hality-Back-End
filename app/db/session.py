@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.db.base import Base  # noqa: F401 — re-exportado para uso nos modelos
 
 settings = get_settings()
 
@@ -21,5 +22,10 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Dependency que fornece uma sessão de banco para cada request."""
     async with async_session_factory() as session:
         yield session
+
+
+# Alias para manter compatibilidade com código existente
+get_async_session = get_db

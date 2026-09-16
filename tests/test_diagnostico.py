@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,8 +8,11 @@ import pytest
 
 from app.services import diagnostico_mock, diagnostico_service
 
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 
-def _anamnese(paciente_id=1):
+
+def _anamnese(paciente_id=PACIENTE_STUB_ID):
     return SimpleNamespace(
         id=128,
         paciente_id=paciente_id,
@@ -18,7 +22,7 @@ def _anamnese(paciente_id=1):
 
 
 def _diagnostico(
-    paciente_id=1,
+    paciente_id=PACIENTE_STUB_ID,
     status="processando",
 ):
     return SimpleNamespace(
@@ -74,7 +78,7 @@ def test_criar_diagnostico(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=AsyncMock(),
-            paciente_id=1,
+            paciente_id=PACIENTE_STUB_ID,
             anamnese_id=128,
             imagem=b"imagem",
             content_type="image/jpeg",
@@ -93,14 +97,14 @@ def test_anamnese_de_outro_paciente(
     monkeypatch.setattr(
         diagnostico_service.anamnese_queries,
         "buscar_por_id",
-        AsyncMock(return_value=_anamnese(paciente_id=2)),
+        AsyncMock(return_value=_anamnese(paciente_id=_OUTRO_PACIENTE_ID)),
     )
 
     with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=1,
+                paciente_id=PACIENTE_STUB_ID,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",
@@ -128,7 +132,7 @@ def test_anamnese_ja_utilizada(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=1,
+                paciente_id=PACIENTE_STUB_ID,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",

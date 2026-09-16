@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -46,7 +47,7 @@ async def buscar_por_anamnese(
 
 async def inserir(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     anamnese_id: int,
     url_arquivo: str,
     parametros_captura: dict,
@@ -127,7 +128,7 @@ async def listar_conteudos_por_classificacao(
 
 async def tem_profissional_vinculado(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
         select(PacienteProfissional.id)
@@ -140,7 +141,7 @@ async def tem_profissional_vinculado(
 
 async def buscar_nome_usuario(
     db: AsyncSession,
-    usuario_id: int,
+    usuario_id: uuid.UUID,
 ) -> str | None:
     result = await db.execute(select(User.name).where(User.id == usuario_id))
 

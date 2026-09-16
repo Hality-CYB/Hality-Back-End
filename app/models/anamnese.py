@@ -1,5 +1,6 @@
 """Anamnese clínica preenchida pelo paciente."""
 
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, func
@@ -19,7 +20,7 @@ class Anamnese(Base):
     __tablename__ = "anamneses"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    paciente_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    paciente_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     data_preenchimento: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

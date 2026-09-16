@@ -1,3 +1,4 @@
+import uuid
 from collections import Counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,7 +117,7 @@ def _para_detalhe(anamnese: Anamnese) -> AnamneseDetail:
 
 
 async def criar_anamnese(
-    db: AsyncSession, paciente_id: int, payload: AnamneseCreate
+    db: AsyncSession, paciente_id: uuid.UUID, payload: AnamneseCreate
 ) -> AnamneseCreated:
     validar_respostas(QUESTIONARIO_VIGENTE, payload)
     anamnese = await anamnese_queries.inserir(
@@ -129,12 +130,14 @@ async def criar_anamnese(
     )
 
 
-async def listar_anamneses(db: AsyncSession, paciente_id: int) -> list[AnamneseDetail]:
+async def listar_anamneses(db: AsyncSession, paciente_id: uuid.UUID) -> list[AnamneseDetail]:
     anamneses = await anamnese_queries.listar_por_paciente(db, paciente_id)
     return [_para_detalhe(a) for a in anamneses]
 
 
-async def obter_anamnese(db: AsyncSession, paciente_id: int, anamnese_id: int) -> AnamneseDetail:
+async def obter_anamnese(
+    db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int
+) -> AnamneseDetail:
     anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
     if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
@@ -142,7 +145,7 @@ async def obter_anamnese(db: AsyncSession, paciente_id: int, anamnese_id: int) -
 
 
 async def atualizar_anamnese(
-    db: AsyncSession, paciente_id: int, anamnese_id: int, payload: AnamneseCreate
+    db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int, payload: AnamneseCreate
 ) -> AnamneseDetail:
     anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
     if anamnese is None or anamnese.paciente_id != paciente_id:
@@ -154,7 +157,7 @@ async def atualizar_anamnese(
     return _para_detalhe(anamnese)
 
 
-async def deletar_anamnese(db: AsyncSession, paciente_id: int, anamnese_id: int) -> None:
+async def deletar_anamnese(db: AsyncSession, paciente_id: uuid.UUID, anamnese_id: int) -> None:
     anamnese = await anamnese_queries.buscar_por_id(db, anamnese_id)
     if anamnese is None or anamnese.paciente_id != paciente_id:
         raise AnamneseNaoEncontradaError
