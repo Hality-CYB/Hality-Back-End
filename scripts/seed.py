@@ -27,9 +27,8 @@ from app.db.session import async_session_factory
 from app.models import (
     Anamnese,
     ClassificacaoDiagnostico,
-    ConteudoDiagnostico,
+    Conteudo,
     Diagnostico,
-    Dica,
     Imagem,
     PacienteProfissional,
     Profissional,
@@ -94,8 +93,8 @@ async def seed() -> None:
             Imagem,
             Diagnostico,
             Anamnese,
-            Dica,
-            ConteudoDiagnostico,
+            Conteudo,
+            Conteudo,
             PacienteProfissional,
             Profissional,
             ClassificacaoDiagnostico,
@@ -222,7 +221,7 @@ async def seed() -> None:
                 },
                 {
                     "id": "ja_falaram_que_tem_mau_halito",
-                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?",
+                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?", # noqa: E501
                     "tipo": "boolean",
                     "obrigatoria": True,
                     "opcoes": None,
@@ -267,7 +266,7 @@ async def seed() -> None:
                 {
                     "id": "usa_algo_para_disfarcar",
                     "enunciado": (
-                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?"
+                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?" # noqa: E501
                     ),
                     "tipo": "boolean",
                     "obrigatoria": True,
@@ -325,41 +324,32 @@ async def seed() -> None:
 
         db.add_all(
             [
-                ConteudoDiagnostico(
-                    classificacao_id=None,
-                    tipo="dica",
-                    titulo="Escovação após as refeições",
-                    dados={
-                        "tipo_midia": "texto",
-                        "corpo": "Escove os dentes em até 30 minutos após comer.",
+                Conteudo(
+                    titulo="Orientação de higiene",
+                    categoria="higiene",
+                    conteudo={
+                        "itens": [
+                            {"tipo": "texto", "texto": "Escove os dentes após as refeições."} # noqa: E501
+                        ]
                     },
+                    classificacao_ids=[halitose_leve.id],
+                    aparece_na_home=True,
+                    status="publicado",
                 ),
-                ConteudoDiagnostico(
-                    classificacao_id=halitose_leve.id,
-                    tipo="dica",
-                    titulo="Use fio dental diariamente",
-                    dados={
-                        "tipo_midia": "texto",
-                        "corpo": "O fio dental remove restos de comida que a escova não alcança.",
+                Conteudo(
+                    titulo="Protocolo periodontal",
+                    categoria="tratamento",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "protocolo_tratamento",
+                                "numero_sessoes": 4,
+                                "descricao": "Acompanhamento periodontal mensal.",
+                            }
+                        ]
                     },
-                ),
-                ConteudoDiagnostico(
-                    classificacao_id=halitose_social.id,
-                    tipo="protocolo",
-                    titulo="Protocolo de raspagem e limpeza",
-                    dados={
-                        "numero_sessoes": 2,
-                        "descricao": "Raspagem supragengival seguida de reavaliação em 15 dias.",
-                    },
-                ),
-                ConteudoDiagnostico(
-                    classificacao_id=halitose_severa.id,
-                    tipo="protocolo",
-                    titulo="Protocolo de tratamento periodontal",
-                    dados={
-                        "numero_sessoes": 4,
-                        "descricao": "Raspagem subgengival + acompanhamento periodontal mensal.",
-                    },
+                    classificacao_ids=[halitose_severa.id],
+                    status="publicado",
                 ),
             ]
         )
@@ -539,37 +529,61 @@ async def seed() -> None:
 
         db.add_all(
             [
-                Dica(
+                Conteudo(
                     titulo="O que é halitose?",
-                    conteudo=(
-                        "Halitose é o nome dado ao mau hálito persistente. Na maioria "
-                        "dos casos ela tem origem na própria boca, em restos de comida "
-                        "e bactérias acumuladas na língua e entre os dentes."
-                    ),
+                    categoria="saude",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "Halitose é o nome dado ao mau hálito persistente. Na maioria " # noqa: E501
+                                "dos casos ela tem origem na própria boca, em restos de comida "
+                                "e bactérias acumuladas na língua e entre os dentes.",
+                            }
+                        ]
+                    },
                 ),
-                Dica(
+                Conteudo(
                     titulo="Limpe a língua todos os dias",
-                    conteudo=(
-                        "A saburra lingual, aquela camada esbranquiçada no fundo da "
-                        "língua, é a causa mais comum de mau hálito. Use um limpador "
-                        "de língua do fundo para a frente, sem forçar, uma vez ao dia."
-                    ),
+                    categoria="higiene",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "A saburra lingual, aquela camada esbranquiçada no fundo da " # noqa: E501
+                                "língua, é a causa mais comum de mau hálito. Use um limpador " # noqa: E501
+                                "de língua do fundo para a frente, sem forçar, uma vez ao dia.", # noqa: E501
+                            }
+                        ]
+                    },
                 ),
-                Dica(
+                Conteudo(
                     titulo="Beba água ao longo do dia",
-                    conteudo=(
-                        "A boca seca favorece o mau hálito porque a saliva é o que "
-                        "limpa naturalmente os resíduos. Beba água com frequência, "
-                        "principalmente ao acordar e depois de exercícios."
-                    ),
+                    categoria="rotina",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "A boca seca favorece o mau hálito porque a saliva é o que " # noqa: E501
+                                "limpa naturalmente os resíduos. Beba água com frequência, " # noqa: E501
+                                "principalmente ao acordar e depois de exercícios.",
+                            }
+                        ]
+                    },
                 ),
-                Dica(
+                Conteudo(
                     titulo="Mau hálito não se resolve só com enxaguante",
-                    conteudo=(
-                        "Enxaguantes mascaram o odor por algumas horas, mas não removem "
-                        "a causa. Se o mau hálito continua mesmo com boa higiene, "
-                        "procure um dentista para investigar a origem."
-                    ),
+                    categoria="tratamento",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "Enxaguantes mascaram o odor por algumas horas, mas não removem " # noqa: E501
+                                "a causa. Se o mau hálito continua mesmo com boa higiene, "
+                                "procure um dentista para investigar a origem.",
+                            }
+                        ]
+                    },
                 ),
             ]
         )

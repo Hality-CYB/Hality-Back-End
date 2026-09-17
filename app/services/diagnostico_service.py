@@ -251,9 +251,8 @@ async def obter_diagnostico(
         "conteudos": [
             {
                 "id": conteudo.id,
-                "tipo": conteudo.tipo,
+                "conteudo": conteudo.conteudo,
                 "titulo": conteudo.titulo,
-                "dados": conteudo.dados,
             }
             for conteudo in dados.conteudos
         ]
