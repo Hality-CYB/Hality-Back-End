@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision = "e7c1d2a3b4f5"
-down_revision = "d024e0e08253"
+down_revision = "2ab18391a8a0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -221,7 +221,7 @@ async def seed() -> None:
                 },
                 {
                     "id": "ja_falaram_que_tem_mau_halito",
-                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?", # noqa: E501
+                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?",  # noqa: E501
                     "tipo": "boolean",
                     "obrigatoria": True,
                     "opcoes": None,
@@ -266,7 +266,7 @@ async def seed() -> None:
                 {
                     "id": "usa_algo_para_disfarcar",
                     "enunciado": (
-                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?" # noqa: E501
+                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?"  # noqa: E501
                     ),
                     "tipo": "boolean",
                     "obrigatoria": True,
@@ -329,7 +329,7 @@ async def seed() -> None:
                     categoria="higiene",
                     conteudo={
                         "itens": [
-                            {"tipo": "texto", "texto": "Escove os dentes após as refeições."} # noqa: E501
+                            {"tipo": "texto", "texto": "Escove os dentes após as refeições."}  # noqa: E501
                         ]
                     },
                     classificacao_ids=[halitose_leve.id],
@@ -536,7 +536,7 @@ async def seed() -> None:
                         "itens": [
                             {
                                 "tipo": "texto",
-                                "texto": "Halitose é o nome dado ao mau hálito persistente. Na maioria " # noqa: E501
+                                "texto": "Halitose é o nome dado ao mau hálito persistente. Na maioria "  # noqa: E501
                                 "dos casos ela tem origem na própria boca, em restos de comida "
                                 "e bactérias acumuladas na língua e entre os dentes.",
                             }
@@ -550,9 +550,9 @@ async def seed() -> None:
                         "itens": [
                             {
                                 "tipo": "texto",
-                                "texto": "A saburra lingual, aquela camada esbranquiçada no fundo da " # noqa: E501
-                                "língua, é a causa mais comum de mau hálito. Use um limpador " # noqa: E501
-                                "de língua do fundo para a frente, sem forçar, uma vez ao dia.", # noqa: E501
+                                "texto": "A saburra lingual, aquela camada esbranquiçada no fundo da "  # noqa: E501
+                                "língua, é a causa mais comum de mau hálito. Use um limpador "  # noqa: E501
+                                "de língua do fundo para a frente, sem forçar, uma vez ao dia.",  # noqa: E501
                             }
                         ]
                     },
@@ -564,8 +564,8 @@ async def seed() -> None:
                         "itens": [
                             {
                                 "tipo": "texto",
-                                "texto": "A boca seca favorece o mau hálito porque a saliva é o que " # noqa: E501
-                                "limpa naturalmente os resíduos. Beba água com frequência, " # noqa: E501
+                                "texto": "A boca seca favorece o mau hálito porque a saliva é o que "  # noqa: E501
+                                "limpa naturalmente os resíduos. Beba água com frequência, "  # noqa: E501
                                 "principalmente ao acordar e depois de exercícios.",
                             }
                         ]
@@ -578,7 +578,7 @@ async def seed() -> None:
                         "itens": [
                             {
                                 "tipo": "texto",
-                                "texto": "Enxaguantes mascaram o odor por algumas horas, mas não removem " # noqa: E501
+                                "texto": "Enxaguantes mascaram o odor por algumas horas, mas não removem "  # noqa: E501
                                 "a causa. Se o mau hálito continua mesmo com boa higiene, "
                                 "procure um dentista para investigar a origem.",
                             }
