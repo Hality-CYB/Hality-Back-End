@@ -36,6 +36,28 @@ class DiagnosticoCreated(BaseModel):
     data_diagnostico: datetime
 
 
+class ClassificacaoDiagnosticoResumo(BaseModel):
+    codigo: str
+    nome_exibicao: str
+    ordem: int
+
+
+class DiagnosticoListItem(BaseModel):
+    id: int
+    data_diagnostico: datetime
+    status: str
+    classificacao: ClassificacaoDiagnosticoResumo | None
+    escala_saburra: int | None
+
+
+class DiagnosticoListResponse(BaseModel):
+    itens: list[DiagnosticoListItem]
+    pagina: int
+    limite: int
+    total: int
+    total_paginas: int
+
+
 class DiagnosticoRevisao(BaseModel):
     """Corpo usado pelo profissional para revisar/validar um diagnóstico.
 

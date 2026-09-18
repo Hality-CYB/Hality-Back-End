@@ -28,8 +28,12 @@ services:
       db:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - diagnosticos_data:/app/.data
     restart: unless-stopped
 
 volumes:
   postgres_data:
     name: hality_postgres_data
+  diagnosticos_data:
+    name: hality_diagnosticos_data

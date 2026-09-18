@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db import anamnese_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
+from app.schemas.diagnostico import (
+    ClassificacaoDiagnosticoResumo,
+    DiagnosticoListItem,
+    DiagnosticoListResponse,
+)
 from app.services import diagnostico_mock, diagnostico_storage
 
 AVISO_LEGAL = (
@@ -16,6 +22,14 @@ AVISO_LEGAL = (
 STATUS_COM_RESULTADO = {
     "aguardando_revisao",
     "concluido",
+}
+STATUS_SEM_RESULTADO_LISTAGEM = {
+    "falha",
+    "processando",
+}
+ORDENS_LISTAGEM = {
+    "data_asc",
+    "data_desc",
 }
 
 
@@ -45,6 +59,12 @@ class DiagnosticoAcessoNegadoError(Exception):
     pass
 
 
+class DiagnosticoFiltroInvalidoError(Exception):
+    def __init__(self, motivo: str) -> None:
+        self.motivo = motivo
+        super().__init__(motivo)
+
+
 def _validar_imagem(
     imagem: bytes,
     content_type: str,
@@ -61,6 +81,106 @@ def _validar_imagem(
         "image/webp",
     }:
         raise ImagemInvalidaError("Formato de imagem inválido. Envie JPEG, PNG ou WEBP.")
+
+
+def _normalizar_data_parametro(
+    valor: str | None,
+    nome: str,
+    fim_do_dia: bool,
+) -> datetime | None:
+    if valor is None:
+        return None
+
+    valor = valor.strip()
+
+    try:
+        if "T" not in valor and len(valor) == 10:
+            data = date.fromisoformat(valor)
+            horario = time.max if fim_do_dia else time.min
+            return datetime.combine(data, horario, tzinfo=UTC)
+
+        data_hora = datetime.fromisoformat(valor.replace("Z", "+00:00"))
+
+    except ValueError as exc:
+        raise DiagnosticoFiltroInvalidoError(f"{nome} deve estar em formato ISO valido") from exc
+
+    if data_hora.tzinfo is None:
+        return data_hora.replace(tzinfo=UTC)
+
+    return data_hora
+
+
+def _normalizar_status(status: str | None) -> str | None:
+    if status is None:
+        return None
+
+    status = status.strip()
+
+    return status or None
+
+
+def _validar_filtros_listagem(
+    data_inicio: str | None,
+    data_fim: str | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> tuple[datetime | None, datetime | None, str]:
+    if pagina < 1:
+        raise DiagnosticoFiltroInvalidoError("pagina deve ser maior ou igual a 1")
+
+    if limite < 1:
+        raise DiagnosticoFiltroInvalidoError("limite deve ser maior ou igual a 1")
+
+    if limite > 50:
+        raise DiagnosticoFiltroInvalidoError("limite maximo permitido e 50")
+
+    if ordem not in ORDENS_LISTAGEM:
+        raise DiagnosticoFiltroInvalidoError("ordem deve ser data_desc ou data_asc")
+
+    data_inicio_normalizada = _normalizar_data_parametro(
+        data_inicio,
+        "data_inicio",
+        fim_do_dia=False,
+    )
+    data_fim_normalizada = _normalizar_data_parametro(
+        data_fim,
+        "data_fim",
+        fim_do_dia=True,
+    )
+
+    if (
+        data_inicio_normalizada is not None
+        and data_fim_normalizada is not None
+        and data_inicio_normalizada > data_fim_normalizada
+    ):
+        raise DiagnosticoFiltroInvalidoError("data_inicio deve ser menor ou igual a data_fim")
+
+    return data_inicio_normalizada, data_fim_normalizada, ordem
+
+
+def _para_item_listagem(
+    item: diagnostico_queries.DiagnosticoListado,
+) -> DiagnosticoListItem:
+    diagnostico = item.diagnostico
+    tem_resultado = diagnostico.status not in STATUS_SEM_RESULTADO_LISTAGEM
+    classificacao = item.classificacao if tem_resultado else None
+
+    return DiagnosticoListItem(
+        id=diagnostico.id,
+        data_diagnostico=diagnostico.data_diagnostico,
+        status=diagnostico.status,
+        classificacao=(
+            ClassificacaoDiagnosticoResumo(
+                codigo=classificacao.codigo,
+                nome_exibicao=classificacao.nome_exibicao,
+                ordem=classificacao.ordem,
+            )
+            if classificacao is not None
+            else None
+        ),
+        escala_saburra=(diagnostico.escala_saburra if tem_resultado else None),
+    )
 
 
 def _montar_revisao(
@@ -91,6 +211,44 @@ def _montar_revisao(
             else False
         ),
     }
+
+
+async def listar_diagnosticos(
+    db: AsyncSession,
+    paciente_id: int,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    status: str | None = None,
+    pagina: int = 1,
+    limite: int = 20,
+    ordem: str = "data_desc",
+) -> DiagnosticoListResponse:
+    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem,
+    )
+
+    resultado = await diagnostico_queries.listar_por_paciente(
+        db=db,
+        paciente_id=paciente_id,
+        data_inicio=data_inicio_normalizada,
+        data_fim=data_fim_normalizada,
+        status=_normalizar_status(status),
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem_normalizada,
+    )
+
+    return DiagnosticoListResponse(
+        itens=[_para_item_listagem(item) for item in resultado.itens],
+        pagina=pagina,
+        limite=limite,
+        total=resultado.total,
+        total_paginas=(resultado.total + limite - 1) // limite,
+    )
 
 
 async def criar_diagnostico(
