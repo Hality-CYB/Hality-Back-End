@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.schemas.conteudo import CategoriaConteudo, ConteudoSchema
+
 
 class HomeUsuario(BaseModel):
     id: uuid.UUID
@@ -23,16 +25,14 @@ class HomeUltimoDiagnostico(BaseModel):
     escala_saburra: int | None
 
 
-class DicaResumo(BaseModel):
+class HomeDica(BaseModel):
     id: int
     titulo: str
-    conteudo: str
+    categoria: CategoriaConteudo
+    conteudo: ConteudoSchema
 
 
 class HomeResponse(BaseModel):
     usuario: HomeUsuario
-    total_diagnosticos: int
-    avisos_nao_lidos: int
     ultimo_diagnostico: HomeUltimoDiagnostico | None
-    total_dicas: int
-    dicas: list[DicaResumo]
+    dicas: list[HomeDica]

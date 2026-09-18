@@ -264,21 +264,49 @@ Se a API estiver rodando em container, use `docker exec <container> python -m sc
 
 | Tabela | Registros |
 |---|---|
-| `users` | 1 admin, 2 profissionais, 3 pacientes |
+| `users` | 1 admin, 2 profissionais, 4 pacientes |
 | `profissionais` | 2 (vinculados aos usuários profissionais) |
 | `pacientes_profissionais` | 3 vínculos paciente↔profissional |
 | `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
-| `conteudos_diagnostico` | 4 (dicas e protocolos, um deles genérico sem classificação) |
+| `conteudos` | 6 (conteúdos genéricos; 4 marcados para exibição na Home) |
 | `anamneses` | 6 (uma por diagnóstico) |
 | `diagnosticos` | 6 (Carla com 4, Diego e Elisa com 1 cada), em status diferentes: `processando`, `concluido`, `falha` |
 | `imagens` | 7 (vinculadas aos diagnósticos — um deles com 2 imagens) |
-| `dicas` | 4 (conteúdo educativo exibido na home) |
 
 Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) — só serve pra desenvolvimento local, nunca use esses dados em produção.
 
 ### Idempotência
 
 O script **apaga** os dados das tabelas de negócio (na ordem reversa das foreign keys) antes de inserir de novo. Ou seja, pode rodar `uv run python -m scripts.seed` quantas vezes quiser — sempre termina com a mesma massa de dados, sem erro de chave duplicada. Isso também significa que ele **não deve rodar contra um banco com dados reais**.
+
+## Home
+
+`GET /api/v1/home` exige o bearer token do usuário autenticado e concentra os dados usados na abertura da aplicação:
+
+```json
+{
+  "usuario": {
+    "id": "uuid",
+    "nome": "Carla Mendes",
+    "tipo_usuario": "paciente"
+  },
+  "ultimo_diagnostico": null,
+  "dicas": [
+    {
+      "id": 1,
+      "titulo": "Limpe a língua todos os dias",
+      "categoria": "higiene",
+      "conteudo": {
+        "itens": [
+          {"tipo": "texto", "texto": "Use um limpador de língua uma vez ao dia."}
+        ]
+      }
+    }
+  ]
+}
+```
+
+As dicas são registros de `conteudos` com `aparece_na_home = true`, ordenados por `ordem` e `id`. `ultimo_diagnostico` é `null` quando o usuário ainda não possui histórico.
 
 ## Arquitetura
 
