@@ -34,11 +34,9 @@ async def _montar_ultimo_diagnostico(
         data_diagnostico=diagnostico.data_diagnostico,
         status=diagnostico.status,
         classificacao=classificacao,
-        escala_saburra=(
-            diagnostico.escala_saburra
-            if diagnostico.status in STATUS_COM_RESULTADO
-            else None
-        ),
+        escala_saburra=diagnostico.escala_saburra
+        if diagnostico.status in STATUS_COM_RESULTADO
+        else None,
     )
 
 
