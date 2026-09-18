@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -7,11 +8,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db import anamnese_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
-from app.services import diagnostico_mock, diagnostico_storage
+from app.services import diagnostico_storage
+from app.services.diagnostic_provider import (
+    DiagnosticProviderError,
+    DiagnosticRequest,
+    get_diagnostic_provider,
+    validate_provider_result,
+)
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
 )
+
+ERRO_PROCESSAMENTO = "Não foi possível processar o diagnóstico."
 
 STATUS_COM_RESULTADO = {
     "aguardando_revisao",
@@ -45,6 +54,10 @@ class DiagnosticoAcessoNegadoError(Exception):
     pass
 
 
+class DiagnosticoRetryInvalidoError(Exception):
+    pass
+
+
 def _validar_imagem(
     imagem: bytes,
     content_type: str,
@@ -61,6 +74,13 @@ def _validar_imagem(
         "image/webp",
     }:
         raise ImagemInvalidaError("Formato de imagem inválido. Envie JPEG, PNG ou WEBP.")
+
+
+def _normalizar_respostas(respostas: list) -> list:
+    return [
+        resposta.model_dump(mode="json") if hasattr(resposta, "model_dump") else resposta
+        for resposta in respostas
+    ]
 
 
 def _montar_revisao(
@@ -91,6 +111,80 @@ def _montar_revisao(
             else False
         ),
     }
+
+
+async def _processar_com_provider(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    anamnese: Any,
+    url_arquivo: str,
+) -> Diagnostico:
+    settings = get_settings()
+    provider = get_diagnostic_provider(settings)
+
+    request = DiagnosticRequest(
+        evaluation_id=diagnostico.id,
+        image_reference=url_arquivo,
+        anamnesis_answers=_normalizar_respostas(anamnese.respostas),
+    )
+
+    try:
+        resultado = await provider.analyze(request)
+        validate_provider_result(resultado)
+
+    except DiagnosticProviderError:
+        return await diagnostico_queries.marcar_falha(
+            db=db,
+            diagnostico=diagnostico,
+            erro=ERRO_PROCESSAMENTO,
+            provider=settings.diagnostic_provider,
+            model_version="unknown",
+            data_processamento=datetime.now(UTC),
+        )
+
+    if resultado.status == "processing":
+        return await diagnostico_queries.marcar_processando(
+            db=db,
+            diagnostico=diagnostico,
+            provider=resultado.provider,
+            model_version=resultado.model_version,
+        )
+
+    if resultado.status == "failed":
+        return await diagnostico_queries.marcar_falha(
+            db=db,
+            diagnostico=diagnostico,
+            erro=ERRO_PROCESSAMENTO,
+            provider=resultado.provider,
+            model_version=resultado.model_version,
+            data_processamento=resultado.processed_at or datetime.now(UTC),
+        )
+
+    classificacao = await diagnostico_queries.buscar_classificacao_por_ordem(
+        db,
+        resultado.level,
+    )
+
+    if classificacao is None:
+        return await diagnostico_queries.marcar_falha(
+            db=db,
+            diagnostico=diagnostico,
+            erro=ERRO_PROCESSAMENTO,
+            provider=resultado.provider,
+            model_version=resultado.model_version,
+            data_processamento=resultado.processed_at or datetime.now(UTC),
+        )
+
+    return await diagnostico_queries.salvar_resultado(
+        db=db,
+        diagnostico=diagnostico,
+        classificacao_id=classificacao.id,
+        provider=resultado.provider,
+        model_version=resultado.model_version,
+        score=resultado.score,
+        confianca_ia=resultado.confidence,
+        data_processamento=resultado.processed_at or datetime.now(UTC),
+    )
 
 
 async def criar_diagnostico(
@@ -139,7 +233,6 @@ async def criar_diagnostico(
 
     except IntegrityError as exc:
         await db.rollback()
-
         await diagnostico_storage.remover(url_arquivo)
 
         existente = await diagnostico_queries.buscar_por_anamnese(
@@ -154,15 +247,20 @@ async def criar_diagnostico(
 
     except Exception:
         await db.rollback()
-
         await diagnostico_storage.remover(url_arquivo)
-
         raise
+
+    diagnostico = await _processar_com_provider(
+        db=db,
+        diagnostico=diagnostico,
+        anamnese=anamnese,
+        url_arquivo=url_arquivo,
+    )
 
     return {
         "id": diagnostico.id,
         "status": diagnostico.status,
-        "data_diagnostico": (diagnostico.data_diagnostico),
+        "data_diagnostico": diagnostico.data_diagnostico,
         "anamnese_id": anamnese_id,
     }
 
@@ -182,11 +280,6 @@ async def obter_diagnostico(
 
     if diagnostico.paciente_id != paciente_id:
         raise DiagnosticoAcessoNegadoError
-
-    diagnostico = await diagnostico_mock.processar_se_necessario(
-        db,
-        diagnostico,
-    )
 
     if diagnostico.anamnese_id is None:
         raise AnamneseNaoEncontradaError
@@ -215,13 +308,13 @@ async def obter_diagnostico(
 
     return {
         "id": diagnostico.id,
-        "data_diagnostico": (diagnostico.data_diagnostico),
+        "data_diagnostico": diagnostico.data_diagnostico,
         "status": diagnostico.status,
         "classificacao": (
             {
                 "id": classificacao.id,
                 "codigo": classificacao.codigo,
-                "nome_exibicao": (classificacao.nome_exibicao),
+                "nome_exibicao": classificacao.nome_exibicao,
                 "ordem": classificacao.ordem,
             }
             if classificacao is not None
@@ -232,22 +325,19 @@ async def obter_diagnostico(
         "imagens": [
             {
                 "id": imagem.id,
-                "url_arquivo": (imagem.url_arquivo),
+                "url_arquivo": imagem.url_arquivo,
                 "ordem": imagem.ordem,
-                "data_captura": (imagem.data_captura),
+                "data_captura": imagem.data_captura,
             }
             for imagem in dados.imagens
         ],
         "anamnese": {
             "id": anamnese.id,
-            "data_preenchimento": (anamnese.data_preenchimento),
-            "respostas": [
-                resposta.model_dump(mode="json") if hasattr(resposta, "model_dump") else resposta
-                for resposta in anamnese.respostas
-            ],
+            "data_preenchimento": anamnese.data_preenchimento,
+            "respostas": _normalizar_respostas(anamnese.respostas),
         },
         "revisao": revisao,
-        "tem_profissional_vinculado": (dados.tem_profissional_vinculado),
+        "tem_profissional_vinculado": dados.tem_profissional_vinculado,
         "conteudos": [
             {
                 "id": conteudo.id,
@@ -259,13 +349,55 @@ async def obter_diagnostico(
         if tem_resultado
         else [],
         "aviso_legal": AVISO_LEGAL,
-        "erro": (
-            getattr(
-                diagnostico,
-                "erro",
-                None,
-            )
-            if diagnostico.status == "falha"
-            else None
-        ),
+        "erro": diagnostico.erro if diagnostico.status == "falha" else None,
+    }
+
+
+async def retry_diagnostico(
+    db: AsyncSession,
+    paciente_id: int,
+    diagnostico_id: int,
+) -> dict[str, Any]:
+    diagnostico = await diagnostico_queries.buscar_por_id(
+        db,
+        diagnostico_id,
+    )
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    if diagnostico.paciente_id != paciente_id:
+        raise DiagnosticoAcessoNegadoError
+
+    if diagnostico.status != "falha":
+        raise DiagnosticoRetryInvalidoError
+
+    anamnese = await anamnese_queries.buscar_por_id(
+        db,
+        diagnostico.anamnese_id,
+    )
+
+    if anamnese is None:
+        raise AnamneseNaoEncontradaError
+
+    imagens = await diagnostico_queries.listar_imagens(
+        db,
+        diagnostico.id,
+    )
+
+    if not imagens:
+        raise ImagemInvalidaError("Imagem do diagnóstico não encontrada.")
+
+    diagnostico = await _processar_com_provider(
+        db=db,
+        diagnostico=diagnostico,
+        anamnese=anamnese,
+        url_arquivo=imagens[0].url_arquivo,
+    )
+
+    return {
+        "id": diagnostico.id,
+        "status": diagnostico.status,
+        "data_diagnostico": diagnostico.data_diagnostico,
+        "anamnese_id": diagnostico.anamnese_id,
     }

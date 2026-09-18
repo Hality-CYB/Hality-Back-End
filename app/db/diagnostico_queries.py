@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,6 @@ async def buscar_por_id(
     diagnostico_id: int,
 ) -> Diagnostico | None:
     result = await db.execute(select(Diagnostico).where(Diagnostico.id == diagnostico_id))
-
     return result.scalar_one_or_none()
 
 
@@ -39,7 +39,6 @@ async def buscar_por_anamnese(
     anamnese_id: int,
 ) -> Diagnostico | None:
     result = await db.execute(select(Diagnostico).where(Diagnostico.anamnese_id == anamnese_id))
-
     return result.scalar_one_or_none()
 
 
@@ -56,11 +55,15 @@ async def inserir(
         classificacao_id=None,
         escala_saburra=None,
         confianca_ia=None,
+        score=None,
         status="processando",
+        provider=None,
+        model_version=None,
+        erro=None,
+        data_envio=None,
+        data_processamento=None,
     )
-
     db.add(diagnostico)
-
     await db.flush()
 
     imagem = Imagem(
@@ -69,12 +72,10 @@ async def inserir(
         ordem=1,
         parametros_captura=parametros_captura,
     )
-
     db.add(imagem)
 
     await db.commit()
     await db.refresh(diagnostico)
-
     return diagnostico
 
 
@@ -85,7 +86,6 @@ async def listar_imagens(
     result = await db.execute(
         select(Imagem).where(Imagem.diagnostico_id == diagnostico_id).order_by(Imagem.ordem.asc())
     )
-
     return list(result.scalars().all())
 
 
@@ -96,7 +96,6 @@ async def buscar_classificacao(
     result = await db.execute(
         select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.id == classificacao_id)
     )
-
     return result.scalar_one_or_none()
 
 
@@ -107,7 +106,6 @@ async def buscar_classificacao_por_ordem(
     result = await db.execute(
         select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.ordem == ordem)
     )
-
     return result.scalar_one_or_none()
 
 
@@ -120,7 +118,6 @@ async def listar_conteudos_por_classificacao(
         .where(Conteudo.classificacao_ids.any(classificacao_id))
         .order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
     )
-
     return list(result.scalars().all())
 
 
@@ -133,7 +130,6 @@ async def tem_profissional_vinculado(
         .where(PacienteProfissional.paciente_id == paciente_id)
         .limit(1)
     )
-
     return result.scalar_one_or_none() is not None
 
 
@@ -142,7 +138,6 @@ async def buscar_nome_usuario(
     usuario_id: uuid.UUID,
 ) -> str | None:
     result = await db.execute(select(User.name).where(User.id == usuario_id))
-
     return result.scalar_one_or_none()
 
 
@@ -163,7 +158,6 @@ async def buscar_dados_detalhe(
             db,
             diagnostico.classificacao_id,
         )
-
         conteudos = await listar_conteudos_por_classificacao(
             db,
             diagnostico.classificacao_id,
@@ -175,7 +169,6 @@ async def buscar_dados_detalhe(
     )
 
     profissional_nome = None
-
     if diagnostico.profissional_revisor_id is not None:
         profissional_nome = await buscar_nome_usuario(
             db,
@@ -191,27 +184,48 @@ async def buscar_dados_detalhe(
     )
 
 
-async def concluir_mock(
+async def marcar_processando(
     db: AsyncSession,
     diagnostico: Diagnostico,
-    classificacao_id: int,
-    escala_saburra: int,
-    confianca_ia: float,
+    provider: str,
+    model_version: str,
 ) -> Diagnostico:
-    diagnostico.classificacao_id = classificacao_id
-
-    diagnostico.escala_saburra = escala_saburra
-
-    diagnostico.confianca_ia = confianca_ia
-
-    diagnostico.status = "concluido"
-
-    if hasattr(diagnostico, "erro"):
-        diagnostico.erro = None
+    diagnostico.status = "processando"
+    diagnostico.provider = provider
+    diagnostico.model_version = model_version
+    diagnostico.erro = None
+    diagnostico.data_envio = datetime.now(UTC)
+    diagnostico.data_processamento = None
 
     await db.commit()
     await db.refresh(diagnostico)
+    return diagnostico
 
+
+async def salvar_resultado(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    classificacao_id: int,
+    provider: str,
+    model_version: str,
+    score: float | None,
+    confianca_ia: float | None,
+    data_processamento: datetime,
+) -> Diagnostico:
+    diagnostico.classificacao_id = classificacao_id
+    diagnostico.score = score
+    diagnostico.confianca_ia = confianca_ia
+    diagnostico.status = "concluido"
+    diagnostico.provider = provider
+    diagnostico.model_version = model_version
+    diagnostico.erro = None
+    diagnostico.data_processamento = data_processamento
+
+    if diagnostico.data_envio is None:
+        diagnostico.data_envio = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(diagnostico)
     return diagnostico
 
 
@@ -219,16 +233,23 @@ async def marcar_falha(
     db: AsyncSession,
     diagnostico: Diagnostico,
     erro: str,
+    provider: str,
+    model_version: str,
+    data_processamento: datetime,
 ) -> Diagnostico:
     diagnostico.classificacao_id = None
     diagnostico.escala_saburra = None
     diagnostico.confianca_ia = None
+    diagnostico.score = None
     diagnostico.status = "falha"
+    diagnostico.provider = provider
+    diagnostico.model_version = model_version
+    diagnostico.erro = erro
+    diagnostico.data_processamento = data_processamento
 
-    if hasattr(diagnostico, "erro"):
-        diagnostico.erro = erro
+    if diagnostico.data_envio is None:
+        diagnostico.data_envio = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(diagnostico)
-
     return diagnostico

@@ -1,6 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import SecretStr, computed_field
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,12 +27,27 @@ class Settings(BaseSettings):
     postgres_db: str
     db_echo: bool = False
 
+    diagnostic_provider: str = "mock"
+
+    diagnostic_mock_level: int = Field(
+        default=2,
+        ge=1,
+        le=3,
+    )
+
+    diagnostic_mock_scenario: Literal[
+        "success",
+        "processing",
+        "failure",
+        "invalid_response",
+    ] = "success"
+
     @computed_field
     @property
     def database_url(self) -> str:
-        """Monta a URL de conexão asyncpg a partir das variáveis individuais."""
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:"
+            "postgresql+asyncpg://"
+            f"{self.postgres_user}:"
             f"{self.postgres_password.get_secret_value()}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
@@ -39,6 +55,17 @@ class Settings(BaseSettings):
     secret_key: SecretStr
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+
+    @model_validator(mode="after")
+    def validate_diagnostic_provider(
+        self,
+    ) -> "Settings":
+        environment = self.environment.lower()
+
+        if environment in {"production", "prod"} and self.diagnostic_provider == "mock":
+            raise ValueError("DIAGNOSTIC_PROVIDER=mock não pode ser usado em produção.")
+
+        return self
 
 
 @lru_cache

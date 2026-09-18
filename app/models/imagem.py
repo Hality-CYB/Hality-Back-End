@@ -13,7 +13,9 @@ class Imagem(Base):
     __tablename__ = "imagens"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    diagnostico_id: Mapped[int] = mapped_column(ForeignKey("diagnosticos.id", ondelete="CASCADE"))
+    diagnostico_id: Mapped[int] = mapped_column(
+        ForeignKey("diagnosticos.id", ondelete="CASCADE"), unique=True
+    )
     url_arquivo: Mapped[str] = mapped_column(String(500))
     ordem: Mapped[int] = mapped_column(Integer)
     parametros_captura: Mapped[dict] = mapped_column(JSONB)
