@@ -24,7 +24,6 @@ STATUS_COM_RESULTADO = {
     "concluido",
 }
 STATUS_SEM_RESULTADO_LISTAGEM = {
-    "aguardando_analise",
     "falha",
     "processando",
 }

@@ -148,7 +148,7 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
                 escala_saburra = 60 + indice
 
                 if indice == 3:
-                    status = "aguardando_analise"
+                    status = "processando"
                     classificacao_id = None
                     escala_saburra = None
                 elif indice == 5:
@@ -441,13 +441,13 @@ def test_listar_diagnosticos_filtra_datas_inclusivas(
     assert datas == sorted(datas)
 
 
-def test_listar_diagnosticos_aguardando_analise_sem_resultado(
+def test_listar_diagnosticos_processando_sem_resultado(
     diagnosticos_para_listagem: None,
 ) -> None:
     response = client.get(
         "/api/v1/diagnosticos",
         params={
-            "status": "aguardando_analise",
+            "status": "processando",
             "limite": 50,
             "data_inicio": DATA_INICIO_LISTAGEM,
             "data_fim": DATA_FIM_LISTAGEM,
@@ -460,7 +460,7 @@ def test_listar_diagnosticos_aguardando_analise_sem_resultado(
     item = corpo["itens"][0]
 
     assert corpo["total"] == 1
-    assert item["status"] == "aguardando_analise"
+    assert item["status"] == "processando"
     assert item["classificacao"] is None
     assert item["escala_saburra"] is None
 
