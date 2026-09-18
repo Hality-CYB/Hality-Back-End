@@ -7,9 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
 )
-from app.models.conteudo_diagnostico import (
-    ConteudoDiagnostico,
-)
+from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import (
@@ -22,7 +20,7 @@ from app.models.user import User
 class DadosDetalheDiagnostico:
     imagens: list[Imagem]
     classificacao: ClassificacaoDiagnostico | None
-    conteudos: list[ConteudoDiagnostico]
+    conteudos: list[Conteudo]
     tem_profissional_vinculado: bool
     profissional_nome: str | None
 
@@ -116,11 +114,11 @@ async def buscar_classificacao_por_ordem(
 async def listar_conteudos_por_classificacao(
     db: AsyncSession,
     classificacao_id: int,
-) -> list[ConteudoDiagnostico]:
+) -> list[Conteudo]:
     result = await db.execute(
-        select(ConteudoDiagnostico)
-        .where(ConteudoDiagnostico.classificacao_id == classificacao_id)
-        .order_by(ConteudoDiagnostico.id.asc())
+        select(Conteudo)
+        .where(Conteudo.classificacao_ids.any(classificacao_id))
+        .order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
     )
 
     return list(result.scalars().all())
@@ -158,7 +156,7 @@ async def buscar_dados_detalhe(
     )
 
     classificacao = None
-    conteudos: list[ConteudoDiagnostico] = []
+    conteudos: list[Conteudo] = []
 
     if diagnostico.classificacao_id is not None:
         classificacao = await buscar_classificacao(
