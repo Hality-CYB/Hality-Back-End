@@ -280,12 +280,12 @@ Se a API estiver rodando em container, use `docker exec <container> python -m sc
 | `users` | 1 admin, 2 profissionais, 3 pacientes |
 | `profissionais` | 2 (vinculados aos usuários profissionais) |
 | `pacientes_profissionais` | 3 vínculos paciente↔profissional |
-| `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
-| `conteudos_diagnostico` | 4 (dicas e protocolos, um deles genérico sem classificação) |
+| `classificacoes_diagnostico` | 3 (`halito_normal`, `halitose_intima`, `mau_halito_social` — ordem 1 a 3) |
+| `conteudos` | 6: 2 vinculados a classificações (orientação de higiene em `halito_normal`, exibida na home; protocolo periodontal em `mau_halito_social`) e 4 dicas genéricas, sem classificação |
+| `questionarios` | 1 (versão `2026-09-v1`, 11 perguntas) |
 | `anamneses` | 6 (uma por diagnóstico) |
 | `diagnosticos` | 6 (Carla com 4, Diego e Elisa com 1 cada), em status diferentes: `processando`, `concluido`, `falha` |
 | `imagens` | 7 (vinculadas aos diagnósticos — um deles com 2 imagens) |
-| `dicas` | 4 (conteúdo educativo exibido na home) |
 
 Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) — só serve pra desenvolvimento local, nunca use esses dados em produção.
 
