@@ -94,7 +94,6 @@ async def seed() -> None:
             Diagnostico,
             Anamnese,
             Conteudo,
-            Conteudo,
             PacienteProfissional,
             Profissional,
             ClassificacaoDiagnostico,
