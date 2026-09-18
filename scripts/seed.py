@@ -155,7 +155,7 @@ async def seed() -> None:
                 {
                     "id": "idade",
                     "enunciado": "Qual a sua idade?",
-                    "tipo": "scale",
+                    "tipo": "text",
                     "obrigatoria": True,
                     "opcoes": None,
                     "escala_min": 0,
