@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -252,7 +253,7 @@ async def listar_diagnosticos(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
@@ -326,7 +327,7 @@ async def criar_diagnostico(
 
 async def obter_diagnostico(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -408,9 +409,8 @@ async def obter_diagnostico(
         "conteudos": [
             {
                 "id": conteudo.id,
-                "tipo": conteudo.tipo,
+                "conteudo": conteudo.conteudo,
                 "titulo": conteudo.titulo,
-                "dados": conteudo.dados,
             }
             for conteudo in dados.conteudos
         ]

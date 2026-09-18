@@ -1,5 +1,6 @@
 """Diagnóstico gerado pela IA a partir das imagens enviadas pelo paciente."""
 
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
@@ -12,7 +13,7 @@ class Diagnostico(Base):
     __tablename__ = "diagnosticos"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    paciente_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    paciente_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     anamnese_id: Mapped[int] = mapped_column(
         ForeignKey("anamneses.id", ondelete="CASCADE"), unique=True
     )
@@ -28,7 +29,7 @@ class Diagnostico(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
-    profissional_revisor_id: Mapped[int | None] = mapped_column(
+    profissional_revisor_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
     data_revisao: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

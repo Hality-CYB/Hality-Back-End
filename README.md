@@ -245,7 +245,7 @@ Se a API estiver rodando em container, use `docker exec <container> alembic <com
 
 ## Seeds
 
-O projeto tem um script (`scripts/seed.py`) que popula o banco local com dados de exemplo — usuários (admin, profissionais e pacientes), classificações de diagnóstico, conteúdos, diagnósticos, imagens e dicas da home. Serve pra ter dados prontos ao desenvolver ou testar endpoints manualmente, sem precisar cadastrar tudo na mão.
+O projeto tem um script (`scripts/seed.py`) que popula o banco local com dados de exemplo — usuários (admin, profissionais e pacientes), classificações de diagnóstico, conteúdos, anamneses, diagnósticos, imagens e dicas da home. Serve pra ter dados prontos ao desenvolver ou testar endpoints manualmente, sem precisar cadastrar tudo na mão.
 
 ### Como aplicar
 
@@ -269,8 +269,9 @@ Se a API estiver rodando em container, use `docker exec <container> python -m sc
 | `pacientes_profissionais` | 3 vínculos paciente↔profissional |
 | `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
 | `conteudos_diagnostico` | 4 (dicas e protocolos, um deles genérico sem classificação) |
-| `diagnosticos` | 3 (um por paciente, em status diferentes: `gerado`, `revisado`, `em_revisao`) |
-| `imagens` | 4 (vinculadas aos diagnósticos) |
+| `anamneses` | 6 (uma por diagnóstico) |
+| `diagnosticos` | 6 (Carla com 4, Diego e Elisa com 1 cada), em status diferentes: `processando`, `concluido`, `falha` |
+| `imagens` | 7 (vinculadas aos diagnósticos — um deles com 2 imagens) |
 | `dicas` | 4 (conteúdo educativo exibido na home) |
 
 Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) — só serve pra desenvolvimento local, nunca use esses dados em produção.

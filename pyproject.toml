@@ -3,20 +3,27 @@ name = "hality-back"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "alembic>=1.16.6",
-    "asyncpg>=0.30.0",
+    "alembic>=1.19.1",
+    "asyncpg>=0.31.0",
+    "fastapi-users[sqlalchemy]>=15.0.5",
     "fastapi[standard]>=0.141.1",
-    "pwdlib[bcrypt]>=0.3.1",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
-    "sqlalchemy[asyncio]>=2.0.44",
+    "python-multipart>=0.0.32",
+    "sqlalchemy[asyncio]>=2.0.52",
 ]
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
+    "httpx>=0.28.0",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.16.4",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
 
 [tool.ruff]
 line-length = 100

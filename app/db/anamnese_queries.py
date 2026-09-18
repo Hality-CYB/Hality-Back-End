@@ -6,13 +6,15 @@ módulo não sabe o que é "obrigatório" nem o que é HTTP 404 — só lê e es
 na tabela `anamneses`.
 """
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.anamnese import Anamnese
 
 
-async def inserir(db: AsyncSession, paciente_id: int, respostas: list[dict]) -> Anamnese:
+async def inserir(db: AsyncSession, paciente_id: uuid.UUID, respostas: list[dict]) -> Anamnese:
     anamnese = Anamnese(paciente_id=paciente_id, respostas=respostas)
     db.add(anamnese)
     await db.commit()
@@ -24,7 +26,7 @@ async def buscar_por_id(db: AsyncSession, anamnese_id: int) -> Anamnese | None:
     return await db.get(Anamnese, anamnese_id)
 
 
-async def listar_por_paciente(db: AsyncSession, paciente_id: int) -> list[Anamnese]:
+async def listar_por_paciente(db: AsyncSession, paciente_id: uuid.UUID) -> list[Anamnese]:
     resultado = await db.execute(
         select(Anamnese)
         .where(Anamnese.paciente_id == paciente_id)

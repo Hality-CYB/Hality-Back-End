@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -20,16 +21,17 @@ from app.services import diagnostico_mock, diagnostico_service
 client = TestClient(app)
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
-TEST_PATIENT_ID = 1
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+_OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
 PACIENTE_ID_QUERY_IGNORADO = 998
 CLASSIFICACAO_TESTE_PREFIX = "TESTE_LISTAGEM_"
-USUARIO_AUXILIAR_ID_BASE = 1_000_000_000
+VERSAO_QUESTIONARIO_TESTE = "2026-08-v1"
 DATA_BASE_LISTAGEM = datetime(2099, 8, 1, 9, 14, tzinfo=UTC)
 DATA_INICIO_LISTAGEM = DATA_BASE_LISTAGEM.date().isoformat()
 DATA_FIM_LISTAGEM = (DATA_BASE_LISTAGEM + timedelta(days=11)).date().isoformat()
 
 
-def _anamnese(paciente_id=1):
+def _anamnese(paciente_id=PACIENTE_STUB_ID):
     return SimpleNamespace(
         id=128,
         paciente_id=paciente_id,
@@ -39,7 +41,7 @@ def _anamnese(paciente_id=1):
 
 
 def _diagnostico(
-    paciente_id=1,
+    paciente_id=PACIENTE_STUB_ID,
     status="processando",
 ):
     return SimpleNamespace(
@@ -64,7 +66,7 @@ class DiagnosticosListagemCriados:
     anamnese_ids: list[int] = field(default_factory=list)
     diagnostico_ids: list[int] = field(default_factory=list)
     classificacao_id: int | None = None
-    outro_paciente_id: int | None = None
+    outro_paciente_id: uuid.UUID | None = None
 
 
 @pytest.fixture
@@ -82,9 +84,9 @@ async def _abrir_sessao_teste() -> tuple[AsyncSession, object]:
     return session_factory(), engine
 
 
-async def _gerar_outro_paciente_id(db: AsyncSession) -> int:
+async def _gerar_outro_paciente_id(db: AsyncSession) -> uuid.UUID:
     for _ in range(10):
-        candidato = USUARIO_AUXILIAR_ID_BASE + uuid4().int % 1_000_000_000
+        candidato = uuid4()
 
         if await db.get(User, candidato) is None:
             return candidato
@@ -122,7 +124,8 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
 
             for indice in range(12):
                 anamnese = Anamnese(
-                    paciente_id=TEST_PATIENT_ID,
+                    paciente_id=PACIENTE_STUB_ID,
+                    id_versao_questionario=VERSAO_QUESTIONARIO_TESTE,
                     respostas=[
                         {
                             "pergunta_id": "teste_listagem",
@@ -150,7 +153,7 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
                     escala_saburra = None
 
                 diagnostico = Diagnostico(
-                    paciente_id=TEST_PATIENT_ID,
+                    paciente_id=PACIENTE_STUB_ID,
                     anamnese_id=anamnese.id,
                     classificacao_id=classificacao_id,
                     escala_saburra=escala_saburra,
@@ -164,6 +167,7 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
 
             anamnese_outro_paciente = Anamnese(
                 paciente_id=outro_paciente.id,
+                id_versao_questionario=VERSAO_QUESTIONARIO_TESTE,
                 respostas=[
                     {
                         "pergunta_id": "teste_listagem",
@@ -263,7 +267,7 @@ def test_criar_diagnostico(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=AsyncMock(),
-            paciente_id=1,
+            paciente_id=PACIENTE_STUB_ID,
             anamnese_id=128,
             imagem=b"imagem",
             content_type="image/jpeg",
@@ -282,14 +286,14 @@ def test_anamnese_de_outro_paciente(
     monkeypatch.setattr(
         diagnostico_service.anamnese_queries,
         "buscar_por_id",
-        AsyncMock(return_value=_anamnese(paciente_id=2)),
+        AsyncMock(return_value=_anamnese(paciente_id=_OUTRO_PACIENTE_ID)),
     )
 
     with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=1,
+                paciente_id=PACIENTE_STUB_ID,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",
@@ -317,7 +321,7 @@ def test_anamnese_ja_utilizada(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=1,
+                paciente_id=PACIENTE_STUB_ID,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",

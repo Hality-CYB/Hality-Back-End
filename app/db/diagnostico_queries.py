@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -7,9 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
 )
-from app.models.conteudo_diagnostico import (
-    ConteudoDiagnostico,
-)
+from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import (
@@ -22,7 +21,7 @@ from app.models.user import User
 class DadosDetalheDiagnostico:
     imagens: list[Imagem]
     classificacao: ClassificacaoDiagnostico | None
-    conteudos: list[ConteudoDiagnostico]
+    conteudos: list[Conteudo]
     tem_profissional_vinculado: bool
     profissional_nome: str | None
 
@@ -112,7 +111,7 @@ async def buscar_por_anamnese(
 
 async def inserir(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
     anamnese_id: int,
     url_arquivo: str,
     parametros_captura: dict,
@@ -181,11 +180,11 @@ async def buscar_classificacao_por_ordem(
 async def listar_conteudos_por_classificacao(
     db: AsyncSession,
     classificacao_id: int,
-) -> list[ConteudoDiagnostico]:
+) -> list[Conteudo]:
     result = await db.execute(
-        select(ConteudoDiagnostico)
-        .where(ConteudoDiagnostico.classificacao_id == classificacao_id)
-        .order_by(ConteudoDiagnostico.id.asc())
+        select(Conteudo)
+        .where(Conteudo.classificacao_ids.any(classificacao_id))
+        .order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
     )
 
     return list(result.scalars().all())
@@ -193,7 +192,7 @@ async def listar_conteudos_por_classificacao(
 
 async def tem_profissional_vinculado(
     db: AsyncSession,
-    paciente_id: int,
+    paciente_id: uuid.UUID,
 ) -> bool:
     result = await db.execute(
         select(PacienteProfissional.id)
@@ -206,7 +205,7 @@ async def tem_profissional_vinculado(
 
 async def buscar_nome_usuario(
     db: AsyncSession,
-    usuario_id: int,
+    usuario_id: uuid.UUID,
 ) -> str | None:
     result = await db.execute(select(User.name).where(User.id == usuario_id))
 
@@ -223,7 +222,7 @@ async def buscar_dados_detalhe(
     )
 
     classificacao = None
-    conteudos: list[ConteudoDiagnostico] = []
+    conteudos: list[Conteudo] = []
 
     if diagnostico.classificacao_id is not None:
         classificacao = await buscar_classificacao(
