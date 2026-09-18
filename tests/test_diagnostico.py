@@ -486,6 +486,27 @@ def test_listar_diagnosticos_filtra_status(
     assert corpo["itens"][0]["status"] == "falha"
 
 
+def test_listar_diagnosticos_concluido_traz_ordem_da_classificacao(
+    diagnosticos_para_listagem: None,
+) -> None:
+    response = client.get(
+        "/api/v1/diagnosticos",
+        params={
+            "status": "concluido",
+            "limite": 50,
+            "data_inicio": DATA_INICIO_LISTAGEM,
+            "data_fim": DATA_FIM_LISTAGEM,
+        },
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    corpo = response.json()
+
+    assert corpo["total"] == 10
+    assert all(item["classificacao"]["ordem"] == 3 for item in corpo["itens"])
+
+
 def test_listar_diagnosticos_data_inicio_maior_que_fim_retorna_400() -> None:
     response = client.get(
         "/api/v1/diagnosticos",
