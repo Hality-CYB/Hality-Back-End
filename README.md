@@ -123,9 +123,22 @@ docker compose exec api python -m scripts.seed
 ```
 
 ```bash
-# derrubar os containers (adicione -v para também apagar os dados do banco)
+# derrubar os containers (adicione -v para também apagar os volumes: banco e imagens enviadas)
 docker compose down
 ```
+
+### Volumes
+
+O compose usa dois volumes nomeados, que sobrevivem a `docker compose down` e a rebuilds da imagem:
+
+| Volume | Montado em | Conteúdo |
+|---|---|---|
+| `hality_postgres_data` | `/var/lib/postgresql/data` (`db`) | dados do Postgres |
+| `hality_diagnosticos_data` | `/app/.data` (`api`) | imagens enviadas em `POST /api/v1/diagnosticos` (em `.data/diagnosticos/`) |
+
+Os dois andam juntos: o banco guarda o registro de cada imagem e o volume guarda o arquivo. Se apagar um, apague o outro também (`docker compose down -v` apaga os dois). Senão sobram registros apontando para arquivos que não existem, ou arquivos sem registro.
+
+Com a API rodando local, as imagens vão para `.data/` na raiz do projeto (ignorada pelo git e pelo build do Docker).
 
 ### Detalhes da imagem
 

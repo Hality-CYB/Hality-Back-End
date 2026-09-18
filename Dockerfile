@@ -31,6 +31,8 @@ WORKDIR /app
 
 COPY --from=builder --chown=app:app /app /app
 
+RUN mkdir -p /app/.data/diagnosticos && chown -R app:app /app/.data
+
 USER app
 
 EXPOSE 8000
