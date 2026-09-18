@@ -308,17 +308,16 @@ async def seed() -> None:
             ]
         )
 
-        saudavel = ClassificacaoDiagnostico(codigo="saudavel", nome_exibicao="Saudável", ordem=0)
-        halitose_leve = ClassificacaoDiagnostico(
-            codigo="halitose_leve", nome_exibicao="Halitose Leve", ordem=1
+        halito_normal = ClassificacaoDiagnostico(
+            codigo="halito_normal", nome_exibicao="Hálito Normal", ordem=1
         )
-        halitose_social = ClassificacaoDiagnostico(
-            codigo="halitose_social", nome_exibicao="Halitose Social", ordem=2
+        halitose_intima = ClassificacaoDiagnostico(
+            codigo="halitose_intima", nome_exibicao="Halitose Íntima", ordem=2
         )
-        halitose_severa = ClassificacaoDiagnostico(
-            codigo="halitose_severa", nome_exibicao="Halitose Severa", ordem=3
+        mau_halito_social = ClassificacaoDiagnostico(
+            codigo="mau_halito_social", nome_exibicao="Mau Hálito Social", ordem=3
         )
-        db.add_all([saudavel, halitose_leve, halitose_social, halitose_severa])
+        db.add_all([halito_normal, halitose_intima, mau_halito_social])
         await db.flush()
 
         db.add_all(
@@ -331,7 +330,7 @@ async def seed() -> None:
                             {"tipo": "texto", "texto": "Escove os dentes após as refeições."}  # noqa: E501
                         ]
                     },
-                    classificacao_ids=[halitose_leve.id],
+                    classificacao_ids=[halito_normal.id],
                     aparece_na_home=True,
                     status="publicado",
                 ),
@@ -347,7 +346,7 @@ async def seed() -> None:
                             }
                         ]
                     },
-                    classificacao_ids=[halitose_severa.id],
+                    classificacao_ids=[mau_halito_social.id],
                     status="publicado",
                 ),
             ]
@@ -412,7 +411,7 @@ async def seed() -> None:
         diagnostico_concluido = Diagnostico(
             paciente_id=paciente1.id,
             anamnese_id=anamnese_concluido.id,
-            classificacao_id=halitose_leve.id,
+            classificacao_id=halito_normal.id,
             escala_saburra=24,
             confianca_ia=0.91,
             status="concluido",
@@ -421,7 +420,7 @@ async def seed() -> None:
         diagnostico_revisado = Diagnostico(
             paciente_id=paciente1.id,
             anamnese_id=anamnese_revisado.id,
-            classificacao_id=halitose_social.id,
+            classificacao_id=halitose_intima.id,
             escala_saburra=49,
             confianca_ia=0.89,
             status="concluido",
@@ -452,7 +451,7 @@ async def seed() -> None:
         diagnostico_diego = Diagnostico(
             paciente_id=paciente2.id,
             anamnese_id=anamnese_diego.id,
-            classificacao_id=halitose_severa.id,
+            classificacao_id=mau_halito_social.id,
             escala_saburra=68,
             confianca_ia=0.87,
             status="concluido",
@@ -461,7 +460,7 @@ async def seed() -> None:
         diagnostico_elisa = Diagnostico(
             paciente_id=paciente3.id,
             anamnese_id=anamnese_elisa.id,
-            classificacao_id=saudavel.id,
+            classificacao_id=halito_normal.id,
             escala_saburra=3,
             confianca_ia=0.75,
             status="concluido",
@@ -597,8 +596,8 @@ async def seed() -> None:
         }
 
     print(
-        "Seed concluído: 6 usuarios, 2 profissionais, 4 classificacoes, "
-        "4 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, 4 dicas, "
+        "Seed concluído: 6 usuarios, 2 profissionais, 3 classificacoes, "
+        "6 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, "
         "1 questionario (11 perguntas).\n"
     )
     print(f"Senha de todos os usuarios: {SEED_PASSWORD}\n")

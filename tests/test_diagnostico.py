@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -113,14 +113,18 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
             await db.flush()
             criados.outro_paciente_id = outro_paciente.id
 
-            classificacao = ClassificacaoDiagnostico(
-                codigo=f"{CLASSIFICACAO_TESTE_PREFIX}{token[:12]}",
-                nome_exibicao="Halitose Severa",
-                ordem=3,
+            classificacao = await db.scalar(
+                select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.ordem == 3)
             )
-            db.add(classificacao)
-            await db.flush()
-            criados.classificacao_id = classificacao.id
+            if classificacao is None:
+                classificacao = ClassificacaoDiagnostico(
+                    codigo=f"{CLASSIFICACAO_TESTE_PREFIX}{token[:12]}",
+                    nome_exibicao="Mau Hálito Social",
+                    ordem=3,
+                )
+                db.add(classificacao)
+                await db.flush()
+                criados.classificacao_id = classificacao.id
 
             for indice in range(12):
                 anamnese = Anamnese(
