@@ -157,13 +157,13 @@ def _paciente_de_teste(request: pytest.FixtureRequest) -> Iterator[None]:
         return
 
     app.dependency_overrides[current_active_user] = _current_active_user_de_teste
-    questionarios_snapshot = asyncio.run(_preparar())
+    questionarios_snapshot, anamneses_existentes = asyncio.run(_preparar())
     yield
-    asyncio.run(_limpar(questionarios_snapshot))
+    asyncio.run(_limpar(questionarios_snapshot, anamneses_existentes))
     del app.dependency_overrides[current_active_user]
 
 
-async def _preparar() -> list[dict[str, Any]]:
+async def _preparar() -> tuple[list[dict[str, Any]], set[int]]:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -181,6 +181,12 @@ async def _preparar() -> list[dict[str, Any]]:
                 )
                 await db.commit()
 
+            anamneses_existentes = set(
+                await db.scalars(
+                    select(Anamnese.id).where(Anamnese.paciente_id == PACIENTE_STUB_ID)
+                )
+            )
+
             resultado = await db.execute(select(Questionario))
             snapshot = [
                 {"versao": q.versao, "perguntas": q.perguntas, "criado_em": q.criado_em}
@@ -189,17 +195,24 @@ async def _preparar() -> list[dict[str, Any]]:
             if snapshot:
                 await db.execute(delete(Questionario))
                 await db.commit()
-            return snapshot
+            return snapshot, anamneses_existentes
     finally:
         await engine.dispose()
 
 
-async def _limpar(questionarios_snapshot: list[dict[str, Any]]) -> None:
+async def _limpar(
+    questionarios_snapshot: list[dict[str, Any]], anamneses_existentes: set[int]
+) -> None:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as db:
-            await db.execute(delete(Anamnese).where(Anamnese.paciente_id == PACIENTE_STUB_ID))
+            await db.execute(
+                delete(Anamnese).where(
+                    Anamnese.paciente_id == PACIENTE_STUB_ID,
+                    Anamnese.id.not_in(anamneses_existentes),
+                )
+            )
             if questionarios_snapshot:
                 await db.execute(delete(Questionario))
                 db.add_all(Questionario(**item) for item in questionarios_snapshot)
