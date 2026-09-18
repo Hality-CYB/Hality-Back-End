@@ -147,9 +147,12 @@ async def _current_active_user_de_teste(request: Request) -> SimpleNamespace:
     return SimpleNamespace(id=PACIENTE_STUB_ID)
 
 
+_MODULOS_COM_PACIENTE_DE_TESTE = {"test_anamnese", "test_diagnostico"}
+
+
 @pytest.fixture(autouse=True)
 def _paciente_de_teste(request: pytest.FixtureRequest) -> Iterator[None]:
-    if request.module.__name__.rsplit(".", 1)[-1] != "test_anamnese":
+    if request.module.__name__.rsplit(".", 1)[-1] not in _MODULOS_COM_PACIENTE_DE_TESTE:
         yield
         return
 

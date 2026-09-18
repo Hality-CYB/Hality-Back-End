@@ -6,12 +6,14 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import CurrentPatientDep, DbSession
+from app.schemas.diagnostico import DiagnosticoListResponse
 from app.services import diagnostico_service, diagnostico_storage
 
 router = APIRouter(
@@ -34,6 +36,36 @@ def obter_imagem(nome_arquivo: str) -> FileResponse:
         )
 
     return FileResponse(caminho)
+
+
+@router.get("", response_model=DiagnosticoListResponse)
+async def listar_diagnosticos(
+    paciente_id: CurrentPatientDep,
+    db: DbSession,
+    data_inicio: Annotated[str | None, Query()] = None,
+    data_fim: Annotated[str | None, Query()] = None,
+    status_diagnostico: Annotated[str | None, Query(alias="status")] = None,
+    pagina: Annotated[int, Query()] = 1,
+    limite: Annotated[int, Query()] = 20,
+    ordem: Annotated[str, Query()] = "data_desc",
+) -> DiagnosticoListResponse:
+    try:
+        return await diagnostico_service.listar_diagnosticos(
+            db=db,
+            paciente_id=paciente_id,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            status=status_diagnostico,
+            pagina=pagina,
+            limite=limite,
+            ordem=ordem,
+        )
+
+    except diagnostico_service.DiagnosticoFiltroInvalidoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=exc.motivo,
+        ) from exc
 
 
 @router.post(
