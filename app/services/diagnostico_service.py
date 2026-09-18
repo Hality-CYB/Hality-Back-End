@@ -24,7 +24,6 @@ STATUS_COM_RESULTADO = {
     "concluido",
 }
 STATUS_SEM_RESULTADO_LISTAGEM = {
-    "aguardando_analise",
     "falha",
     "processando",
 }
@@ -175,6 +174,7 @@ def _para_item_listagem(
             ClassificacaoDiagnosticoResumo(
                 codigo=classificacao.codigo,
                 nome_exibicao=classificacao.nome_exibicao,
+                ordem=classificacao.ordem,
             )
             if classificacao is not None
             else None

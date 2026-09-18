@@ -123,9 +123,22 @@ docker compose exec api python -m scripts.seed
 ```
 
 ```bash
-# derrubar os containers (adicione -v para também apagar os dados do banco)
+# derrubar os containers (adicione -v para também apagar os volumes: banco e imagens enviadas)
 docker compose down
 ```
+
+### Volumes
+
+O compose usa dois volumes nomeados, que sobrevivem a `docker compose down` e a rebuilds da imagem:
+
+| Volume | Montado em | Conteúdo |
+|---|---|---|
+| `hality_postgres_data` | `/var/lib/postgresql/data` (`db`) | dados do Postgres |
+| `hality_diagnosticos_data` | `/app/.data` (`api`) | imagens enviadas em `POST /api/v1/diagnosticos` (em `.data/diagnosticos/`) |
+
+Os dois andam juntos: o banco guarda o registro de cada imagem e o volume guarda o arquivo. Se apagar um, apague o outro também (`docker compose down -v` apaga os dois). Senão sobram registros apontando para arquivos que não existem, ou arquivos sem registro.
+
+Com a API rodando local, as imagens vão para `.data/` na raiz do projeto (ignorada pelo git e pelo build do Docker).
 
 ### Detalhes da imagem
 
@@ -267,12 +280,12 @@ Se a API estiver rodando em container, use `docker exec <container> python -m sc
 | `users` | 1 admin, 2 profissionais, 3 pacientes |
 | `profissionais` | 2 (vinculados aos usuários profissionais) |
 | `pacientes_profissionais` | 3 vínculos paciente↔profissional |
-| `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
-| `conteudos_diagnostico` | 4 (dicas e protocolos, um deles genérico sem classificação) |
+| `classificacoes_diagnostico` | 3 (`halito_normal`, `halitose_intima`, `mau_halito_social` — ordem 1 a 3) |
+| `conteudos` | 6: 2 vinculados a classificações (orientação de higiene em `halito_normal`, exibida na home; protocolo periodontal em `mau_halito_social`) e 4 dicas genéricas, sem classificação |
+| `questionarios` | 1 (versão `2026-09-v1`, 11 perguntas) |
 | `anamneses` | 6 (uma por diagnóstico) |
 | `diagnosticos` | 6 (Carla com 4, Diego e Elisa com 1 cada), em status diferentes: `processando`, `concluido`, `falha` |
 | `imagens` | 7 (vinculadas aos diagnósticos — um deles com 2 imagens) |
-| `dicas` | 4 (conteúdo educativo exibido na home) |
 
 Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) — só serve pra desenvolvimento local, nunca use esses dados em produção.
 

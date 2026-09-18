@@ -39,6 +39,7 @@ class DiagnosticoCreated(BaseModel):
 class ClassificacaoDiagnosticoResumo(BaseModel):
     codigo: str
     nome_exibicao: str
+    ordem: int
 
 
 class DiagnosticoListItem(BaseModel):

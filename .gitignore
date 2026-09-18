@@ -43,3 +43,6 @@ htmlcov/
 
 # SF
 .sf/
+
+# Local storage (uploaded images)
+.data/

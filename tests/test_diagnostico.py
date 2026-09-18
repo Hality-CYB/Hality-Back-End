@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -113,14 +113,18 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
             await db.flush()
             criados.outro_paciente_id = outro_paciente.id
 
-            classificacao = ClassificacaoDiagnostico(
-                codigo=f"{CLASSIFICACAO_TESTE_PREFIX}{token[:12]}",
-                nome_exibicao="Halitose Severa",
-                ordem=3,
+            classificacao = await db.scalar(
+                select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.ordem == 3)
             )
-            db.add(classificacao)
-            await db.flush()
-            criados.classificacao_id = classificacao.id
+            if classificacao is None:
+                classificacao = ClassificacaoDiagnostico(
+                    codigo=f"{CLASSIFICACAO_TESTE_PREFIX}{token[:12]}",
+                    nome_exibicao="Mau Hálito Social",
+                    ordem=3,
+                )
+                db.add(classificacao)
+                await db.flush()
+                criados.classificacao_id = classificacao.id
 
             for indice in range(12):
                 anamnese = Anamnese(
@@ -144,7 +148,7 @@ async def _preparar_diagnosticos_para_listagem() -> DiagnosticosListagemCriados:
                 escala_saburra = 60 + indice
 
                 if indice == 3:
-                    status = "aguardando_analise"
+                    status = "processando"
                     classificacao_id = None
                     escala_saburra = None
                 elif indice == 5:
@@ -437,13 +441,13 @@ def test_listar_diagnosticos_filtra_datas_inclusivas(
     assert datas == sorted(datas)
 
 
-def test_listar_diagnosticos_aguardando_analise_sem_resultado(
+def test_listar_diagnosticos_processando_sem_resultado(
     diagnosticos_para_listagem: None,
 ) -> None:
     response = client.get(
         "/api/v1/diagnosticos",
         params={
-            "status": "aguardando_analise",
+            "status": "processando",
             "limite": 50,
             "data_inicio": DATA_INICIO_LISTAGEM,
             "data_fim": DATA_FIM_LISTAGEM,
@@ -456,7 +460,7 @@ def test_listar_diagnosticos_aguardando_analise_sem_resultado(
     item = corpo["itens"][0]
 
     assert corpo["total"] == 1
-    assert item["status"] == "aguardando_analise"
+    assert item["status"] == "processando"
     assert item["classificacao"] is None
     assert item["escala_saburra"] is None
 
@@ -480,6 +484,27 @@ def test_listar_diagnosticos_filtra_status(
 
     assert corpo["total"] == 1
     assert corpo["itens"][0]["status"] == "falha"
+
+
+def test_listar_diagnosticos_concluido_traz_ordem_da_classificacao(
+    diagnosticos_para_listagem: None,
+) -> None:
+    response = client.get(
+        "/api/v1/diagnosticos",
+        params={
+            "status": "concluido",
+            "limite": 50,
+            "data_inicio": DATA_INICIO_LISTAGEM,
+            "data_fim": DATA_FIM_LISTAGEM,
+        },
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    corpo = response.json()
+
+    assert corpo["total"] == 10
+    assert all(item["classificacao"]["ordem"] == 3 for item in corpo["itens"])
 
 
 def test_listar_diagnosticos_data_inicio_maior_que_fim_retorna_400() -> None:
