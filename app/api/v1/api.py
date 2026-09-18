@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     auth,
     diagnostico,
     health,
+    home,
 )
 from app.auth.users import fastapi_users
 from app.schemas.user import UserCreate, UserRead, UserUpdate
@@ -17,6 +18,8 @@ api_router.include_router(health.router)
 api_router.include_router(anamnese.router)
 
 api_router.include_router(diagnostico.router)
+
+api_router.include_router(home.router)
 
 # Autenticação — login/refresh/logout customizados (access JWT curto +
 # refresh opaco em banco, ver app/api/v1/endpoints/auth.py). Não usa o

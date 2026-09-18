@@ -141,7 +141,14 @@ async def seed() -> None:
             hashed_password=senha_hash,
             role="paciente",
         )
-        db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3])
+        paciente4 = User(
+            name="Nina Sem Histórico",
+            email="nina.sem.historico@example.com",
+            phone="51999990004",
+            hashed_password=senha_hash,
+            role="paciente",
+        )
+        db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3, paciente4])
         await db.flush()
 
         # Perguntas extraídas de "Tabela anamnese Hality-2.xlsx" (colunas B a L:
@@ -436,7 +443,7 @@ async def seed() -> None:
             escala_saburra=None,
             confianca_ia=None,
             status="processando",
-            data_diagnostico=agora - timedelta(hours=6),
+            data_diagnostico=agora - timedelta(days=20),
         )
         diagnostico_falha = Diagnostico(
             paciente_id=paciente1.id,
@@ -446,7 +453,7 @@ async def seed() -> None:
             confianca_ia=None,
             status="falha",
             erro="Imagem fora de foco: não foi possível avaliar a saburra lingual.",
-            data_diagnostico=agora - timedelta(days=1),
+            data_diagnostico=agora - timedelta(days=15),
         )
         diagnostico_diego = Diagnostico(
             paciente_id=paciente2.id,
@@ -540,6 +547,9 @@ async def seed() -> None:
                             }
                         ]
                     },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=4,
                 ),
                 Conteudo(
                     titulo="Limpe a língua todos os dias",
@@ -554,6 +564,9 @@ async def seed() -> None:
                             }
                         ]
                     },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=1,
                 ),
                 Conteudo(
                     titulo="Beba água ao longo do dia",
@@ -568,20 +581,26 @@ async def seed() -> None:
                             }
                         ]
                     },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=2,
                 ),
                 Conteudo(
-                    titulo="Mau hálito não se resolve só com enxaguante",
-                    categoria="tratamento",
+                    titulo="Alimentos Aliados",
+                    categoria="nutricao",
                     conteudo={
                         "itens": [
                             {
                                 "tipo": "texto",
-                                "texto": "Enxaguantes mascaram o odor por algumas horas, mas não removem "  # noqa: E501
-                                "a causa. Se o mau hálito continua mesmo com boa higiene, "
-                                "procure um dentista para investigar a origem.",
+                                "texto": "Consuma maçã, cenoura, salsinha e iogurte natural. "  # noqa: E501
+                                "Esses alimentos ajudam a neutralizar os compostos causadores "
+                                "do mau hálito de forma natural.",
                             }
                         ]
                     },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=3,
                 ),
             ]
         )
@@ -596,7 +615,7 @@ async def seed() -> None:
         }
 
     print(
-        "Seed concluído: 6 usuarios, 2 profissionais, 3 classificacoes, "
+        "Seed concluído: 7 usuarios, 2 profissionais, 4 classificacoes, "
         "6 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, "
         "1 questionario (11 perguntas).\n"
     )
@@ -606,6 +625,7 @@ async def seed() -> None:
         ("carla.mendes@example.com", "paciente  <- use este no Swagger"),
         ("diego.fontana@example.com", "paciente"),
         ("elisa.prado@example.com", "paciente"),
+        ("nina.sem.historico@example.com", "paciente  <- Home vazia"),
         ("ana.souza@hality.com", "profissional"),
         ("bruno.lima@hality.com", "profissional"),
         ("admin@hality.com", "admin"),
