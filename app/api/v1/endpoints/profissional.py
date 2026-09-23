@@ -1,0 +1,40 @@
+from datetime import UTC, datetime, timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.api.deps import CurrentProfessionalDep, DbSession
+from app.schemas.profissionais import ResumoProfissionalResponse
+from app.services import profissional_service
+
+router = APIRouter(prefix="/profissional", tags=["profissional"])
+
+# [confirmar] periodo padrao ainda nao foi decidido pelo time (DEC-05 na issue)
+PERIODO_PADRAO_DIAS = 30
+
+
+@router.get("/resumo", response_model=ResumoProfissionalResponse)
+async def obter_resumo(
+    profissional_id: CurrentProfessionalDep,
+    db: DbSession,
+    inicio: Annotated[datetime | None, Query()] = None,
+    fim: Annotated[datetime | None, Query()] = None,
+    timezone: Annotated[str, Query()] = "UTC",
+) -> ResumoProfissionalResponse:
+    fim_efetivo = fim or datetime.now(UTC)
+    inicio_efetivo = inicio or (fim_efetivo - timedelta(days=PERIODO_PADRAO_DIAS))
+
+    try:
+        return await profissional_service.montar_resumo(
+            db=db,
+            profissional_id=profissional_id,
+            inicio=inicio_efetivo,
+            fim=fim_efetivo,
+            timezone=timezone,
+        )
+
+    except profissional_service.PeriodoInvalidoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="periodo invalido",
+        ) from exc
