@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import current_active_user
@@ -31,3 +31,20 @@ def get_current_patient_id(user: CurrentUser) -> uuid.UUID:
 
 
 CurrentPatientDep = Annotated[uuid.UUID, Depends(get_current_patient_id)]
+
+
+def get_current_professional_id(user: CurrentUser) -> uuid.UUID:
+    """Retorna o id do usuário autenticado como profissional_id.
+
+    Se o usuário logado não for profissional, não deixa acessar.
+    """
+    if user.role != "professional":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="rota exclusiva para profissionais",
+        )
+
+    return user.id
+
+
+CurrentProfessionalDep = Annotated[uuid.UUID, Depends(get_current_professional_id)]
