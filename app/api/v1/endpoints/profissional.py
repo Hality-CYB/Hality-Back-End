@@ -9,7 +9,8 @@ from app.services import profissional_service
 
 router = APIRouter(prefix="/profissional", tags=["profissional"])
 
-# [confirmar] periodo padrao ainda nao foi decidido pelo time (DEC-05 na issue)
+# falei com o Thiago e ele falou que 30 dias ta bom por enquanto, dps o time
+# ainda vai decidir o melhor espacamento de dias (DEC-05 na issue)
 PERIODO_PADRAO_DIAS = 30
 
 
