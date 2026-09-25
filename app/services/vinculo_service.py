@@ -59,14 +59,18 @@ async def criar_vinculo(
     if paciente.role != "paciente" or not paciente.is_active:
         raise PacienteInvalidoError("paciente inválido ou inativo")
 
+    # O rollback expira todos os objetos da sessão; ler `paciente.id` depois dele
+    # dispararia um refresh implícito (IO fora do greenlet do driver assíncrono).
+    paciente_id = paciente.id
+
     try:
-        vinculo = await queries.criar_vinculo(db, paciente.id, profissional_id)
+        vinculo = await queries.criar_vinculo(db, paciente_id, profissional_id)
         await db.commit()
 
     except IntegrityError as exc:
         await db.rollback()
 
-        existente = await queries.buscar_vinculo_ativo(db, paciente.id, profissional_id)
+        existente = await queries.buscar_vinculo_ativo(db, paciente_id, profissional_id)
 
         if existente is not None:
             raise VinculoJaExisteError from exc
