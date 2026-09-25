@@ -58,7 +58,7 @@ async def _criar_usuario(
     usuario = User(
         id=await _gerar_id_livre(db),
         name=f"Usuario Teste {token[:8]}",
-        email=f"vinculo.{role}.{token}@hality.local",
+        email=f"vinculo.{role}.{token}@hality.com",
         hashed_password="x",
         role=role,
         is_active=is_active,
@@ -194,7 +194,7 @@ def test_criar_vinculo_sucesso(cenario: Cenario) -> None:
 def test_criar_vinculo_paciente_inexistente_retorna_422(cenario: Cenario) -> None:
     response = client.post(
         VINCULOS_URL,
-        json={"paciente_email": f"nao.existe.{uuid4().hex}@hality.local"},
+        json={"paciente_email": f"nao.existe.{uuid4().hex}@hality.com"},
         headers=AUTH_HEADERS,
     )
 
