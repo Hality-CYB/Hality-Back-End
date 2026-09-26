@@ -17,12 +17,14 @@ from app.core.config import get_settings
 from app.main import app
 from app.models import Anamnese, ClassificacaoDiagnostico, Diagnostico, User
 from app.services import diagnostico_mock, diagnostico_service
+from app.services.atendimento_service import AtorAutenticado
 
 client = TestClient(app)
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 _OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+ATOR_PACIENTE = AtorAutenticado(id=PACIENTE_STUB_ID, role="paciente")
 PACIENTE_ID_QUERY_IGNORADO = 998
 CLASSIFICACAO_TESTE_PREFIX = "TESTE_LISTAGEM_"
 VERSAO_QUESTIONARIO_TESTE = "2026-08-v1"
@@ -35,6 +37,7 @@ def _anamnese(paciente_id=PACIENTE_STUB_ID):
     return SimpleNamespace(
         id=128,
         paciente_id=paciente_id,
+        executor_id=paciente_id,
         data_preenchimento=datetime.now(UTC),
         respostas=[],
     )
@@ -271,7 +274,7 @@ def test_criar_diagnostico(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=AsyncMock(),
-            paciente_id=PACIENTE_STUB_ID,
+            ator=ATOR_PACIENTE,
             anamnese_id=128,
             imagem=b"imagem",
             content_type="image/jpeg",
@@ -297,7 +300,7 @@ def test_anamnese_de_outro_paciente(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=PACIENTE_STUB_ID,
+                ator=ATOR_PACIENTE,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",
@@ -325,7 +328,7 @@ def test_anamnese_ja_utilizada(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=PACIENTE_STUB_ID,
+                ator=ATOR_PACIENTE,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",

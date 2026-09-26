@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import Annotated, Any
 
 from fastapi import (
@@ -12,9 +13,9 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api.deps import CurrentPatientDep, DbSession
+from app.api.deps import CurrentActorDep, CurrentPatientDep, DbSession
 from app.schemas.diagnostico import DiagnosticoListResponse
-from app.services import diagnostico_service, diagnostico_storage
+from app.services import atendimento_service, diagnostico_service, diagnostico_storage
 
 router = APIRouter(
     prefix="/diagnosticos",
@@ -77,8 +78,11 @@ async def criar_diagnostico(
     anamnese_id: Annotated[int, Form()],
     imagem: Annotated[UploadFile, File()],
     parametros_captura: Annotated[str, Form()],
-    paciente_id: CurrentPatientDep,
+    ator: CurrentActorDep,
     db: DbSession,
+    # Contexto de atendimento (US-090): paciente selecionado pelo profissional.
+    # Omitido na autoavaliação; nunca é aceito sem vínculo validado.
+    paciente_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> dict[str, Any] | JSONResponse:
     try:
         parametros = json.loads(parametros_captura)
@@ -97,12 +101,31 @@ async def criar_diagnostico(
     try:
         return await diagnostico_service.criar_diagnostico(
             db=db,
-            paciente_id=paciente_id,
+            ator=ator,
             anamnese_id=anamnese_id,
             imagem=imagem_bytes,
             content_type=imagem.content_type or "",
             parametros_captura=parametros,
+            paciente_id=paciente_id,
         )
+
+    except atendimento_service.AtorNaoProfissionalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="apenas profissionais podem atender outro paciente",
+        ) from exc
+
+    except atendimento_service.VinculoInexistenteError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="profissional sem vínculo com o paciente",
+        ) from exc
+
+    except atendimento_service.TitularIndisponivelError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="paciente indisponível",
+        ) from exc
 
     except diagnostico_service.ImagemInvalidaError as exc:
         return JSONResponse(
@@ -123,22 +146,28 @@ async def criar_diagnostico(
         ) from exc
 
     except diagnostico_service.AnamneseJaUtilizadaError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=("anamnese já vinculada a outro diagnóstico"),
-        ) from exc
+        # 409 com o diagnóstico existente: retry/duplo envio não duplica nada
+        # e o cliente retoma o acompanhamento pelo id devolvido.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": "anamnese já vinculada a outro diagnóstico",
+                "diagnostico_id": exc.diagnostico.id,
+                "status": exc.diagnostico.status,
+            },
+        )
 
 
 @router.get("/{diagnostico_id}")
 async def obter_diagnostico(
     diagnostico_id: int,
-    paciente_id: CurrentPatientDep,
+    ator: CurrentActorDep,
     db: DbSession,
 ) -> dict[str, Any]:
     try:
         return await diagnostico_service.obter_diagnostico(
             db=db,
-            paciente_id=paciente_id,
+            ator=ator,
             diagnostico_id=diagnostico_id,
         )
 

@@ -14,6 +14,11 @@ from app.schemas.diagnostico import (
     DiagnosticoListResponse,
 )
 from app.services import diagnostico_mock, diagnostico_storage
+from app.services.atendimento_service import (
+    AtorAutenticado,
+    pode_acessar_titular,
+    resolver_titular,
+)
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
@@ -48,7 +53,12 @@ class AnamneseNaoEncontradaError(Exception):
 
 
 class AnamneseJaUtilizadaError(Exception):
-    pass
+    """Carrega o diagnóstico já criado para a anamnese, para o cliente
+    retomar o acompanhamento em vez de reenviar (retry idempotente)."""
+
+    def __init__(self, diagnostico: Diagnostico) -> None:
+        self.diagnostico = diagnostico
+        super().__init__("anamnese já vinculada a outro diagnóstico")
 
 
 class DiagnosticoNaoEncontradoError(Exception):
@@ -253,18 +263,35 @@ async def listar_diagnosticos(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    ator: AtorAutenticado,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
     parametros_captura: dict[str, Any],
+    paciente_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
+    """Cria o diagnóstico da anamnese para o titular autorizado.
+
+    `paciente_id` só é aceito como contexto de atendimento: o titular é
+    resolvido pelo vínculo do ator (erros de `atendimento_service` sobem
+    antes de ler a anamnese ou gravar a imagem). A anamnese precisa ser do
+    titular e ter sido preenchida pelo mesmo ator — o profissional não
+    reaproveita a autoavaliação do paciente, e vice-versa.
+    """
+    titular_id = await resolver_titular(db, ator, paciente_id)
+
     anamnese = await anamnese_queries.buscar_por_id(
         db,
         anamnese_id,
     )
 
-    if anamnese is None or anamnese.paciente_id != paciente_id:
+    if anamnese is None or anamnese.paciente_id != titular_id:
+        raise AnamneseNaoEncontradaError
+
+    # Executor nulo = anamnese legada, preenchida pelo próprio titular.
+    executor_anamnese = anamnese.executor_id or anamnese.paciente_id
+
+    if executor_anamnese != ator.id:
         raise AnamneseNaoEncontradaError
 
     existente = await diagnostico_queries.buscar_por_anamnese(
@@ -273,7 +300,7 @@ async def criar_diagnostico(
     )
 
     if existente is not None:
-        raise AnamneseJaUtilizadaError
+        raise AnamneseJaUtilizadaError(existente)
 
     _validar_imagem(
         imagem,
@@ -289,7 +316,8 @@ async def criar_diagnostico(
     try:
         diagnostico = await diagnostico_queries.inserir(
             db=db,
-            paciente_id=paciente_id,
+            paciente_id=titular_id,
+            executor_id=ator.id,
             anamnese_id=anamnese_id,
             url_arquivo=url_arquivo,
             parametros_captura=parametros_captura,
@@ -306,7 +334,7 @@ async def criar_diagnostico(
         )
 
         if existente is not None:
-            raise AnamneseJaUtilizadaError from exc
+            raise AnamneseJaUtilizadaError(existente) from exc
 
         raise
 
@@ -327,7 +355,7 @@ async def criar_diagnostico(
 
 async def obter_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    ator: AtorAutenticado,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -338,7 +366,7 @@ async def obter_diagnostico(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
-    if diagnostico.paciente_id != paciente_id:
+    if not await pode_acessar_titular(db, ator, diagnostico.paciente_id):
         raise DiagnosticoAcessoNegadoError
 
     diagnostico = await diagnostico_mock.processar_se_necessario(

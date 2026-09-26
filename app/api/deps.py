@@ -10,6 +10,7 @@ from app.auth.users import current_active_user
 from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.models.user import User
+from app.services.atendimento_service import AtorAutenticado
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -31,3 +32,15 @@ def get_current_patient_id(user: CurrentUser) -> uuid.UUID:
 
 
 CurrentPatientDep = Annotated[uuid.UUID, Depends(get_current_patient_id)]
+
+
+def get_current_actor(user: CurrentUser) -> AtorAutenticado:
+    """Ator autenticado (id + papel) — quem executa a ação, vindo só do JWT.
+
+    Usado nos fluxos em que o executor pode ser diferente do titular
+    (profissional atendendo paciente vinculado, US-090).
+    """
+    return AtorAutenticado(id=user.id, role=user.role)
+
+
+CurrentActorDep = Annotated[AtorAutenticado, Depends(get_current_actor)]

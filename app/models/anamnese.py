@@ -18,6 +18,10 @@ class Anamnese(Base):
     `des_resposta` (texto, pra auditoria) junto de `valor`/`tipo_resposta` (forma
     tipada). `id_versao_questionario` referencia a versão do questionário
     (app/models/questionario.py) usada no preenchimento.
+
+    `paciente_id` é o titular; `executor_id` é quem preencheu (o próprio
+    paciente na autoavaliação, ou o profissional vinculado no atendimento).
+    `executor_id` nulo = registro legado, anterior à distinção de ator.
     """
 
     __tablename__ = "anamneses"
@@ -31,3 +35,6 @@ class Anamnese(Base):
     )
     id_versao_questionario: Mapped[str] = mapped_column(String(50), nullable=False)
     respostas: Mapped[list[dict]] = mapped_column(JSONB)
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
