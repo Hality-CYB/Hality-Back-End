@@ -144,7 +144,7 @@ async def _current_active_user_de_teste(request: Request) -> SimpleNamespace:
     """
     if not request.headers.get("authorization"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sem token")
-    return SimpleNamespace(id=PACIENTE_STUB_ID)
+    return SimpleNamespace(id=PACIENTE_STUB_ID, role="paciente", is_active=True)
 
 
 _MODULOS_COM_PACIENTE_DE_TESTE = {"test_anamnese", "test_diagnostico"}

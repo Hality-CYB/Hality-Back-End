@@ -1,10 +1,11 @@
-import uuid
 from datetime import UTC, date, datetime, time
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import UsuarioAutenticado, pode_acessar_paciente
 from app.core.config import get_settings
 from app.db import anamnese_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
@@ -55,7 +56,7 @@ class DiagnosticoNaoEncontradoError(Exception):
     pass
 
 
-class DiagnosticoAcessoNegadoError(Exception):
+class ImagemNaoEncontradaError(Exception):
     pass
 
 
@@ -253,7 +254,7 @@ async def listar_diagnosticos(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    usuario: UsuarioAutenticado,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
@@ -264,8 +265,13 @@ async def criar_diagnostico(
         anamnese_id,
     )
 
-    if anamnese is None or anamnese.paciente_id != paciente_id:
+    if anamnese is None or not await pode_acessar_paciente(
+        db, usuario, anamnese.paciente_id, recurso=f"anamnese:{anamnese_id}"
+    ):
         raise AnamneseNaoEncontradaError
+
+    # O diagnóstico pertence ao dono da anamnese — nunca a um id vindo do cliente.
+    paciente_id = anamnese.paciente_id
 
     existente = await diagnostico_queries.buscar_por_anamnese(
         db,
@@ -325,9 +331,32 @@ async def criar_diagnostico(
     }
 
 
+async def obter_caminho_imagem(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    nome_arquivo: str,
+) -> Path:
+    paciente_id = await diagnostico_queries.buscar_paciente_por_arquivo_imagem(
+        db,
+        nome_arquivo,
+    )
+
+    if paciente_id is None or not await pode_acessar_paciente(
+        db, usuario, paciente_id, recurso=f"imagem:{nome_arquivo}"
+    ):
+        raise ImagemNaoEncontradaError
+
+    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+
+    if caminho is None:
+        raise ImagemNaoEncontradaError
+
+    return caminho
+
+
 async def obter_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    usuario: UsuarioAutenticado,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -335,11 +364,11 @@ async def obter_diagnostico(
         diagnostico_id,
     )
 
-    if diagnostico is None:
+    # Sem acesso responde igual a inexistente (404) para não permitir enumeração.
+    if diagnostico is None or not await pode_acessar_paciente(
+        db, usuario, diagnostico.paciente_id, recurso=f"diagnostico:{diagnostico_id}"
+    ):
         raise DiagnosticoNaoEncontradoError
-
-    if diagnostico.paciente_id != paciente_id:
-        raise DiagnosticoAcessoNegadoError
 
     diagnostico = await diagnostico_mock.processar_se_necessario(
         db,

@@ -1,9 +1,13 @@
-"""Vínculo opcional entre paciente e profissional."""
+"""Vínculo opcional entre paciente e profissional.
+
+Só vínculo com ``ativo = True`` dá ao profissional acesso aos dados clínicos do
+paciente (ver ``app/auth/policies.py``).
+"""
 
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, func, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,3 +28,4 @@ class PacienteProfissional(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())

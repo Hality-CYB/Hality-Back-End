@@ -12,7 +12,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api.deps import CurrentPatientDep, DbSession
+from app.api.deps import CurrentClinicalUser, CurrentPatient, CurrentPatientDep, DbSession
 from app.schemas.diagnostico import DiagnosticoListResponse
 from app.services import diagnostico_service, diagnostico_storage
 
@@ -26,14 +26,23 @@ router = APIRouter(
     "/imagens/{nome_arquivo}",
     include_in_schema=False,
 )
-def obter_imagem(nome_arquivo: str) -> FileResponse:
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+async def obter_imagem(
+    nome_arquivo: str,
+    usuario: CurrentClinicalUser,
+    db: DbSession,
+) -> FileResponse:
+    try:
+        caminho = await diagnostico_service.obter_caminho_imagem(
+            db=db,
+            usuario=usuario,
+            nome_arquivo=nome_arquivo,
+        )
 
-    if caminho is None:
+    except diagnostico_service.ImagemNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="imagem não encontrada",
-        )
+        ) from exc
 
     return FileResponse(caminho)
 
@@ -77,7 +86,7 @@ async def criar_diagnostico(
     anamnese_id: Annotated[int, Form()],
     imagem: Annotated[UploadFile, File()],
     parametros_captura: Annotated[str, Form()],
-    paciente_id: CurrentPatientDep,
+    usuario: CurrentPatient,
     db: DbSession,
 ) -> dict[str, Any] | JSONResponse:
     try:
@@ -97,7 +106,7 @@ async def criar_diagnostico(
     try:
         return await diagnostico_service.criar_diagnostico(
             db=db,
-            paciente_id=paciente_id,
+            usuario=usuario,
             anamnese_id=anamnese_id,
             imagem=imagem_bytes,
             content_type=imagem.content_type or "",
@@ -132,13 +141,13 @@ async def criar_diagnostico(
 @router.get("/{diagnostico_id}")
 async def obter_diagnostico(
     diagnostico_id: int,
-    paciente_id: CurrentPatientDep,
+    usuario: CurrentClinicalUser,
     db: DbSession,
 ) -> dict[str, Any]:
     try:
         return await diagnostico_service.obter_diagnostico(
             db=db,
-            paciente_id=paciente_id,
+            usuario=usuario,
             diagnostico_id=diagnostico_id,
         )
 
@@ -146,12 +155,6 @@ async def obter_diagnostico(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="diagnóstico não encontrado",
-        ) from exc
-
-    except diagnostico_service.DiagnosticoAcessoNegadoError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=("diagnóstico pertence a outro paciente"),
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:

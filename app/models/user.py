@@ -23,7 +23,8 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     Campos extras:
         name: Nome completo do usuário.
         phone: Telefone opcional.
-        role: Papel do usuário (``patient``, ``professional``, ``admin``).
+        role: Papel do usuário (``paciente``, ``profissional``, ``admin``). Aliases em
+            inglês de linhas antigas são aceitos via ``normalizar_papel``.
         created_at: Timestamp de criação da conta.
     """
 
@@ -31,7 +32,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    role: Mapped[str] = mapped_column(String(20), default="patient", nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="paciente", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
