@@ -34,7 +34,7 @@ from app.api.deps import exigir_papeis
 from app.api.v1.endpoints import anamnese as anamnese_endpoints
 from app.api.v1.endpoints import diagnostico as diagnostico_endpoints
 from app.auth import policies
-from app.auth.users import current_active_user
+from app.auth.users import current_active_user, current_active_user_opcional
 from app.core.config import get_settings
 from app.db import paciente_profissional_queries
 from app.main import app
@@ -264,12 +264,18 @@ def cenario() -> Iterator[Cenario]:
     try:
         yield criado
     finally:
-        app.dependency_overrides.pop(current_active_user, None)
+        _deslogar()
         asyncio.run(_remover_cenario(criado))
 
 
 def _autenticar_como(usuario: SimpleNamespace) -> None:
     app.dependency_overrides[current_active_user] = lambda: usuario
+    app.dependency_overrides[current_active_user_opcional] = lambda: usuario
+
+
+def _deslogar() -> None:
+    app.dependency_overrides.pop(current_active_user, None)
+    app.dependency_overrides.pop(current_active_user_opcional, None)
 
 
 def _rotas_de_leitura(cenario: Cenario) -> list[str]:
@@ -302,9 +308,23 @@ def test_profissional_com_vinculo_ativo_le_recursos_do_paciente(cenario: Cenario
 def test_sem_acesso_responde_404_igual_a_inexistente(cenario: Cenario, quem: str) -> None:
     _autenticar_como(getattr(cenario, quem))
     client = TestClient(app)
+    anamnese, diagnostico, imagem = _rotas_de_leitura(cenario)
 
-    for rota in _rotas_de_leitura(cenario):
+    for rota in (anamnese, imagem):
         assert client.get(rota, headers=AUTH_HEADERS).status_code == 404, rota
+
+    # Diagnóstico mantém o contrato anterior ao RBAC: existente sem acesso -> 403.
+    response = client.get(diagnostico, headers=AUTH_HEADERS)
+    assert response.status_code == 403
+    assert response.json() == {"detail": "diagnóstico pertence a outro paciente"}
+
+
+def test_diagnostico_inexistente_continua_404(cenario: Cenario) -> None:
+    _autenticar_como(cenario.paciente)
+
+    response = TestClient(app).get("/api/v1/diagnosticos/999999999", headers=AUTH_HEADERS)
+
+    assert response.status_code == 404
 
 
 def test_admin_nao_tem_acesso_clinico_automatico(cenario: Cenario) -> None:
@@ -449,6 +469,7 @@ _ROTAS_CLINICAS = [
 )
 def test_chamada_direta_sem_credencial_valida_recebe_401(headers: dict) -> None:
     assert current_active_user not in app.dependency_overrides
+    assert current_active_user_opcional not in app.dependency_overrides
     client = TestClient(app)
 
     for metodo, rota in _ROTAS_CLINICAS:
@@ -643,8 +664,11 @@ def test_nenhum_modulo_checa_papel_ou_dono_fora_da_camada_de_autorizacao() -> No
     de acesso — só restringem a consulta ao id que a policy já validou.
     """
     permitidos_role = {
-        "api/deps.py",
         "auth/policies.py",
+        # Código da #88 (vínculo), mantido como veio da develop:
+        # `get_current_professional` e a validação do e-mail em `criar_vinculo`.
+        "api/deps.py",
+        "services/vinculo_service.py",
         "models/user.py",
         "services/home_service.py",
     }
@@ -675,3 +699,77 @@ def test_nenhum_modulo_checa_papel_ou_dono_fora_da_camada_de_autorizacao() -> No
 def test_exigir_papeis_expoe_papeis_para_auditoria() -> None:
     dependencia = exigir_papeis(TipoUsuario.PACIENTE, TipoUsuario.PROFISSIONAL)
     assert dependencia.papeis_permitidos == {TipoUsuario.PACIENTE, TipoUsuario.PROFISSIONAL}
+
+
+# ---------------------------------------------------------------------------
+# Imagem por URL assinada — o front usa `url_arquivo` direto em <img>
+# ---------------------------------------------------------------------------
+
+
+def _url_da_imagem_no_detalhe(cenario: Cenario, usuario: SimpleNamespace) -> str:
+    _autenticar_como(usuario)
+    response = TestClient(app).get(
+        f"/api/v1/diagnosticos/{cenario.diagnostico_id}", headers=AUTH_HEADERS
+    )
+    assert response.status_code == 200
+    return response.json()["imagens"][0]["url_arquivo"]
+
+
+@pytest.mark.parametrize("quem", ["paciente", "profissional_vinculado"])
+def test_url_da_imagem_no_detalhe_abre_sem_bearer(cenario: Cenario, quem: str) -> None:
+    url = _url_da_imagem_no_detalhe(cenario, getattr(cenario, quem))
+    _deslogar()
+
+    # Igual ao <img src> do front: sem header Authorization nenhum.
+    response = TestClient(app).get(url)
+
+    assert url.startswith(f"/api/v1/diagnosticos/imagens/{cenario.nome_imagem}?expira=")
+    assert response.status_code == 200
+    assert response.content == b"imagem"
+
+
+def test_url_assinada_adulterada_ou_de_outro_arquivo_responde_404(cenario: Cenario) -> None:
+    url = _url_da_imagem_no_detalhe(cenario, cenario.paciente)
+    _deslogar()
+    client = TestClient(app)
+
+    adulterada = url[:-1] + ("0" if url[-1] != "0" else "1")
+    outro_arquivo = url.replace(cenario.nome_imagem, "outro-arquivo.jpg")
+    sem_assinatura = url.split("?", 1)[0]
+
+    assert client.get(adulterada).status_code == 404
+    assert client.get(outro_arquivo).status_code == 404
+    # Sem Bearer e sem assinatura: mesma resposta de antes para a rota (401).
+    assert client.get(sem_assinatura).status_code == 401
+
+
+def test_url_assinada_expirada_responde_404(cenario: Cenario) -> None:
+    url = policies.assinar_url_imagem(
+        f"/api/v1/diagnosticos/imagens/{cenario.nome_imagem}", validade_segundos=-1
+    )
+
+    assert TestClient(app).get(url).status_code == 404
+
+
+def test_rota_da_imagem_com_bearer_continua_protegida(cenario: Cenario) -> None:
+    rota = f"/api/v1/diagnosticos/imagens/{cenario.nome_imagem}"
+
+    _autenticar_como(cenario.outro_paciente)
+    assert TestClient(app).get(rota, headers=AUTH_HEADERS).status_code == 404
+
+    _deslogar()
+    assert TestClient(app).get(rota).status_code == 401
+
+
+def test_log_do_acesso_por_url_assinada(cenario: Cenario, caplog: pytest.LogCaptureFixture) -> None:
+    url = _url_da_imagem_no_detalhe(cenario, cenario.paciente)
+    _deslogar()
+    caplog.set_level(logging.INFO, logger="app.authz")
+
+    TestClient(app).get(url)
+
+    (registro,) = _registros_authz(caplog)
+    assert (registro.authz_decisao, registro.authz_motivo) == ("permitido", "url_assinada")
+    assert registro.authz_recurso == f"imagem:{cenario.nome_imagem}"
+    assert registro.usuario_id == "anonimo"
+    assert "assinatura" not in registro.getMessage()

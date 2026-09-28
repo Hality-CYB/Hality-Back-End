@@ -17,6 +17,9 @@ os que vierem depois):
 * **404** — o papel é aceito, mas o recurso não existe **ou** o usuário não tem
   acesso a ele. Os dois casos respondem igual para impedir enumeração de ids.
 
+  Exceção: ``GET /diagnosticos/{id}`` mantém o contrato anterior ao RBAC —
+  diagnóstico inexistente -> 404, existente sem acesso -> **403**.
+
 Admin não herda acesso clínico: cada operação declara explicitamente os papéis que
 aceita. ``role``, ``paciente_id``, ``profissional_id`` e ``revisor_id`` vindos do
 cliente nunca são prova de acesso — a identidade vem sempre do usuário autenticado
@@ -30,18 +33,28 @@ Valor persistido de ``users.role``: o canônico é o português (``paciente``,
 ``profissional``, ``admin``, ver ``TipoUsuario``). Os aliases em inglês continuam
 aceitos na leitura só por compatibilidade com linhas antigas.
 
+Imagens (``<img>`` não envia Bearer): a resposta de ``GET /diagnosticos/{id}`` traz
+cada ``url_arquivo`` já **assinada** (HMAC com ``secret_key``, válida por
+``IMAGEM_URL_VALIDADE_SEGUNDOS``). A assinatura só é emitida depois que
+``pode_acessar_paciente`` liberou o diagnóstico, então quem recebe a URL já passou
+pela regra de acesso. A mesma rota continua aceitando Bearer para chamadas diretas.
+
 Toda decisão é registrada no logger ``app.authz`` (negações em WARNING, permissões
 em INFO) com usuário, papel, recurso e correlation id — nunca com payload.
 """
 
+import hashlib
+import hmac
 import logging
 import re
+import time
 import uuid
 from contextvars import ContextVar
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db import paciente_profissional_queries
 from app.schemas.usuario import TipoUsuario
 
@@ -55,6 +68,8 @@ _correlation_id: ContextVar[str | None] = ContextVar("authz_correlation_id", def
 
 # Aceita só ids "bem-comportados" vindos do cliente — evita injeção em log.
 _CORRELATION_ID_VALIDO = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+IMAGEM_URL_VALIDADE_SEGUNDOS = 15 * 60
 
 _ALIASES_PAPEL: dict[str, TipoUsuario] = {
     "paciente": TipoUsuario.PACIENTE,
@@ -91,15 +106,18 @@ def registrar_decisao(
     permitido: bool,
     motivo: str,
     recurso: str,
-    usuario: UsuarioAutenticado,
+    usuario: UsuarioAutenticado | None,
 ) -> None:
-    """Loga a decisão de autorização. Recebe só identificadores, nunca payload."""
-    papel = normalizar_papel(usuario.role)
+    """Loga a decisão de autorização. Recebe só identificadores, nunca payload.
+
+    ``usuario=None`` é o acesso por URL assinada, que não tem usuário na request.
+    """
+    papel = normalizar_papel(usuario.role) if usuario is not None else None
     campos = {
         "authz_decisao": "permitido" if permitido else "negado",
         "authz_motivo": motivo,
         "authz_recurso": recurso,
-        "usuario_id": str(usuario.id),
+        "usuario_id": str(usuario.id) if usuario is not None else "anonimo",
         "papel": papel.value if papel else "desconhecido",
         "correlation_id": _correlation_id.get(),
     }
@@ -141,4 +159,40 @@ async def pode_acessar_paciente(
         motivo = "papel_sem_acesso_clinico"
 
     registrar_decisao(permitido=permitido, motivo=motivo, recurso=recurso, usuario=usuario)
+    return permitido
+
+
+def _assinatura_imagem(nome_arquivo: str, expira_em: int) -> str:
+    chave = get_settings().secret_key.get_secret_value().encode()
+    mensagem = f"imagem:{nome_arquivo}:{expira_em}".encode()
+    return hmac.new(chave, mensagem, hashlib.sha256).hexdigest()
+
+
+def assinar_url_imagem(
+    url_arquivo: str,
+    *,
+    validade_segundos: int = IMAGEM_URL_VALIDADE_SEGUNDOS,
+) -> str:
+    """Devolve a URL da imagem assinada, para uso direto em ``<img src>``.
+
+    Só pode ser chamada depois de ``pode_acessar_paciente`` liberar o recurso.
+    """
+    nome_arquivo = url_arquivo.rsplit("/", 1)[-1]
+    expira_em = int(time.time()) + validade_segundos
+    assinatura = _assinatura_imagem(nome_arquivo, expira_em)
+    return f"{url_arquivo}?expira={expira_em}&assinatura={assinatura}"
+
+
+def url_imagem_assinada_valida(nome_arquivo: str, expira_em: int, assinatura: str) -> bool:
+    """Confere a assinatura (tempo constante) e a validade; registra a decisão."""
+    if expira_em < time.time():
+        permitido, motivo = False, "url_assinada_expirada"
+    elif not hmac.compare_digest(_assinatura_imagem(nome_arquivo, expira_em), assinatura):
+        permitido, motivo = False, "url_assinada_invalida"
+    else:
+        permitido, motivo = True, "url_assinada"
+
+    registrar_decisao(
+        permitido=permitido, motivo=motivo, recurso=f"imagem:{nome_arquivo}", usuario=None
+    )
     return permitido

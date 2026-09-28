@@ -1,20 +1,23 @@
-"""Vínculo opcional entre paciente e profissional.
-
-Só vínculo com ``ativo = True`` dá ao profissional acesso aos dados clínicos do
-paciente (ver ``app/auth/policies.py``).
-"""
+"""Vínculo opcional entre paciente e profissional."""
 
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, func, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
 
 class PacienteProfissional(Base):
-    """Tabela `pacientes_profissionais`."""
+    """Tabela `pacientes_profissionais`.
+
+    Desvincular não apaga a linha: marca `ativo=False` e preenche
+    `encerrado_em`, preservando o histórico do vínculo para auditoria. Um
+    índice único parcial (só sobre linhas com `ativo=True`) garante no banco
+    que não existam dois vínculos ativos para o mesmo par paciente/profissional,
+    mas permite revincular depois de uma desvinculação (nova linha).
+    """
 
     __tablename__ = "pacientes_profissionais"
 
@@ -28,4 +31,10 @@ class PacienteProfissional(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
-    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    ativo: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=text("true"),
+        nullable=False,
+    )
+    encerrado_em: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

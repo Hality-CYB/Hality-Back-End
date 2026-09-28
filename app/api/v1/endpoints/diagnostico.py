@@ -12,7 +12,13 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api.deps import CurrentClinicalUser, CurrentPatient, CurrentPatientDep, DbSession
+from app.api.deps import (
+    CurrentClinicalUser,
+    CurrentPatient,
+    CurrentPatientDep,
+    DbSession,
+    OptionalClinicalUser,
+)
 from app.schemas.diagnostico import DiagnosticoListResponse
 from app.services import diagnostico_service, diagnostico_storage
 
@@ -28,15 +34,28 @@ router = APIRouter(
 )
 async def obter_imagem(
     nome_arquivo: str,
-    usuario: CurrentClinicalUser,
+    usuario: OptionalClinicalUser,
     db: DbSession,
+    expira: Annotated[int | None, Query()] = None,
+    assinatura: Annotated[str | None, Query()] = None,
 ) -> FileResponse:
+    # Duas formas de acesso: Bearer (policy) ou `expira`+`assinatura`, a URL que
+    # `GET /diagnosticos/{id}` devolve para o front usar em <img> (sem Bearer).
     try:
         caminho = await diagnostico_service.obter_caminho_imagem(
             db=db,
             usuario=usuario,
             nome_arquivo=nome_arquivo,
+            expira_em=expira,
+            assinatura=assinatura,
         )
+
+    except diagnostico_service.ImagemSemCredencialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
     except diagnostico_service.ImagemNaoEncontradaError as exc:
         raise HTTPException(
@@ -155,6 +174,12 @@ async def obter_diagnostico(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="diagnóstico não encontrado",
+        ) from exc
+
+    except diagnostico_service.DiagnosticoAcessoNegadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=("diagnóstico pertence a outro paciente"),
         ) from exc
 
     except diagnostico_service.AnamneseNaoEncontradaError as exc:
