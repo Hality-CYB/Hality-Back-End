@@ -13,7 +13,8 @@ STATUS_PENDENTE = "aguardando_revisao"
 async def listar_pacientes_ids(db: AsyncSession, profissional_id: uuid.UUID) -> list[uuid.UUID]:
     result = await db.execute(
         select(PacienteProfissional.paciente_id).where(
-            PacienteProfissional.profissional_id == profissional_id
+            PacienteProfissional.profissional_id == profissional_id,
+            PacienteProfissional.ativo == True,  # noqa: E712
         )
     )
 
