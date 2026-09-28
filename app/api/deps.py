@@ -33,18 +33,15 @@ def get_current_patient_id(user: CurrentUser) -> uuid.UUID:
 CurrentPatientDep = Annotated[uuid.UUID, Depends(get_current_patient_id)]
 
 
-def get_current_professional_id(user: CurrentUser) -> uuid.UUID:
-    """Retorna o id do usuário autenticado como profissional_id.
-
-    Se o usuário logado não for profissional, não deixa acessar.
-    """
+def get_current_professional(user: CurrentUser) -> User:
+    """Garante que o usuário autenticado tem papel de profissional."""
     if user.role != "profissional":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="rota exclusiva para profissionais",
+            detail="acesso restrito a profissionais",
         )
 
-    return user.id
+    return user
 
 
-CurrentProfessionalDep = Annotated[uuid.UUID, Depends(get_current_professional_id)]
+CurrentProfessionalDep = Annotated[User, Depends(get_current_professional)]

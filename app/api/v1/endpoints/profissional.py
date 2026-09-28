@@ -16,7 +16,7 @@ PERIODO_PADRAO_DIAS = 30
 
 @router.get("/resumo", response_model=ResumoProfissionalResponse)
 async def obter_resumo(
-    profissional_id: CurrentProfessionalDep,
+    profissional: CurrentProfessionalDep,
     db: DbSession,
     inicio: Annotated[datetime | None, Query()] = None,
     fim: Annotated[datetime | None, Query()] = None,
@@ -28,7 +28,7 @@ async def obter_resumo(
     try:
         return await profissional_service.montar_resumo(
             db=db,
-            profissional_id=profissional_id,
+            profissional_id=profissional.id,
             inicio=inicio_efetivo,
             fim=fim_efetivo,
             timezone=timezone,
