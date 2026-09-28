@@ -31,7 +31,7 @@ def get_current_patient_id(user: CurrentUser) -> uuid.UUID:
     return user.id
 
 
-CurrentPatientDep = Annotated[uuid.UUI|D, Depends(get_current_patient_id)]
+CurrentPatientDep = Annotated[uuid.UUID, Depends(get_current_patient_id)]
 
 
 def get_current_actor(user: CurrentUser) -> AtorAutenticado:
@@ -44,6 +44,8 @@ def get_current_actor(user: CurrentUser) -> AtorAutenticado:
 
 
 CurrentActorDep = Annotated[AtorAutenticado, Depends(get_current_actor)]
+
+
 def get_current_professional(user: CurrentUser) -> User:
     """Garante que o usuário autenticado tem papel de profissional."""
     if user.role != "profissional":
