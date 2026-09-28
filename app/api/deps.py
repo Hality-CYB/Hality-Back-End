@@ -38,7 +38,7 @@ def get_current_professional_id(user: CurrentUser) -> uuid.UUID:
 
     Se o usuário logado não for profissional, não deixa acessar.
     """
-    if user.role != "professional":
+    if user.role != "profissional":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="rota exclusiva para profissionais",
