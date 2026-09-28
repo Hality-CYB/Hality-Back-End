@@ -23,6 +23,7 @@ async def existe_vinculo(
         .where(
             PacienteProfissional.profissional_id == profissional_id,
             PacienteProfissional.paciente_id == paciente_id,
+            PacienteProfissional.ativo.is_(True),
         )
         .limit(1)
     )
