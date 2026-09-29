@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin_diagnosticos,
     anamnese,
     auth,
     diagnostico,
@@ -11,7 +12,7 @@ from app.auth.users import fastapi_users
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 api_router = APIRouter()
-
+api_router.include_router(admin_diagnosticos.router)
 # Rotas de saúde, anamnese e diagnóstico (existentes)
 api_router.include_router(health.router)
 

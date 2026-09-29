@@ -38,6 +38,14 @@ class DiagnosticosPaginados:
     total: int
 
 
+def _ordenacao(ordem: str):
+    if ordem == "data_asc":
+        return (Diagnostico.data_diagnostico.asc(), Diagnostico.id.asc())
+
+    # `id` como desempate garante paginação estável com datas iguais.
+    return (Diagnostico.data_diagnostico.desc(), Diagnostico.id.desc())
+
+
 async def buscar_por_id(
     db: AsyncSession,
     diagnostico_id: int,
@@ -71,11 +79,6 @@ async def listar_por_paciente(
     total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
     total = total_result.scalar_one()
 
-    if ordem == "data_asc":
-        ordenacao = (Diagnostico.data_diagnostico.asc(), Diagnostico.id.asc())
-    else:
-        ordenacao = (Diagnostico.data_diagnostico.desc(), Diagnostico.id.desc())
-
     result = await db.execute(
         select(Diagnostico, ClassificacaoDiagnostico)
         .outerjoin(
@@ -83,7 +86,7 @@ async def listar_por_paciente(
             Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
         )
         .where(*filtros)
-        .order_by(*ordenacao)
+        .order_by(*_ordenacao(ordem))
         .offset((pagina - 1) * limite)
         .limit(limite)
     )
@@ -98,6 +101,84 @@ async def listar_por_paciente(
         ],
         total=total,
     )
+
+
+async def listar_admin(
+    db: AsyncSession,
+    paciente_id: uuid.UUID | None,
+    classificacao_codigo: str | None,
+    sem_classificacao: bool,
+    status: str | None,
+    data_inicio: datetime | None,
+    data_fim: datetime | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> DiagnosticosPaginados:
+    """Listagem administrativa (todos os pacientes) com filtros opcionais.
+
+    Estende a mesma consulta/estrutura de `listar_por_paciente`: só muda o
+    conjunto de filtros. Não carrega imagens nem anamnese.
+    """
+    filtros = []
+
+    if paciente_id is not None:
+        filtros.append(Diagnostico.paciente_id == paciente_id)
+
+    if status is not None:
+        filtros.append(Diagnostico.status == status)
+
+    if data_inicio is not None:
+        filtros.append(Diagnostico.data_diagnostico >= data_inicio)
+
+    if data_fim is not None:
+        filtros.append(Diagnostico.data_diagnostico <= data_fim)
+
+    if sem_classificacao:
+        filtros.append(Diagnostico.classificacao_id.is_(None))
+    elif classificacao_codigo is not None:
+        # Subquery no lugar de join: o COUNT usa os mesmos filtros sem precisar de join.
+        filtros.append(
+            Diagnostico.classificacao_id.in_(
+                select(ClassificacaoDiagnostico.id).where(
+                    ClassificacaoDiagnostico.codigo == classificacao_codigo
+                )
+            )
+        )
+
+    total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(Diagnostico, ClassificacaoDiagnostico)
+        .outerjoin(
+            ClassificacaoDiagnostico,
+            Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .where(*filtros)
+        .order_by(*_ordenacao(ordem))
+        .offset((pagina - 1) * limite)
+        .limit(limite)
+    )
+
+    return DiagnosticosPaginados(
+        itens=[
+            DiagnosticoListado(diagnostico=diagnostico, classificacao=classificacao)
+            for diagnostico, classificacao in result.all()
+        ],
+        total=total,
+    )
+
+
+async def contar_imagens(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> int:
+    result = await db.execute(
+        select(func.count()).select_from(Imagem).where(Imagem.diagnostico_id == diagnostico_id)
+    )
+
+    return result.scalar_one()
 
 
 async def buscar_por_anamnese(
