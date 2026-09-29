@@ -440,9 +440,6 @@ async def obter_diagnostico(
     }
 
 
-
-
-
 def _resumo_classificacao(classificacao) -> ClassificacaoDiagnosticoResumo | None:
     if classificacao is None:
         return None

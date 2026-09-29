@@ -5,7 +5,6 @@ mutation de rótulo nem de exportação. O guard de admin fica no router para
 valer automaticamente para qualquer rota adicionada aqui no futuro.
 """
 
-
 import uuid
 from typing import Annotated
 
