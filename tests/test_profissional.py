@@ -19,7 +19,7 @@ INICIO = datetime(2026, 8, 1, tzinfo=UTC)
 FIM = datetime(2026, 8, 31, tzinfo=UTC)
 
 
-def _usuario(usuario_id=PROFISSIONAL_ID, role="professional"):
+def _usuario(usuario_id=PROFISSIONAL_ID, role="profissional"):
     return SimpleNamespace(id=usuario_id, role=role)
 
 
@@ -140,16 +140,18 @@ def test_buscar_ultimo_diagnostico_sem_pacientes_retorna_none():
 # testes do deps.py, que e quem decide se pode acessar essa rota
 
 
-def test_get_current_professional_id_bloqueia_quem_nao_e_profissional():
+def test_get_current_professional_bloqueia_quem_nao_e_profissional():
     # paciente tentando acessar rota de profissional tem que tomar 403
     with pytest.raises(HTTPException) as exc_info:
-        deps.get_current_professional_id(_usuario(role="paciente"))
+        deps.get_current_professional(_usuario(role="paciente"))
 
     assert exc_info.value.status_code == 403
 
 
-def test_get_current_professional_id_permite_profissional():
-    assert deps.get_current_professional_id(_usuario(role="professional")) == PROFISSIONAL_ID
+def test_get_current_professional_permite_profissional():
+    usuario = _usuario(role="profissional")
+
+    assert deps.get_current_professional(usuario) == usuario
 
 
 # teste do endpoint em si (sem estar logado tem que dar 401)
