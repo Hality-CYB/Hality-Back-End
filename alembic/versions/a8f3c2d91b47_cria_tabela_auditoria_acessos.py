@@ -40,9 +40,19 @@ def upgrade() -> None:
     op.create_index(
         "ix_auditoria_acessos_recurso", "auditoria_acessos", ["recurso_tipo", "recurso_id"]
     )
+    op.create_index(
+        "ix_diagnosticos_data_diagnostico_id",
+        "diagnosticos",
+        ["data_diagnostico", "id"],
+    )
+    op.create_index("ix_diagnosticos_paciente_id", "diagnosticos", ["paciente_id"])
+    op.create_index("ix_imagens_diagnostico_id", "imagens", ["diagnostico_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_auditoria_acessos_recurso", table_name="auditoria_acessos")
-    op.drop_index("ix_auditoria_acessos_ator_id", table_name="auditoria_acessos")
+    op.drop_index("ix_imagens_diagnostico_id", table_name="imagens", if_exists=True)
+    op.drop_index("ix_diagnosticos_paciente_id", table_name="diagnosticos", if_exists=True)
+    op.drop_index("ix_diagnosticos_data_diagnostico_id", table_name="diagnosticos", if_exists=True)
+    op.drop_index("ix_auditoria_acessos_recurso", table_name="auditoria_acessos", if_exists=True)
+    op.drop_index("ix_auditoria_acessos_ator_id", table_name="auditoria_acessos", if_exists=True)
     op.drop_table("auditoria_acessos")
