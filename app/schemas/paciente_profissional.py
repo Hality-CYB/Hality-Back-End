@@ -1,17 +1,23 @@
+import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
-class PacienteProfissionalCreate(BaseModel):
-    """Vinculo opcional, indicado no cadastro do paciente."""
+class VinculoCreate(BaseModel):
+    """Seleção, pelo profissional, de um paciente já cadastrado para vincular."""
 
-    paciente_id: int
-    profissional_id: int
+    paciente_email: EmailStr
 
 
-class PacienteProfissionalDetail(BaseModel):
+class VinculoDetail(BaseModel):
     id: int
-    paciente_id: int
-    profissional_id: int
+    paciente_id: uuid.UUID
+    paciente_nome: str
+    paciente_email: str
     data_vinculo: datetime
+    ativo: bool
+
+
+class VinculoListResponse(BaseModel):
+    itens: list[VinculoDetail]
