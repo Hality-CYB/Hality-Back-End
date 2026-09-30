@@ -41,3 +41,17 @@ def get_current_admin_id(user: CurrentUser) -> uuid.UUID:
 
 
 CurrentAdminDep = Annotated[uuid.UUID, Depends(get_current_admin_id)]
+
+
+def get_current_professional(user: CurrentUser) -> User:
+    """Garante que o usuário autenticado tem papel de profissional."""
+    if user.role != "profissional":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="acesso restrito a profissionais",
+        )
+
+    return user
+
+
+CurrentProfessionalDep = Annotated[User, Depends(get_current_professional)]

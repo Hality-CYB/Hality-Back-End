@@ -1,7 +1,7 @@
 """adiciona autoria e publicacao a conteudos
 
 Revision ID: a82d5d4b3f10
-Revises: 33ca6f19704b
+Revises: 198bcce46c43
 Create Date: 2026-09-24
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "a82d5d4b3f10"
-down_revision: str | None = "33ca6f19704b"
+down_revision: str | None = "198bcce46c43"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
