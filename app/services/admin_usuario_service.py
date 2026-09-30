@@ -44,6 +44,10 @@ class EmailJaCadastradoError(Exception):
     pass
 
 
+class UltimoAdministradorError(Exception):
+    pass
+
+
 class TrocaDeRoleBloqueadaError(Exception):
     def __init__(self, motivo: str) -> None:
         self.motivo = motivo
@@ -132,6 +136,26 @@ async def criar_usuario(db: AsyncSession, dados: AdminUsuarioCreate) -> AdminUsu
     return _para_detalhe(usuario, profissional)
 
 
+def _tem_acesso_admin(role: str, is_superuser: bool, ativo: bool) -> bool:
+    return ativo and (role == TipoUsuario.ADMIN or is_superuser)
+
+
+async def _garantir_outro_admin_se_perder_acesso(
+    db: AsyncSession, usuario: User, campos: dict
+) -> None:
+    tinha_acesso = _tem_acesso_admin(usuario.role, usuario.is_superuser, usuario.is_active)
+    tera_acesso = _tem_acesso_admin(
+        campos.get("role", usuario.role),
+        usuario.is_superuser,
+        campos.get("ativo", usuario.is_active),
+    )
+    if not tinha_acesso or tera_acesso:
+        return
+
+    if not await user_queries.bloquear_outros_admins_efetivos(db, usuario.id):
+        raise UltimoAdministradorError
+
+
 async def _aplicar_troca_de_role(
     db: AsyncSession,
     usuario: User,
@@ -174,6 +198,8 @@ async def atualizar_usuario(
     usuario, profissional = encontrado
 
     campos = dados.model_dump(exclude_unset=True)
+    await _garantir_outro_admin_se_perder_acesso(db, usuario, campos)
+
     nova_role = campos.get("role")
     if nova_role is not None and nova_role != usuario.role:
         profissional = await _aplicar_troca_de_role(db, usuario, profissional, nova_role)

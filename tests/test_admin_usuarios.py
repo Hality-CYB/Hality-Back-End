@@ -473,3 +473,146 @@ def test_atualizar_dados_de_profissional_invalidos_retorna_422(
     )
 
     assert resposta.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Último administrador
+# ---------------------------------------------------------------------------
+#
+# O banco de testes tem o admin do seed; `_considerar_como_admins` roda a query
+# real e filtra o resultado para os usuários do cenário, isolando a regra dele.
+
+ULTIMO_ADMIN = "é necessário manter ao menos um administrador ativo"
+PERDAS_DE_ACESSO = [{"ativo": False}, {"role": "paciente"}, {"role": "profissional"}]
+
+
+def _considerar_como_admins(monkeypatch: pytest.MonkeyPatch, *usuarios: User) -> None:
+    ids = {usuario.id for usuario in usuarios}
+    bloquear_outros = user_queries.bloquear_outros_admins_efetivos
+
+    async def _somente_do_cenario(db: AsyncSession, usuario_id: uuid.UUID) -> list[uuid.UUID]:
+        return [admin_id for admin_id in await bloquear_outros(db, usuario_id) if admin_id in ids]
+
+    monkeypatch.setattr(user_queries, "bloquear_outros_admins_efetivos", _somente_do_cenario)
+
+
+def _inserir_usuario(cenario: CenarioAdmin, nome: str, role: str, **extras: object) -> User:
+    async def _inserir(db: AsyncSession) -> User:
+        usuario = User(
+            name=f"{nome} {cenario.token[:8]}",
+            email=cenario.email(nome),
+            hashed_password="x",
+            role=role,
+            **extras,
+        )
+        db.add(usuario)
+        await db.commit()
+        return usuario
+
+    return executar_no_banco(_inserir)
+
+
+@pytest.mark.parametrize("payload", PERDAS_DE_ACESSO)
+def test_unico_admin_nao_perde_acesso(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch, payload: dict
+) -> None:
+    _considerar_como_admins(monkeypatch, cenario_admin.admin)
+
+    resposta = client.patch(f"{USUARIOS_URL}/{cenario_admin.admin.id}", json=payload, headers=AUTH)
+
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"] == ULTIMO_ADMIN
+    usuario, profissional = _buscar_usuario_e_profissional(cenario_admin.admin.email)
+    assert (usuario.role, usuario.is_active, profissional) == ("admin", True, None)
+
+
+@pytest.mark.parametrize("payload", PERDAS_DE_ACESSO)
+def test_com_outro_admin_por_role_o_admin_pode_perder_acesso(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch, payload: dict
+) -> None:
+    outro_admin = _inserir_usuario(cenario_admin, "outroadmin", "admin")
+    _considerar_como_admins(monkeypatch, cenario_admin.admin, outro_admin)
+
+    resposta = client.patch(f"{USUARIOS_URL}/{cenario_admin.admin.id}", json=payload, headers=AUTH)
+
+    assert resposta.status_code == 200
+
+
+@pytest.mark.parametrize("payload", PERDAS_DE_ACESSO)
+def test_com_superuser_ativo_o_admin_pode_perder_acesso(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch, payload: dict
+) -> None:
+    _considerar_como_admins(
+        monkeypatch, cenario_admin.admin, cenario_admin.superuser_sem_role_admin
+    )
+
+    resposta = client.patch(f"{USUARIOS_URL}/{cenario_admin.admin.id}", json=payload, headers=AUTH)
+
+    assert resposta.status_code == 200
+
+
+def test_unico_superuser_nao_pode_ser_desativado(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    superuser = cenario_admin.superuser_sem_role_admin
+    _considerar_como_admins(monkeypatch, superuser)
+
+    resposta = client.patch(f"{USUARIOS_URL}/{superuser.id}", json={"ativo": False}, headers=AUTH)
+
+    assert resposta.status_code == 409
+    usuario, _ = _buscar_usuario_e_profissional(superuser.email)
+    assert usuario.is_active is True
+
+
+def test_unico_superuser_pode_trocar_de_role(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    superuser = cenario_admin.superuser_sem_role_admin
+    _considerar_como_admins(monkeypatch, superuser)
+
+    resposta = client.patch(
+        f"{USUARIOS_URL}/{superuser.id}", json={"role": "profissional"}, headers=AUTH
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json()["role"] == "profissional"
+
+
+@pytest.mark.parametrize(
+    ("perfil", "payload"),
+    [("paciente", {"ativo": False}), ("profissional", {"role": "paciente"})],
+)
+def test_regra_nao_afeta_usuario_sem_acesso_admin(
+    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch, perfil: str, payload: dict
+) -> None:
+    _considerar_como_admins(monkeypatch)
+
+    resposta = client.patch(
+        f"{USUARIOS_URL}/{getattr(cenario_admin, perfil).id}", json=payload, headers=AUTH
+    )
+
+    assert resposta.status_code == 200
+
+
+def test_query_de_outros_admins_efetivos(cenario_admin: CenarioAdmin) -> None:
+    admin_inativo = _inserir_usuario(cenario_admin, "admininativo", "admin", is_active=False)
+
+    async def _consultar(db: AsyncSession, usuario_id: uuid.UUID) -> set[uuid.UUID]:
+        return set(await user_queries.bloquear_outros_admins_efetivos(db, usuario_id))
+
+    outros_do_admin = executar_no_banco(lambda db: _consultar(db, cenario_admin.admin.id))
+    outros_do_superuser = executar_no_banco(
+        lambda db: _consultar(db, cenario_admin.superuser_sem_role_admin.id)
+    )
+
+    assert cenario_admin.superuser_sem_role_admin.id in outros_do_admin
+    assert cenario_admin.admin.id not in outros_do_admin
+    assert cenario_admin.admin.id in outros_do_superuser
+    nunca_admins = {
+        admin_inativo.id,
+        cenario_admin.paciente.id,
+        cenario_admin.paciente_inativo.id,
+        cenario_admin.profissional.id,
+        cenario_admin.profissional_sem_registro.id,
+    }
+    assert not nunca_admins & (outros_do_admin | outros_do_superuser)

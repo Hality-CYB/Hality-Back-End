@@ -74,6 +74,12 @@ async def atualizar_usuario(
     except service.TrocaDeRoleBloqueadaError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.motivo) from exc
 
+    except service.UltimoAdministradorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="é necessário manter ao menos um administrador ativo",
+        ) from exc
+
 
 @router.patch("/profissionais/{usuario_id}", response_model=AdminUsuarioDetail)
 async def atualizar_profissional(

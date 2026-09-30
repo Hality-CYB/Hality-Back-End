@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.profissional import Profissional
 from app.models.user import User
+from app.schemas.usuario import TipoUsuario
 
 UsuarioComProfissional = tuple[User, Profissional | None]
 
@@ -25,6 +26,24 @@ async def email_em_uso(db: AsyncSession, email: str) -> bool:
 
 async def buscar_usuario(db: AsyncSession, usuario_id: uuid.UUID) -> User | None:
     return await db.get(User, usuario_id)
+
+
+async def bloquear_outros_admins_efetivos(
+    db: AsyncSession, usuario_id: uuid.UUID
+) -> list[uuid.UUID]:
+    # O próprio usuário entra no FOR UPDATE (em ordem de id) para que duas
+    # remoções de acesso simultâneas se serializem em vez de causar deadlock;
+    # a segunda relê as linhas já sem o admin removido pela primeira.
+    ids = await db.scalars(
+        select(User.id)
+        .where(
+            User.is_active.is_(True),
+            or_(User.role == TipoUsuario.ADMIN, User.is_superuser.is_(True)),
+        )
+        .order_by(User.id)
+        .with_for_update()
+    )
+    return [admin_id for admin_id in ids if admin_id != usuario_id]
 
 
 async def buscar_usuario_com_profissional(
