@@ -34,6 +34,23 @@ def get_current_patient_id(user: CurrentUser) -> uuid.UUID:
 CurrentPatientDep = Annotated[uuid.UUID, Depends(get_current_patient_id)]
 
 
+def require_admin(user: CurrentUser) -> User:
+    """Exige usuário autenticado com `role == "admin"`.
+
+    401 (sem token/token inválido) vem do fastapi-users; aqui só tratamos o 403
+    para quem está autenticado mas não é administrador.
+    """
+    if user.role != TipoUsuario.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="acesso restrito a administradores",
+        )
+    return user
+
+
+CurrentAdminDep = Annotated[User, Depends(require_admin)]
+
+
 def get_current_professional(user: CurrentUser) -> User:
     """Garante que o usuário autenticado tem papel de profissional."""
     if user.role != "profissional":

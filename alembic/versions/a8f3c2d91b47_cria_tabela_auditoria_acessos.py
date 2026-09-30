@@ -1,7 +1,7 @@
 """cria tabela auditoria_acessos
 
 Revision ID: a8f3c2d91b47
-Revises: 33ca6f19704b
+Revises: 198bcce46c43
 Create Date: 2026-09-28 10:00:00.000000
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a8f3c2d91b47"
-down_revision: str | None = "33ca6f19704b"
+down_revision: str | None = "198bcce46c43"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
