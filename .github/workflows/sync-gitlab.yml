@@ -25,7 +25,7 @@ jobs:
       - name: Push para o GitLab
         env:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_REPO: "tools.ages.pucrs.br/2026-2/6lmnp/hality-diagn-stico-do-h-lito/hality_backend"
+          GITLAB_REPO: "tools.ages.pucrs.br/2026-2/6lmnp/hality-diagn-stico-do-h-lito/hality_backend" 
         run: |
           git remote add gitlab https://oauth2:$GITLAB_TOKEN@$GITLAB_REPO
           git push gitlab HEAD:${{ github.base_ref || github.ref_name }} --force
