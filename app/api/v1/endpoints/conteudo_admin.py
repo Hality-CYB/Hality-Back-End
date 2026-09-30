@@ -58,9 +58,7 @@ async def atualizar_conteudo(
 
 
 @router.delete("/{conteudo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def deletar_conteudo(
-    conteudo_id: int, admin_id: CurrentAdminDep, db: DbSession
-) -> Response:
+async def deletar_conteudo(conteudo_id: int, admin_id: CurrentAdminDep, db: DbSession) -> Response:
     try:
         await conteudo_service.deletar(db, conteudo_id)
     except conteudo_service.ConteudoNaoEncontradoError as exc:

@@ -40,9 +40,7 @@ def _registrar_publicacao(valores: dict, admin_id: uuid.UUID) -> None:
     valores["publicado_em"] = datetime.now(UTC)
 
 
-async def criar(
-    db: AsyncSession, admin_id: uuid.UUID, payload: ConteudoCreate
-) -> ConteudoDetail:
+async def criar(db: AsyncSession, admin_id: uuid.UUID, payload: ConteudoCreate) -> ConteudoDetail:
     await _validar_classificacoes(db, payload.classificacao_ids)
     valores = payload.model_dump(mode="json")
     valores["criado_por_id"] = admin_id

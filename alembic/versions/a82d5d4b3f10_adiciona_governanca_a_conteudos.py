@@ -36,9 +36,7 @@ def upgrade() -> None:
             ["id"],
         )
 
-    op.add_column(
-        "conteudos", sa.Column("publicado_em", sa.DateTime(timezone=True), nullable=True)
-    )
+    op.add_column("conteudos", sa.Column("publicado_em", sa.DateTime(timezone=True), nullable=True))
     op.create_check_constraint(
         "ck_conteudos_publicado_com_owner",
         "conteudos",

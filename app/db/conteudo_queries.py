@@ -6,9 +6,7 @@ from app.models.conteudo import Conteudo
 
 
 async def listar(db: AsyncSession) -> list[Conteudo]:
-    resultado = await db.execute(
-        select(Conteudo).order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
-    )
+    resultado = await db.execute(select(Conteudo).order_by(Conteudo.ordem.asc(), Conteudo.id.asc()))
     return list(resultado.scalars().all())
 
 
