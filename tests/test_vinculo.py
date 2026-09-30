@@ -16,6 +16,7 @@ from app.auth.users import current_active_user
 from app.core.config import get_settings
 from app.main import app
 from app.models import PacienteProfissional, Profissional, User
+from tests.conftest import CenarioAdmin, autenticar_como
 
 client = TestClient(app)
 
@@ -347,3 +348,19 @@ def test_listar_vinculos_isola_por_profissional(cenario: Cenario) -> None:
     listagem_outro = client.get(VINCULOS_URL, headers=AUTH_HEADERS)
     assert listagem_outro.status_code == 200
     assert listagem_outro.json()["itens"] == []
+
+
+def test_paciente_do_registro_publico_pode_ser_vinculado(cenario_admin: CenarioAdmin) -> None:
+    email = cenario_admin.email("registrado")
+    registro = client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "SenhaSegura123!", "name": "Paciente Registrado"},
+    )
+    assert registro.status_code == 201
+    assert registro.json()["role"] == "paciente"
+
+    autenticar_como(cenario_admin.profissional)
+    response = client.post(VINCULOS_URL, json={"paciente_email": email}, headers=AUTH_HEADERS)
+
+    assert response.status_code == 201
+    assert response.json()["paciente_email"] == email
