@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import CurrentPatientDep, DbSession
+from app.api.deps import CurrentClinicalUser, CurrentPatient, CurrentPatientDep, DbSession
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail, Questionario
 from app.services import anamnese_service
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -41,10 +41,10 @@ async def listar_anamneses(
 
 @router.get("/{anamnese_id}", response_model=AnamneseDetail)
 async def obter_anamnese(
-    anamnese_id: int, paciente_id: CurrentPatientDep, repo: AnamneseRepoDep
+    anamnese_id: int, usuario: CurrentClinicalUser, repo: AnamneseRepoDep
 ) -> AnamneseDetail:
     try:
-        return await anamnese_service.obter_anamnese(repo, paciente_id, anamnese_id)
+        return await anamnese_service.obter_anamnese(repo, usuario, anamnese_id)
     except anamnese_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
@@ -55,12 +55,12 @@ async def obter_anamnese(
 async def atualizar_anamnese(
     anamnese_id: int,
     payload: AnamneseCreate,
-    paciente_id: CurrentPatientDep,
+    usuario: CurrentPatient,
     repo: AnamneseRepoDep,
 ) -> AnamneseDetail:
     # TODO(admin): no futuro, edição deve ser restrita a admin. Ainda não implementado.
     try:
-        return await anamnese_service.atualizar_anamnese(repo, paciente_id, anamnese_id, payload)
+        return await anamnese_service.atualizar_anamnese(repo, usuario, anamnese_id, payload)
     except anamnese_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
@@ -71,11 +71,11 @@ async def atualizar_anamnese(
 
 @router.delete("/{anamnese_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def deletar_anamnese(
-    anamnese_id: int, paciente_id: CurrentPatientDep, repo: AnamneseRepoDep
+    anamnese_id: int, usuario: CurrentPatient, repo: AnamneseRepoDep
 ) -> None:
     # TODO(admin): no futuro, deleção deve ser restrita a admin. Ainda não implementado.
     try:
-        await anamnese_service.deletar_anamnese(repo, paciente_id, anamnese_id)
+        await anamnese_service.deletar_anamnese(repo, usuario, anamnese_id)
     except anamnese_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"

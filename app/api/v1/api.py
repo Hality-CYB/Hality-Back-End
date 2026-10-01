@@ -1,16 +1,21 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin_diagnosticos,
+    admin_usuarios,
+    admin_vinculos,
     anamnese,
     auth,
     conteudo_admin,
     diagnostico,
     health,
     home,
+    profissional,
+    users,
     vinculo,
 )
 from app.auth.users import fastapi_users
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import UserCreate, UserRead
 
 api_router = APIRouter()
 
@@ -21,9 +26,16 @@ api_router.include_router(anamnese.router)
 api_router.include_router(conteudo_admin.router)
 api_router.include_router(diagnostico.router)
 
+api_router.include_router(admin_diagnosticos.router)
+
 api_router.include_router(home.router)
 
+api_router.include_router(profissional.router)
 api_router.include_router(vinculo.router)
+
+api_router.include_router(admin_usuarios.router)
+
+api_router.include_router(admin_vinculos.router)
 
 # Autenticação — login/refresh/logout customizados (access JWT curto +
 # refresh opaco em banco, ver app/api/v1/endpoints/auth.py). Não usa o
@@ -38,9 +50,9 @@ api_router.include_router(
     tags=["auth"],
 )
 
-# Gerenciamento do perfil do usuário (/users/me)
-api_router.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-    prefix="/users",
-    tags=["users"],
-)
+# Perfil do próprio usuário (GET/PATCH /users/me) — rotas próprias, com bloco
+# profissional agregado e payload restrito aos campos permitidos. As rotas
+# GET/PATCH/DELETE /users/{id} do fastapi-users não são registradas: a
+# administração de usuários é feita em /admin/usuarios, e o DELETE delas
+# apagaria o usuário fisicamente.
+api_router.include_router(users.router)

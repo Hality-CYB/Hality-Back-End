@@ -109,3 +109,17 @@ def test_queries_do_paciente_exigem_publicado_e_autoria() -> None:
     ):
         assert "conteudos.status" in sql
         assert "conteudos.criado_por_id IS NOT NULL" in sql
+
+
+@pytest.mark.parametrize(
+    "campo",
+    ["titulo", "categoria", "conteudo", "classificacao_ids", "aparece_na_home", "status", "ordem"],
+)
+def test_update_rejeita_null_explicito(campo):
+    # `null` explícito gravaria NULL em coluna NOT NULL (antes respondia 500).
+    with pytest.raises(ValidationError):
+        ConteudoUpdate.model_validate({campo: None})
+
+
+def test_update_parcial_continua_aceitando_campos_omitidos():
+    assert ConteudoUpdate.model_validate({}).model_dump(exclude_unset=True) == {}
