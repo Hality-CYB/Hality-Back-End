@@ -36,6 +36,18 @@ jobs:
       - name: Run Ruff format check
         run: uv run ruff format --check .
 
+      # Migrations criadas em paralelo a partir do mesmo down_revision geram
+      # mais de um head e quebram `alembic upgrade head` (o git não acusa
+      # conflito porque são arquivos diferentes).
+      - name: Check single Alembic head
+        run: |
+          heads=$(uv run alembic heads | grep -c "(head)")
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Alembic tem $heads heads. Faça rebase na develop e aponte o down_revision da sua migration para o head atual."
+            uv run alembic heads
+            exit 1
+          fi
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
