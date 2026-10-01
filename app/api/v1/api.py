@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     diagnostico,
     health,
     home,
+    profissional,
     users,
     vinculo,
 )
@@ -26,6 +27,7 @@ api_router.include_router(admin_diagnosticos.router)
 
 api_router.include_router(home.router)
 
+api_router.include_router(profissional.router)
 api_router.include_router(vinculo.router)
 
 # Autenticação — login/refresh/logout customizados (access JWT curto +
