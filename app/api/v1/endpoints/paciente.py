@@ -1,34 +1,21 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import CurrentUser, DbSession
-from app.models.user import User
+from app.api.deps import CurrentProfessional, DbSession
 from app.schemas.paciente import PacienteDetail, PacienteListResponse
 from app.services import paciente_service
 
+# Só profissional, e só pacientes com vínculo ativo. Admin não herda acesso
+# clínico (ver app/auth/policies.py); diagnósticos para o admin ficam em
+# /admin/diagnosticos, com auditoria.
 router = APIRouter(prefix="/pacientes", tags=["pacientes"])
-
-ROLES_AUTORIZADAS = {"profissional", paciente_service.ROLE_ADMIN}
-
-
-def get_current_profissional_ou_admin(user: CurrentUser) -> User:
-    if user.role not in ROLES_AUTORIZADAS:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="acesso restrito a profissionais e administradores",
-        )
-
-    return user
-
-
-ProfissionalOuAdminDep = Annotated[User, Depends(get_current_profissional_ou_admin)]
 
 
 @router.get("", response_model=PacienteListResponse)
 async def listar_pacientes(
-    usuario: ProfissionalOuAdminDep,
+    usuario: CurrentProfessional,
     db: DbSession,
     busca: Annotated[str | None, Query()] = None,
     pagina: Annotated[int, Query()] = 1,
@@ -55,7 +42,7 @@ async def listar_pacientes(
 @router.get("/{paciente_id}", response_model=PacienteDetail)
 async def obter_paciente(
     paciente_id: uuid.UUID,
-    usuario: ProfissionalOuAdminDep,
+    usuario: CurrentProfessional,
     db: DbSession,
     pagina: Annotated[int, Query()] = 1,
     limite: Annotated[int, Query()] = 20,

@@ -2,6 +2,10 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import User
 
 # fastapi-users usa /auth/register (JSON) e /auth/login (form-data com campo 'username')
 REGISTER_URL = "/api/v1/auth/register"
@@ -55,6 +59,7 @@ async def test_register_patient_success(client: AsyncClient) -> None:
     assert data["phone"] == _DEFAULT_USER["phone"]
     assert data["is_active"] is True
     assert "id" in data
+    assert data["role"] == "paciente"
     assert "password" not in data
     assert "hashed_password" not in data
 
@@ -157,6 +162,47 @@ async def test_get_me_unauthorized_invalid_token(client: AsyncClient) -> None:
     """Testa erro 401 ao acessar /users/me com token inválido."""
     response = await client.get(ME_URL, headers={"Authorization": "Bearer token-invalido"})
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_patch_me_nao_altera_role_nem_privilegios(client: AsyncClient) -> None:
+    """/users/me só aceita perfil próprio: role e flags internas são rejeitadas (422)."""
+    token = await _register_and_login(client)
+
+    response = await client.patch(
+        ME_URL,
+        json={"name": "Mariana Souza", "role": "admin", "is_superuser": True, "is_active": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+    data = (await client.get(ME_URL, headers={"Authorization": f"Bearer {token}"})).json()
+    assert data["name"] != "Mariana Souza"
+    assert data["role"] == "paciente"
+    assert data["is_superuser"] is False
+    assert data["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_rotas_users_por_id_nao_sao_expostas(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Nem um superuser acessa /users/{id}: administração é só em /admin/usuarios."""
+    token = await _register_and_login(client)
+    user = await db_session.scalar(select(User).where(User.email == _DEFAULT_USER["email"]))
+    user.is_superuser = True
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"/api/v1/users/{user.id}"
+
+    respostas = [
+        await client.get(url, headers=headers),
+        await client.patch(url, json={"role": "admin"}, headers=headers),
+        await client.delete(url, headers=headers),
+    ]
+
+    assert [r.status_code for r in respostas] == [404, 404, 404]
+    assert (await client.get(ME_URL, headers=headers)).status_code == 200
 
 
 # ---------------------------------------------------------------------------

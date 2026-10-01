@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import pode_acessar_paciente
 from app.db import paciente_queries
 from app.models.user import User
 from app.schemas.paciente import (
@@ -13,7 +14,6 @@ from app.schemas.paciente import (
 )
 from app.services import diagnostico_service
 
-ROLE_ADMIN = "admin"
 ORDENS_LISTAGEM = {"nome_asc"}
 LIMITE_MAXIMO = 50
 TAMANHO_MAXIMO_BUSCA = 100
@@ -27,13 +27,6 @@ class PacienteFiltroInvalidoError(Exception):
 
 class PacienteNaoEncontradoError(Exception):
     pass
-
-
-def _escopo_profissional(usuario: User) -> uuid.UUID | None:
-    if usuario.role == ROLE_ADMIN:
-        return None
-
-    return usuario.id
 
 
 def _validar_filtros_listagem(
@@ -100,7 +93,7 @@ async def listar_pacientes(
 
     resultado = await paciente_queries.listar_pacientes(
         db=db,
-        profissional_id=_escopo_profissional(usuario),
+        profissional_id=usuario.id,
         busca=busca_normalizada,
         pagina=pagina,
         limite=limite,
@@ -127,7 +120,11 @@ async def obter_paciente(
     pagina: int = 1,
     limite: int = 20,
 ) -> PacienteDetail:
-    profissional_id = _escopo_profissional(usuario)
+    profissional_id = usuario.id
+
+    # Sem vínculo ativo responde igual a inexistente (404), para não revelar ids.
+    if not await pode_acessar_paciente(db, usuario, paciente_id, recurso=f"paciente:{paciente_id}"):
+        raise PacienteNaoEncontradoError
 
     paciente = await paciente_queries.buscar_paciente(db, paciente_id, profissional_id)
 

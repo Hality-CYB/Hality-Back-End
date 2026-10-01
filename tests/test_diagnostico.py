@@ -23,6 +23,7 @@ client = TestClient(app)
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 _OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+PACIENTE_STUB = SimpleNamespace(id=PACIENTE_STUB_ID, role="paciente")
 PACIENTE_ID_QUERY_IGNORADO = 998
 CLASSIFICACAO_TESTE_PREFIX = "TESTE_LISTAGEM_"
 VERSAO_QUESTIONARIO_TESTE = "2026-08-v1"
@@ -271,7 +272,7 @@ def test_criar_diagnostico(monkeypatch):
     resultado = asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=AsyncMock(),
-            paciente_id=PACIENTE_STUB_ID,
+            usuario=PACIENTE_STUB,
             anamnese_id=128,
             imagem=b"imagem",
             content_type="image/jpeg",
@@ -297,7 +298,7 @@ def test_anamnese_de_outro_paciente(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=PACIENTE_STUB_ID,
+                usuario=PACIENTE_STUB,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",
@@ -325,7 +326,7 @@ def test_anamnese_ja_utilizada(
         asyncio.run(
             diagnostico_service.criar_diagnostico(
                 db=AsyncMock(),
-                paciente_id=PACIENTE_STUB_ID,
+                usuario=PACIENTE_STUB,
                 anamnese_id=128,
                 imagem=b"imagem",
                 content_type="image/jpeg",

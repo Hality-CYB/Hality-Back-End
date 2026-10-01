@@ -422,45 +422,16 @@ def test_usuario_nao_paciente_vinculado_nao_aparece(cenario: Cenario) -> None:
     assert _listar(busca="Zeca")["itens"] == []
 
 
-def test_admin_lista_todos_os_pacientes_e_somente_role_paciente(cenario: Cenario) -> None:
+def test_admin_nao_tem_acesso_clinico_a_pacientes(cenario: Cenario) -> None:
+    # Admin não herda acesso clínico (app/auth/policies.py); usa /admin/diagnosticos.
     _autenticar_como(cenario.admin)
 
-    corpo = _listar(busca=cenario.token)
-
-    assert _ids(corpo) == [
-        *_anas_ordenadas(cenario),
-        str(cenario.bruno.id),
-        str(cenario.carla.id),
-        str(cenario.daniel.id),
-        str(cenario.elisa.id),
-        str(cenario.fabio.id),
+    respostas = [
+        client.get(PACIENTES_URL, headers=AUTH_HEADERS),
+        client.get(f"{PACIENTES_URL}/{cenario.elisa.id}", headers=AUTH_HEADERS),
     ]
-    assert corpo["total"] == 7
-    assert str(cenario.profissional_a.id) not in _ids(corpo)
-    assert str(cenario.profissional_b.id) not in _ids(corpo)
-    assert str(cenario.admin.id) not in _ids(corpo)
 
-
-def test_admin_acessa_detalhe_com_todos_os_vinculos(cenario: Cenario) -> None:
-    _autenticar_como(cenario.admin)
-
-    response = client.get(f"{PACIENTES_URL}/{cenario.elisa.id}", headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    profissionais = {vinculo["profissional_id"] for vinculo in response.json()["vinculos"]}
-    assert profissionais == {str(cenario.profissional_a.id), str(cenario.profissional_b.id)}
-
-
-def test_admin_acessa_paciente_sem_vinculo_ativo(cenario: Cenario) -> None:
-    _autenticar_como(cenario.admin)
-
-    response = client.get(f"{PACIENTES_URL}/{cenario.fabio.id}", headers=AUTH_HEADERS)
-
-    assert response.status_code == 200
-    vinculos = response.json()["vinculos"]
-    assert len(vinculos) == 1
-    assert vinculos[0]["ativo"] is False
-    assert vinculos[0]["encerrado_em"] is not None
+    assert [r.status_code for r in respostas] == [403, 403]
 
 
 def test_profissional_ve_somente_seu_vinculo_no_detalhe(cenario: Cenario) -> None:
