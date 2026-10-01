@@ -525,8 +525,8 @@ async def test_nenhum_papel_consegue_mutar(
 
 
 async def test_openapi_admin_expoe_apenas_get() -> None:
-    """Contrato: sob /admin só existe leitura (sem rótulo, sem download/importação)."""
-    paths = {p: v for p, v in app.openapi()["paths"].items() if "/admin/" in p}
+    """Contrato: sob /admin/diagnosticos só existe leitura (sem rótulo, sem download/importação)."""
+    paths = {p: v for p, v in app.openapi()["paths"].items() if "/admin/diagnosticos" in p}
 
     assert paths, "rotas admin não registradas"
     for path, operacoes in paths.items():

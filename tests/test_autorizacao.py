@@ -671,6 +671,11 @@ def test_nenhum_modulo_checa_papel_ou_dono_fora_da_camada_de_autorizacao() -> No
         "services/vinculo_service.py",
         "models/user.py",
         "services/home_service.py",
+        # Gestão de contas (#96): `role` é o dado administrado (filtro, payload,
+        # troca de papel), não decisão de acesso — que continua em `require_admin`.
+        "services/admin_usuario_service.py",
+        "db/user_queries.py",
+        "schemas/admin_usuario.py",
     }
     permitidos_dono = {"auth/policies.py", "services/anamnese_store.py"}
     padrao_role = re.compile(r"\.role\b|\bis_superuser\b")

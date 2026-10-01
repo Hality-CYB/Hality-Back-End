@@ -23,7 +23,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     Campos extras:
         name: Nome completo do usuário.
         phone: Telefone opcional.
-        role: Papel do usuário (``pacient``, ``professional``, ``admin``).
+        role: Papel do usuário (``paciente``, ``profissional``, ``admin``).
         created_at: Timestamp de criação da conta.
     """
 

@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import (
@@ -24,6 +24,10 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 # Alias para compatibilidade com código legado
 DbDep = DbSession
+
+LIMITE_MAXIMO_PAGINA = 50
+PaginaQuery = Annotated[int, Query(ge=1)]
+LimiteQuery = Annotated[int, Query(ge=1, le=LIMITE_MAXIMO_PAGINA)]
 
 # Usuário autenticado e ativo injetado via JWT (fastapi-users). Inativo -> 401,
 # antes de qualquer regra de papel ou de recurso.

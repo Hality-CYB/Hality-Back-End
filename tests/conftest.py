@@ -35,7 +35,8 @@ is closed`.
 
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -222,3 +223,106 @@ async def _limpar(
             await db.commit()
     finally:
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Suíte admin (`test_admin_*.py`) — Postgres real
+# ---------------------------------------------------------------------------
+#
+# Todo usuário do cenário (e os criados pela API nos testes, via
+# `CenarioAdmin.email`) tem o `token` no e-mail; a limpeza apaga por ele, e o
+# ON DELETE CASCADE leva junto `profissionais` e `pacientes_profissionais`.
+
+OperacaoBanco = Callable[[AsyncSession], Awaitable[Any]]
+
+
+async def _com_sessao_descartavel(operacao: OperacaoBanco) -> Any:
+    engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            return await operacao(db)
+    finally:
+        await engine.dispose()
+
+
+def executar_no_banco(operacao: OperacaoBanco) -> Any:
+    return asyncio.run(_com_sessao_descartavel(operacao))
+
+
+@dataclass
+class CenarioAdmin:
+    token: str
+    admin: User
+    paciente: User
+    paciente_inativo: User
+    profissional: User
+    profissional_sem_registro: User
+    superuser_sem_role_admin: User
+
+    def email(self, nome: str) -> str:
+        return f"{nome}.{self.token}@hality.com"
+
+
+def autenticar_como(usuario: User) -> None:
+    async def _dependencia(request: Request) -> User:
+        if not request.headers.get("authorization"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sem token")
+        return usuario
+
+    app.dependency_overrides[current_active_user] = _dependencia
+
+
+async def _criar_cenario_admin(db: AsyncSession) -> CenarioAdmin:
+    token = uuid.uuid4().hex
+
+    def usuario(nome: str, role: str, **extras: Any) -> User:
+        return User(
+            name=f"{nome} {token[:8]}",
+            email=f"{nome}.{token}@hality.com",
+            hashed_password="x",
+            role=role,
+            **extras,
+        )
+
+    cenario = CenarioAdmin(
+        token=token,
+        admin=usuario("admin", "admin"),
+        paciente=usuario("paciente", "paciente"),
+        paciente_inativo=usuario("inativo", "paciente", is_active=False),
+        profissional=usuario("profissional", "profissional"),
+        profissional_sem_registro=usuario("semregistro", "profissional"),
+        superuser_sem_role_admin=usuario("superuser", "paciente", is_superuser=True),
+    )
+    db.add_all(
+        [
+            cenario.admin,
+            cenario.paciente,
+            cenario.paciente_inativo,
+            cenario.profissional,
+            cenario.profissional_sem_registro,
+            cenario.superuser_sem_role_admin,
+        ]
+    )
+    await db.flush()
+    db.add(Profissional(usuario_id=cenario.profissional.id, especialidade="Periodontia"))
+    await db.commit()
+    return cenario
+
+
+def _limpar_cenario_admin(token: str) -> None:
+    async def _limpar(db: AsyncSession) -> None:
+        await db.execute(delete(User).where(User.email.ilike(f"%{token}%")))
+        await db.commit()
+
+    executar_no_banco(_limpar)
+
+
+@pytest.fixture
+def cenario_admin() -> Iterator[CenarioAdmin]:
+    cenario = executar_no_banco(_criar_cenario_admin)
+    autenticar_como(cenario.admin)
+    try:
+        yield cenario
+    finally:
+        app.dependency_overrides.pop(current_active_user, None)
+        _limpar_cenario_admin(cenario.token)
