@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -20,6 +20,17 @@ class PacienteProfissional(Base):
     """
 
     __tablename__ = "pacientes_profissionais"
+    # Criado na migration 198bcce46c43; declarado aqui para o autogenerate não
+    # propor removê-lo.
+    __table_args__ = (
+        Index(
+            "ix_pacientes_profissionais_par_ativo",
+            "paciente_id",
+            "profissional_id",
+            unique=True,
+            postgresql_where=text("ativo"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     paciente_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
