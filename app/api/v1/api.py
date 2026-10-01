@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     admin_vinculos,
     anamnese,
     auth,
+    conteudo_admin,
     diagnostico,
     health,
     home,
@@ -22,7 +23,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 
 api_router.include_router(anamnese.router)
-
+api_router.include_router(conteudo_admin.router)
 api_router.include_router(diagnostico.router)
 
 api_router.include_router(admin_diagnosticos.router)

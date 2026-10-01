@@ -340,6 +340,10 @@ async def seed() -> None:
                     classificacao_ids=[halito_normal.id],
                     aparece_na_home=True,
                     status="publicado",
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
                 Conteudo(
                     titulo="Protocolo periodontal",
@@ -355,6 +359,10 @@ async def seed() -> None:
                     },
                     classificacao_ids=[mau_halito_social.id],
                     status="publicado",
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
             ]
         )
@@ -550,6 +558,10 @@ async def seed() -> None:
                     aparece_na_home=True,
                     status="publicado",
                     ordem=4,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
                 Conteudo(
                     titulo="Limpe a língua todos os dias",
@@ -567,6 +579,10 @@ async def seed() -> None:
                     aparece_na_home=True,
                     status="publicado",
                     ordem=1,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
                 Conteudo(
                     titulo="Beba água ao longo do dia",
@@ -584,6 +600,10 @@ async def seed() -> None:
                     aparece_na_home=True,
                     status="publicado",
                     ordem=2,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
                 Conteudo(
                     titulo="Alimentos Aliados",
@@ -601,6 +621,10 @@ async def seed() -> None:
                     aparece_na_home=True,
                     status="publicado",
                     ordem=3,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
                 ),
             ]
         )

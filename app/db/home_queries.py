@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.conteudo import Conteudo
+from app.models.conteudo import Conteudo, StatusConteudo
 from app.models.diagnostico import Diagnostico
 
 
@@ -22,7 +22,11 @@ async def buscar_ultimo_diagnostico(db: AsyncSession, paciente_id: uuid.UUID) ->
 async def listar_dicas_home(db: AsyncSession) -> list[Conteudo]:
     resultado = await db.execute(
         select(Conteudo)
-        .where(Conteudo.aparece_na_home.is_(True))
+        .where(
+            Conteudo.aparece_na_home.is_(True),
+            Conteudo.status == StatusConteudo.PUBLICADO,
+            Conteudo.criado_por_id.is_not(None),
+        )
         .order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
     )
     return list(resultado.scalars().all())

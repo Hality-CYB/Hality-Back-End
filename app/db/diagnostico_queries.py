@@ -9,7 +9,7 @@ from app.db import paciente_profissional_queries
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
 )
-from app.models.conteudo import Conteudo
+from app.models.conteudo import Conteudo, StatusConteudo
 from app.models.diagnostico import Diagnostico
 from app.models.imagem import Imagem
 from app.models.user import User
@@ -276,7 +276,11 @@ async def listar_conteudos_por_classificacao(
 ) -> list[Conteudo]:
     result = await db.execute(
         select(Conteudo)
-        .where(Conteudo.classificacao_ids.any(classificacao_id))
+        .where(
+            Conteudo.classificacao_ids.any(classificacao_id),
+            Conteudo.status == StatusConteudo.PUBLICADO,
+            Conteudo.criado_por_id.is_not(None),
+        )
         .order_by(Conteudo.ordem.asc(), Conteudo.id.asc())
     )
 
