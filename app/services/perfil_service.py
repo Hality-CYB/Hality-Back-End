@@ -8,12 +8,12 @@ schema `UserUpdate` (role, id, status e senha nem chegam aqui).
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import tem_papel
 from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.profissionais import ProfissionalPerfilRead
 from app.schemas.user import UserRead, UserUpdate
-
-ROLE_PROFISSIONAL = "profissional"
+from app.schemas.usuario import TipoUsuario
 
 
 class DadosProfissionaisNaoPermitidosError(Exception):
@@ -23,7 +23,7 @@ class DadosProfissionaisNaoPermitidosError(Exception):
 def _para_leitura(user: User, profissional: Profissional | None) -> UserRead:
     perfil = UserRead.model_validate(user)
 
-    if user.role == ROLE_PROFISSIONAL:
+    if tem_papel(user, TipoUsuario.PROFISSIONAL):
         perfil.profissional = (
             ProfissionalPerfilRead.model_validate(profissional)
             if profissional is not None
@@ -34,7 +34,7 @@ def _para_leitura(user: User, profissional: Profissional | None) -> UserRead:
 
 
 async def _buscar_profissional(db: AsyncSession, user: User) -> Profissional | None:
-    if user.role != ROLE_PROFISSIONAL:
+    if not tem_papel(user, TipoUsuario.PROFISSIONAL):
         return None
     return await db.get(Profissional, user.id)
 
@@ -49,7 +49,7 @@ async def atualizar_perfil(db: AsyncSession, user: User, dados: UserUpdate) -> U
         dados.profissional.model_dump(exclude_unset=True) if dados.profissional else {}
     )
 
-    if alteracoes_profissional and user.role != ROLE_PROFISSIONAL:
+    if alteracoes_profissional and not tem_papel(user, TipoUsuario.PROFISSIONAL):
         raise DadosProfissionaisNaoPermitidosError
 
     for campo, valor in alteracoes.items():

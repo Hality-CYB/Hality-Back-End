@@ -93,6 +93,11 @@ def normalizar_papel(role: str | None) -> TipoUsuario | None:
     return _ALIASES_PAPEL.get(role.strip().lower())
 
 
+def tem_papel(usuario: UsuarioAutenticado, papel: TipoUsuario) -> bool:
+    """True se o papel persistido do ``usuario`` corresponde a ``papel`` (aceita aliases)."""
+    return normalizar_papel(usuario.role) is papel
+
+
 def definir_correlation_id(recebido: str | None) -> str:
     """Usa o id enviado pelo cliente se for válido; senão gera um novo."""
     valido = recebido is not None and _CORRELATION_ID_VALIDO.match(recebido)

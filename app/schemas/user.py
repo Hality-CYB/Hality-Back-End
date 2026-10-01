@@ -31,9 +31,9 @@ class UserCreate(schemas.BaseUserCreate):
 class UserUpdate(BaseModel):
     """Payload do PATCH /users/me — só os campos que o próprio usuário pode alterar.
 
-    Qualquer campo fora desta lista (role, id, email, password, is_active,
-    is_superuser, is_verified, vinculado_hality...) é rejeitado com 422 em vez
-    de ignorado em silêncio, para o FE nunca achar que alterou algo que não mudou.
+    Qualquer campo fora desta lista (papel, id, e-mail, senha, flags de status
+    da conta, vinculado_hality...) é rejeitado com 422 em vez de ignorado em
+    silêncio, para o FE nunca achar que alterou algo que não mudou.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
