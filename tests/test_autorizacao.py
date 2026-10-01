@@ -33,6 +33,7 @@ from sqlalchemy.pool import NullPool
 from app.api.deps import exigir_papeis
 from app.api.v1.endpoints import anamnese as anamnese_endpoints
 from app.api.v1.endpoints import diagnostico as diagnostico_endpoints
+from app.api.v1.endpoints import paciente as paciente_endpoints
 from app.auth import policies
 from app.auth.users import current_active_user, current_active_user_opcional
 from app.core.config import get_settings
@@ -627,7 +628,11 @@ def test_correlation_id_invalido_do_cliente_e_substituido(
 
 _APP_DIR = Path(__file__).resolve().parents[1] / "app"
 # Routers de recursos clínicos. Router clínico novo deve entrar nesta lista.
-_ROUTERS_CLINICOS = (anamnese_endpoints.router, diagnostico_endpoints.router)
+_ROUTERS_CLINICOS = (
+    anamnese_endpoints.router,
+    diagnostico_endpoints.router,
+    paciente_endpoints.router,
+)
 _ROTAS_CLINICAS_PUBLICAS = {"/anamneses/questionario"}
 
 
@@ -648,7 +653,7 @@ def test_toda_rota_clinica_declara_papeis_via_exigir_papeis() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and r.path not in _ROTAS_CLINICAS_PUBLICAS
     ]
-    assert len(rotas) == 9
+    assert len(rotas) == 11
 
     for rota in rotas:
         papeis = _papeis_declarados(rota.dependant)
@@ -676,6 +681,9 @@ def test_nenhum_modulo_checa_papel_ou_dono_fora_da_camada_de_autorizacao() -> No
         "services/admin_usuario_service.py",
         "db/user_queries.py",
         "schemas/admin_usuario.py",
+        # Filtro SQL `role = paciente` na listagem de /pacientes (#97): restringe a
+        # consulta, não decide acesso — isso é `exigir_papeis` + vínculo ativo.
+        "db/paciente_queries.py",
     }
     permitidos_dono = {"auth/policies.py", "services/anamnese_store.py"}
     padrao_role = re.compile(r"\.role\b|\bis_superuser\b")
