@@ -67,11 +67,13 @@ def test_sem_token_retorna_401(cenario_admin: CenarioAdmin) -> None:
     assert client.get(USUARIOS_URL).status_code == 401
 
 
-@pytest.mark.parametrize("perfil", ["admin", "superuser_sem_role_admin"])
-def test_role_admin_ou_superuser_tem_acesso(cenario_admin: CenarioAdmin, perfil: str) -> None:
+@pytest.mark.parametrize(
+    ("perfil", "esperado"), [("admin", 200), ("superuser_sem_role_admin", 403)]
+)
+def test_so_role_admin_tem_acesso(cenario_admin: CenarioAdmin, perfil: str, esperado: int) -> None:
     autenticar_como(getattr(cenario_admin, perfil))
 
-    assert client.get(USUARIOS_URL, headers=AUTH).status_code == 200
+    assert client.get(USUARIOS_URL, headers=AUTH).status_code == esperado
 
 
 @pytest.mark.parametrize("perfil", ["paciente", "profissional"])
@@ -111,9 +113,11 @@ def _definir_senha_real(usuario: User) -> None:
     executar_no_banco(_atualizar)
 
 
-@pytest.mark.parametrize("perfil", ["admin", "superuser_sem_role_admin"])
-def test_jwt_real_de_admin_ou_superuser_acessa_admin(
-    cenario_admin: CenarioAdmin, perfil: str
+@pytest.mark.parametrize(
+    ("perfil", "esperado"), [("admin", 200), ("superuser_sem_role_admin", 403)]
+)
+def test_jwt_real_so_role_admin_acessa_admin(
+    cenario_admin: CenarioAdmin, perfil: str, esperado: int
 ) -> None:
     app.dependency_overrides.pop(current_active_user, None)
     usuario = getattr(cenario_admin, perfil)
@@ -127,7 +131,7 @@ def test_jwt_real_de_admin_ou_superuser_acessa_admin(
 
     resposta = client.get(USUARIOS_URL, headers={"Authorization": f"Bearer {token}"})
 
-    assert resposta.status_code == 200
+    assert resposta.status_code == esperado
 
 
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer token-invalido"}])
@@ -538,46 +542,6 @@ def test_com_outro_admin_por_role_o_admin_pode_perder_acesso(
     assert resposta.status_code == 200
 
 
-@pytest.mark.parametrize("payload", PERDAS_DE_ACESSO)
-def test_com_superuser_ativo_o_admin_pode_perder_acesso(
-    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch, payload: dict
-) -> None:
-    _considerar_como_admins(
-        monkeypatch, cenario_admin.admin, cenario_admin.superuser_sem_role_admin
-    )
-
-    resposta = client.patch(f"{USUARIOS_URL}/{cenario_admin.admin.id}", json=payload, headers=AUTH)
-
-    assert resposta.status_code == 200
-
-
-def test_unico_superuser_nao_pode_ser_desativado(
-    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    superuser = cenario_admin.superuser_sem_role_admin
-    _considerar_como_admins(monkeypatch, superuser)
-
-    resposta = client.patch(f"{USUARIOS_URL}/{superuser.id}", json={"ativo": False}, headers=AUTH)
-
-    assert resposta.status_code == 409
-    usuario, _ = _buscar_usuario_e_profissional(superuser.email)
-    assert usuario.is_active is True
-
-
-def test_unico_superuser_pode_trocar_de_role(
-    cenario_admin: CenarioAdmin, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    superuser = cenario_admin.superuser_sem_role_admin
-    _considerar_como_admins(monkeypatch, superuser)
-
-    resposta = client.patch(
-        f"{USUARIOS_URL}/{superuser.id}", json={"role": "profissional"}, headers=AUTH
-    )
-
-    assert resposta.status_code == 200
-    assert resposta.json()["role"] == "profissional"
-
-
 @pytest.mark.parametrize(
     ("perfil", "payload"),
     [("paciente", {"ativo": False}), ("profissional", {"role": "paciente"})],
@@ -605,7 +569,8 @@ def test_query_de_outros_admins_efetivos(cenario_admin: CenarioAdmin) -> None:
         lambda db: _consultar(db, cenario_admin.superuser_sem_role_admin.id)
     )
 
-    assert cenario_admin.superuser_sem_role_admin.id in outros_do_admin
+    # superuser sem role admin não é administrador (ver app/auth/policies.py)
+    assert cenario_admin.superuser_sem_role_admin.id not in outros_do_admin
     assert cenario_admin.admin.id not in outros_do_admin
     assert cenario_admin.admin.id in outros_do_superuser
     nunca_admins = {

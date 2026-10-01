@@ -109,18 +109,6 @@ async def situacao_vinculos_do_profissional(
     return total > 0, ativos > 0
 
 
-async def paciente_tem_vinculo_ativo(db: AsyncSession, paciente_id: uuid.UUID) -> bool:
-    encontrado = await db.scalar(
-        select(PacienteProfissional.id)
-        .where(
-            PacienteProfissional.paciente_id == paciente_id,
-            PacienteProfissional.ativo.is_(True),
-        )
-        .limit(1)
-    )
-    return encontrado is not None
-
-
 def _select_vinculo_detalhado():
     paciente = aliased(User)
     profissional = aliased(User)

@@ -49,10 +49,3 @@ class UserUpdate(BaseModel):
         if "name" in self.model_fields_set and self.name is None:
             raise ValueError("name não pode ser nulo")
         return self
-
-
-class UserAdminUpdate(schemas.BaseUserUpdate):
-    """Atualização feita por superuser nas rotas /users/{id} do fastapi-users."""
-
-    name: str | None = Field(None, min_length=2, max_length=255)
-    phone: str | None = Field(None, max_length=20)

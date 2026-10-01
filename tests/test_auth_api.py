@@ -166,7 +166,7 @@ async def test_get_me_unauthorized_invalid_token(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_me_nao_altera_role_nem_privilegios(client: AsyncClient) -> None:
-    """/users/me continua sendo só perfil próprio: role e flags internas são ignoradas."""
+    """/users/me só aceita perfil próprio: role e flags internas são rejeitadas (422)."""
     token = await _register_and_login(client)
 
     response = await client.patch(
@@ -175,9 +175,9 @@ async def test_patch_me_nao_altera_role_nem_privilegios(client: AsyncClient) -> 
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Mariana Souza"
+    assert response.status_code == 422
+    data = (await client.get(ME_URL, headers={"Authorization": f"Bearer {token}"})).json()
+    assert data["name"] != "Mariana Souza"
     assert data["role"] == "paciente"
     assert data["is_superuser"] is False
     assert data["is_active"] is True

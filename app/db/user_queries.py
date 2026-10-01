@@ -38,7 +38,7 @@ async def bloquear_outros_admins_efetivos(
         select(User.id)
         .where(
             User.is_active.is_(True),
-            or_(User.role == TipoUsuario.ADMIN, User.is_superuser.is_(True)),
+            User.role == TipoUsuario.ADMIN,
         )
         .order_by(User.id)
         .with_for_update()

@@ -136,17 +136,18 @@ async def criar_usuario(db: AsyncSession, dados: AdminUsuarioCreate) -> AdminUsu
     return _para_detalhe(usuario, profissional)
 
 
-def _tem_acesso_admin(role: str, is_superuser: bool, ativo: bool) -> bool:
-    return ativo and (role == TipoUsuario.ADMIN or is_superuser)
+def _tem_acesso_admin(role: str, ativo: bool) -> bool:
+    # Só `role = admin` dá acesso administrativo; `is_superuser` não conta
+    # (ver app/auth/policies.py).
+    return ativo and role == TipoUsuario.ADMIN
 
 
 async def _garantir_outro_admin_se_perder_acesso(
     db: AsyncSession, usuario: User, campos: dict
 ) -> None:
-    tinha_acesso = _tem_acesso_admin(usuario.role, usuario.is_superuser, usuario.is_active)
+    tinha_acesso = _tem_acesso_admin(usuario.role, usuario.is_active)
     tera_acesso = _tem_acesso_admin(
         campos.get("role", usuario.role),
-        usuario.is_superuser,
         campos.get("ativo", usuario.is_active),
     )
     if not tinha_acesso or tera_acesso:
