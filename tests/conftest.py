@@ -3,8 +3,9 @@
 Hoje convivem DUAS estratégias de banco, uma por suíte:
 
 * **Auth (`test_auth_api.py`) — SQLite em memória.** Usa `client`/`db_session`,
-  que sobrescrevem `get_db`/`get_user_db`. Só a tabela `users` é criada (ver
-  `TestBase` abaixo), então não precisa de container para rodar.
+  que sobrescrevem `get_db`/`get_user_db`. Só `users`, `refresh_tokens` e
+  `profissionais` são criadas (ver `TestBase` abaixo), então não precisa
+  de container para rodar.
 
 * **Anamnese (`test_anamnese.py`) — Postgres real do `.env`.** Exercita a API
   completa (TestClient -> service -> repositório) sem override nenhum, contra
@@ -53,7 +54,7 @@ from app.auth.users import current_active_user, get_refresh_token_db, get_user_d
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
-from app.models import Anamnese, Questionario, RefreshToken, User
+from app.models import Anamnese, Profissional, Questionario, RefreshToken, User
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -78,6 +79,8 @@ if "users" not in TestBase.metadata.tables:
     User.__table__.to_metadata(TestBase.metadata)
 if "refresh_tokens" not in TestBase.metadata.tables:
     RefreshToken.__table__.to_metadata(TestBase.metadata)
+if "profissionais" not in TestBase.metadata.tables:
+    Profissional.__table__.to_metadata(TestBase.metadata)
 
 
 @pytest_asyncio.fixture
@@ -144,7 +147,7 @@ async def _current_active_user_de_teste(request: Request) -> SimpleNamespace:
     """
     if not request.headers.get("authorization"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="sem token")
-    return SimpleNamespace(id=PACIENTE_STUB_ID)
+    return SimpleNamespace(id=PACIENTE_STUB_ID, role="paciente", is_active=True)
 
 
 _MODULOS_COM_PACIENTE_DE_TESTE = {"test_anamnese", "test_diagnostico"}

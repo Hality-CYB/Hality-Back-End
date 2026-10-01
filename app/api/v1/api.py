@@ -1,16 +1,18 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin_diagnosticos,
     anamnese,
     auth,
     diagnostico,
     health,
     home,
     profissional,
+    users,
     vinculo,
 )
 from app.auth.users import fastapi_users
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import UserAdminUpdate, UserCreate, UserRead
 
 api_router = APIRouter()
 
@@ -20,6 +22,8 @@ api_router.include_router(health.router)
 api_router.include_router(anamnese.router)
 
 api_router.include_router(diagnostico.router)
+
+api_router.include_router(admin_diagnosticos.router)
 
 api_router.include_router(home.router)
 
@@ -39,9 +43,14 @@ api_router.include_router(
     tags=["auth"],
 )
 
-# Gerenciamento do perfil do usuário (/users/me)
-api_router.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-    prefix="/users",
-    tags=["users"],
-)
+# Perfil do próprio usuário (GET/PATCH /users/me) — rotas próprias, com bloco
+# profissional agregado e payload restrito aos campos permitidos.
+api_router.include_router(users.router)
+
+# Rotas /users/{id} (só superuser) do fastapi-users. As /me dele são removidas
+# para não conflitarem com as de cima.
+users_admin_router = fastapi_users.get_users_router(UserRead, UserAdminUpdate)
+users_admin_router.routes = [
+    rota for rota in users_admin_router.routes if getattr(rota, "path", None) != "/me"
+]
+api_router.include_router(users_admin_router, prefix="/users", tags=["users"])
