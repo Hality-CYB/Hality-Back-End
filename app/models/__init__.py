@@ -3,6 +3,7 @@ from app.models.auditoria_acesso import AuditoriaAcesso
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
+from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import PacienteProfissional
 from app.models.profissional import Profissional
@@ -22,4 +23,5 @@ __all__ = [
     "Questionario",
     "RefreshToken",
     "User",
+    "DiagnosticoRevisao",
 ]

@@ -28,6 +28,17 @@ from app.schemas.diagnostico import (
     DiagnosticoListItem,
     DiagnosticoListResponse,
 )
+from app.schemas.profissional_diagnostico import (
+    AnamneseDiagnosticoProfissional,
+    DiagnosticoProfissionalDetalhe,
+    DiagnosticoProfissionalItem,
+    DiagnosticoProfissionalListResponse,
+    ImagemDiagnosticoProfissional,
+    PacienteDiagnosticoResumo,
+    ResultadoAutomaticoDiagnostico,
+    RevisaoProfissionalResponse,
+    RevisaoProfissionalResumo,
+)
 from app.services import diagnostico_mock, diagnostico_storage
 
 AVISO_LEGAL = (
@@ -38,13 +49,18 @@ STATUS_COM_RESULTADO = {
     "aguardando_revisao",
     "concluido",
 }
+
 STATUS_SEM_RESULTADO_LISTAGEM = {
     "falha",
     "processando",
 }
+
 STATUS_VALIDOS_ADMIN = STATUS_COM_RESULTADO | STATUS_SEM_RESULTADO_LISTAGEM
+STATUS_VALIDOS_PROFISSIONAL = STATUS_VALIDOS_ADMIN
+
 ACAO_ADMIN_DETALHE_ABERTO = "diagnostico.detalhe.aberto"
 RECURSO_DIAGNOSTICO = "diagnostico"
+
 ORDENS_LISTAGEM = {
     "data_asc",
     "data_desc",
@@ -67,7 +83,8 @@ class AnamneseNaoEncontradaError(Exception):
 
 class AnamneseJaUtilizadaError(Exception):
     """Carrega o diagnóstico já criado para a anamnese, para o cliente
-    retomar o acompanhamento em vez de reenviar (retry idempotente)."""
+    retomar o acompanhamento em vez de reenviar (retry idempotente).
+    """
 
     def __init__(self, diagnostico: Diagnostico) -> None:
         self.diagnostico = diagnostico
@@ -94,6 +111,18 @@ class DiagnosticoFiltroInvalidoError(Exception):
     def __init__(self, motivo: str) -> None:
         self.motivo = motivo
         super().__init__(motivo)
+
+
+class ClassificacaoRevisaoInvalidaError(Exception):
+    pass
+
+
+class DiagnosticoNaoRevisavelError(Exception):
+    pass
+
+
+class DiagnosticoRevisaoConflitoError(Exception):
+    pass
 
 
 def _validar_imagem(
@@ -128,7 +157,11 @@ def _normalizar_data_parametro(
         if "T" not in valor and len(valor) == 10:
             data = date.fromisoformat(valor)
             horario = time.max if fim_do_dia else time.min
-            return datetime.combine(data, horario, tzinfo=UTC)
+            return datetime.combine(
+                data,
+                horario,
+                tzinfo=UTC,
+            )
 
         data_hora = datetime.fromisoformat(valor.replace("Z", "+00:00"))
 
@@ -141,7 +174,9 @@ def _normalizar_data_parametro(
     return data_hora
 
 
-def _normalizar_status(status: str | None) -> str | None:
+def _normalizar_status(
+    status: str | None,
+) -> str | None:
     if status is None:
         return None
 
@@ -174,6 +209,7 @@ def _validar_filtros_listagem(
         "data_inicio",
         fim_do_dia=False,
     )
+
     data_fim_normalizada = _normalizar_data_parametro(
         data_fim,
         "data_fim",
@@ -187,7 +223,11 @@ def _validar_filtros_listagem(
     ):
         raise DiagnosticoFiltroInvalidoError("data_inicio deve ser menor ou igual a data_fim")
 
-    return data_inicio_normalizada, data_fim_normalizada, ordem
+    return (
+        data_inicio_normalizada,
+        data_fim_normalizada,
+        ordem,
+    )
 
 
 def _para_item_listagem(
@@ -254,7 +294,11 @@ async def listar_diagnosticos(
     limite: int = 20,
     ordem: str = "data_desc",
 ) -> DiagnosticoListResponse:
-    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+    (
+        data_inicio_normalizada,
+        data_fim_normalizada,
+        ordem_normalizada,
+    ) = _validar_filtros_listagem(
         data_inicio=data_inicio,
         data_fim=data_fim,
         pagina=pagina,
@@ -296,18 +340,18 @@ async def criar_diagnostico(
     )
 
     if anamnese is None or not await pode_acessar_paciente(
-        db, usuario, anamnese.paciente_id, recurso=f"anamnese:{anamnese_id}"
+        db,
+        usuario,
+        anamnese.paciente_id,
+        recurso=f"anamnese:{anamnese_id}",
     ):
         raise AnamneseNaoEncontradaError
 
-    # Quem envia a imagem tem de ser quem preencheu a anamnese: o profissional
-    # não reaproveita a autoavaliação do paciente, e vice-versa. Executor nulo =
-    # anamnese anterior à US-090, preenchida pelo próprio paciente.
     executor_anamnese = anamnese.executor_id or anamnese.paciente_id
+
     if executor_anamnese != usuario.id:
         raise AnamneseNaoEncontradaError
 
-    # O diagnóstico pertence ao dono da anamnese — nunca a um id vindo do cliente.
     paciente_id = anamnese.paciente_id
 
     existente = await diagnostico_queries.buscar_por_anamnese(
@@ -341,7 +385,6 @@ async def criar_diagnostico(
 
     except IntegrityError as exc:
         await db.rollback()
-
         await diagnostico_storage.remover(url_arquivo)
 
         existente = await diagnostico_queries.buscar_por_anamnese(
@@ -356,15 +399,13 @@ async def criar_diagnostico(
 
     except Exception:
         await db.rollback()
-
         await diagnostico_storage.remover(url_arquivo)
-
         raise
 
     return {
         "id": diagnostico.id,
         "status": diagnostico.status,
-        "data_diagnostico": (diagnostico.data_diagnostico),
+        "data_diagnostico": diagnostico.data_diagnostico,
         "anamnese_id": anamnese_id,
     }
 
@@ -381,11 +422,21 @@ async def obter_caminho_imagem(
             db,
             nome_arquivo,
         )
+
         permitido = paciente_id is not None and await pode_acessar_paciente(
-            db, usuario, paciente_id, recurso=f"imagem:{nome_arquivo}"
+            db,
+            usuario,
+            paciente_id,
+            recurso=f"imagem:{nome_arquivo}",
         )
+
     elif expira_em is not None and assinatura is not None:
-        permitido = url_imagem_assinada_valida(nome_arquivo, expira_em, assinatura)
+        permitido = url_imagem_assinada_valida(
+            nome_arquivo,
+            expira_em,
+            assinatura,
+        )
+
     else:
         raise ImagemSemCredencialError
 
@@ -413,9 +464,11 @@ async def obter_diagnostico(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
-    # Contrato mantido de antes do RBAC: diagnóstico existente sem acesso -> 403.
     if not await pode_acessar_paciente(
-        db, usuario, diagnostico.paciente_id, recurso=f"diagnostico:{diagnostico_id}"
+        db,
+        usuario,
+        diagnostico.paciente_id,
+        recurso=f"diagnostico:{diagnostico_id}",
     ):
         raise DiagnosticoAcessoNegadoError
 
@@ -451,13 +504,13 @@ async def obter_diagnostico(
 
     return {
         "id": diagnostico.id,
-        "data_diagnostico": (diagnostico.data_diagnostico),
+        "data_diagnostico": diagnostico.data_diagnostico,
         "status": diagnostico.status,
         "classificacao": (
             {
                 "id": classificacao.id,
                 "codigo": classificacao.codigo,
-                "nome_exibicao": (classificacao.nome_exibicao),
+                "nome_exibicao": classificacao.nome_exibicao,
                 "ordem": classificacao.ordem,
             }
             if classificacao is not None
@@ -468,10 +521,9 @@ async def obter_diagnostico(
         "imagens": [
             {
                 "id": imagem.id,
-                # Assinada: o front usa direto em <img>, que não envia Bearer.
                 "url_arquivo": assinar_url_imagem(imagem.url_arquivo),
                 "ordem": imagem.ordem,
-                "data_captura": (imagem.data_captura),
+                "data_captura": imagem.data_captura,
             }
             for imagem in dados.imagens
         ],
@@ -479,22 +531,31 @@ async def obter_diagnostico(
             "id": anamnese.id,
             "data_preenchimento": (anamnese.data_preenchimento),
             "respostas": [
-                resposta.model_dump(mode="json") if hasattr(resposta, "model_dump") else resposta
+                (
+                    resposta.model_dump(mode="json")
+                    if hasattr(
+                        resposta,
+                        "model_dump",
+                    )
+                    else resposta
+                )
                 for resposta in anamnese.respostas
             ],
         },
         "revisao": revisao,
         "tem_profissional_vinculado": (dados.tem_profissional_vinculado),
-        "conteudos": [
-            {
-                "id": conteudo.id,
-                "conteudo": conteudo.conteudo,
-                "titulo": conteudo.titulo,
-            }
-            for conteudo in dados.conteudos
-        ]
-        if tem_resultado
-        else [],
+        "conteudos": (
+            [
+                {
+                    "id": conteudo.id,
+                    "conteudo": conteudo.conteudo,
+                    "titulo": conteudo.titulo,
+                }
+                for conteudo in dados.conteudos
+            ]
+            if tem_resultado
+            else []
+        ),
         "aviso_legal": AVISO_LEGAL,
         "erro": (
             getattr(
@@ -508,7 +569,9 @@ async def obter_diagnostico(
     }
 
 
-def _resumo_classificacao(classificacao) -> ClassificacaoDiagnosticoResumo | None:
+def _resumo_classificacao(
+    classificacao,
+) -> ClassificacaoDiagnosticoResumo | None:
     if classificacao is None:
         return None
 
@@ -519,8 +582,293 @@ def _resumo_classificacao(classificacao) -> ClassificacaoDiagnosticoResumo | Non
     )
 
 
-def _foi_revisado(diagnostico: Diagnostico) -> bool:
+def _foi_revisado(
+    diagnostico: Diagnostico,
+) -> bool:
     return diagnostico.profissional_revisor_id is not None and diagnostico.data_revisao is not None
+
+
+def _para_revisao_profissional(
+    detalhe: diagnostico_queries.DiagnosticoRevisaoDetalhada,
+) -> RevisaoProfissionalResumo:
+    return RevisaoProfissionalResumo(
+        id=detalhe.revisao.id,
+        version=detalhe.revisao.versao,
+        classificacao=ClassificacaoDiagnosticoResumo(
+            codigo=detalhe.classificacao.codigo,
+            nome_exibicao=detalhe.classificacao.nome_exibicao,
+            ordem=detalhe.classificacao.ordem,
+        ),
+        profissional_id=detalhe.revisao.profissional_id,
+        profissional_nome=detalhe.profissional_nome,
+        observacao=detalhe.revisao.observacao,
+        criado_em=detalhe.revisao.criado_em,
+    )
+
+
+async def listar_diagnosticos_profissional(
+    db: AsyncSession,
+    profissional_id: uuid.UUID,
+    paciente_id: uuid.UUID | None = None,
+    status: str | None = None,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    pagina: int = 1,
+    limite: int = 20,
+    ordem: str = "data_desc",
+) -> DiagnosticoProfissionalListResponse:
+    (
+        data_inicio_normalizada,
+        data_fim_normalizada,
+        ordem_normalizada,
+    ) = _validar_filtros_listagem(
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem,
+    )
+
+    status_normalizado = _normalizar_status(status)
+
+    if status_normalizado is not None and status_normalizado not in STATUS_VALIDOS_PROFISSIONAL:
+        raise DiagnosticoFiltroInvalidoError(
+            "status deve ser um de: " + ", ".join(sorted(STATUS_VALIDOS_PROFISSIONAL))
+        )
+
+    resultado = await diagnostico_queries.listar_profissional(
+        db=db,
+        profissional_id=profissional_id,
+        paciente_id=paciente_id,
+        data_inicio=data_inicio_normalizada,
+        data_fim=data_fim_normalizada,
+        status=status_normalizado,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem_normalizada,
+    )
+
+    return DiagnosticoProfissionalListResponse(
+        itens=[
+            DiagnosticoProfissionalItem(
+                id=item.diagnostico.id,
+                paciente=PacienteDiagnosticoResumo(
+                    id=item.diagnostico.paciente_id,
+                    nome=item.paciente_nome,
+                ),
+                data_diagnostico=(item.diagnostico.data_diagnostico),
+                status=item.diagnostico.status,
+                classificacao_automatica=(
+                    _resumo_classificacao(item.classificacao)
+                    if item.diagnostico.status in STATUS_COM_RESULTADO
+                    else None
+                ),
+                tem_revisao=_foi_revisado(item.diagnostico),
+            )
+            for item in resultado.itens
+        ],
+        pagina=pagina,
+        limite=limite,
+        total=resultado.total,
+        total_paginas=(resultado.total + limite - 1) // limite,
+    )
+
+
+async def obter_diagnostico_profissional(
+    db: AsyncSession,
+    profissional: UsuarioAutenticado,
+    diagnostico_id: int,
+) -> DiagnosticoProfissionalDetalhe:
+    """Retorna o detalhe clínico para um profissional vinculado.
+
+    Diferentemente do detalhe geral do paciente, esta consulta é somente
+    leitura e nunca dispara o processamento do provider/mock.
+    """
+
+    diagnostico = await diagnostico_queries.buscar_por_id(
+        db,
+        diagnostico_id,
+    )
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    permitido = await pode_acessar_paciente(
+        db,
+        profissional,
+        diagnostico.paciente_id,
+        recurso=f"diagnostico:{diagnostico_id}",
+    )
+
+    # Nas novas rotas profissionais, inexistente e sem acesso retornam
+    # o mesmo erro para evitar enumeração de ids.
+    if not permitido:
+        raise DiagnosticoNaoEncontradoError
+
+    anamnese = await anamnese_queries.buscar_por_id(
+        db,
+        diagnostico.anamnese_id,
+    )
+
+    if anamnese is None:
+        raise AnamneseNaoEncontradaError
+
+    paciente_nome = await diagnostico_queries.buscar_nome_usuario(
+        db,
+        diagnostico.paciente_id,
+    )
+
+    if paciente_nome is None:
+        raise DiagnosticoNaoEncontradoError
+
+    imagens = await diagnostico_queries.listar_imagens(
+        db,
+        diagnostico.id,
+    )
+
+    classificacao_automatica = None
+
+    if diagnostico.classificacao_id is not None:
+        classificacao_automatica = await diagnostico_queries.buscar_classificacao(
+            db,
+            diagnostico.classificacao_id,
+        )
+
+    historico = await diagnostico_queries.listar_revisoes(
+        db,
+        diagnostico.id,
+    )
+
+    revisao_atual = historico[-1] if historico else None
+
+    version = revisao_atual.revisao.versao if revisao_atual is not None else 0
+
+    tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
+
+    return DiagnosticoProfissionalDetalhe(
+        id=diagnostico.id,
+        data_diagnostico=diagnostico.data_diagnostico,
+        status=diagnostico.status,
+        paciente=PacienteDiagnosticoResumo(
+            id=diagnostico.paciente_id,
+            nome=paciente_nome,
+        ),
+        anamnese=AnamneseDiagnosticoProfissional(
+            id=anamnese.id,
+            data_preenchimento=(anamnese.data_preenchimento),
+            respostas=[
+                (
+                    resposta.model_dump(mode="json")
+                    if hasattr(
+                        resposta,
+                        "model_dump",
+                    )
+                    else resposta
+                )
+                for resposta in anamnese.respostas
+            ],
+        ),
+        imagens=[
+            ImagemDiagnosticoProfissional(
+                id=imagem.id,
+                url_arquivo=assinar_url_imagem(imagem.url_arquivo),
+                ordem=imagem.ordem,
+                data_captura=imagem.data_captura,
+            )
+            for imagem in imagens
+        ],
+        automatico=(
+            ResultadoAutomaticoDiagnostico(
+                classificacao=(_resumo_classificacao(classificacao_automatica)),
+                escala_saburra=(diagnostico.escala_saburra),
+                confianca_ia=(diagnostico.confianca_ia),
+            )
+            if tem_resultado
+            else None
+        ),
+        revisao=(_para_revisao_profissional(revisao_atual) if revisao_atual is not None else None),
+        historico_revisoes=[_para_revisao_profissional(revisao) for revisao in historico],
+        version=version,
+        aviso_legal=AVISO_LEGAL,
+        erro=(diagnostico.erro if diagnostico.status == "falha" else None),
+    )
+
+
+async def revisar_diagnostico_profissional(
+    db: AsyncSession,
+    profissional: UsuarioAutenticado,
+    diagnostico_id: int,
+    classificacao_codigo: str,
+    observacao: str | None,
+    version: int,
+) -> RevisaoProfissionalResponse:
+    diagnostico = await diagnostico_queries.buscar_por_id(
+        db,
+        diagnostico_id,
+    )
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    permitido = await pode_acessar_paciente(
+        db,
+        profissional,
+        diagnostico.paciente_id,
+        recurso=(f"diagnostico:{diagnostico_id}:revisao"),
+    )
+
+    if not permitido:
+        raise DiagnosticoNaoEncontradoError
+
+    if diagnostico.status not in STATUS_COM_RESULTADO:
+        raise DiagnosticoNaoRevisavelError
+
+    codigo = classificacao_codigo.strip()
+
+    classificacao = await diagnostico_queries.buscar_classificacao_por_codigo(
+        db,
+        codigo,
+    )
+
+    if classificacao is None:
+        raise ClassificacaoRevisaoInvalidaError
+
+    try:
+        revisao = await diagnostico_queries.inserir_revisao(
+            db=db,
+            diagnostico=diagnostico,
+            profissional_id=profissional.id,
+            classificacao_id=classificacao.id,
+            observacao=observacao,
+            versao_esperada=version,
+        )
+
+    except IntegrityError as exc:
+        # Duas transações podem ler a mesma versão simultaneamente.
+        # UNIQUE(diagnostico_id, versao) decide qual gravação vence.
+        await db.rollback()
+        raise DiagnosticoRevisaoConflitoError from exc
+
+    if revisao is None:
+        await db.rollback()
+        raise DiagnosticoRevisaoConflitoError
+
+    detalhe = await diagnostico_queries.buscar_ultima_revisao(
+        db,
+        diagnostico.id,
+    )
+
+    if detalhe is None:
+        # Estado impossível após um INSERT confirmado. Mantemos uma falha
+        # explícita em vez de devolver uma resposta inconsistente.
+        raise RuntimeError("revisão criada mas não encontrada")
+
+    revisao_response = _para_revisao_profissional(detalhe)
+
+    return RevisaoProfissionalResponse(
+        revisao=revisao_response,
+        version=revisao_response.version,
+    )
 
 
 async def listar_diagnosticos_admin(
@@ -535,7 +883,11 @@ async def listar_diagnosticos_admin(
     limite: int = 20,
     ordem: str = "data_desc",
 ) -> AdminDiagnosticoListResponse:
-    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+    (
+        data_inicio_normalizada,
+        data_fim_normalizada,
+        ordem_normalizada,
+    ) = _validar_filtros_listagem(
         data_inicio=data_inicio,
         data_fim=data_fim,
         pagina=pagina,
@@ -560,7 +912,7 @@ async def listar_diagnosticos_admin(
     resultado = await diagnostico_queries.listar_admin(
         db=db,
         paciente_id=paciente_id,
-        classificacao_codigo=classificacao_normalizada,
+        classificacao_codigo=(classificacao_normalizada),
         sem_classificacao=sem_classificacao,
         status=status_normalizado,
         data_inicio=data_inicio_normalizada,
@@ -574,10 +926,10 @@ async def listar_diagnosticos_admin(
         itens=[
             AdminDiagnosticoItem(
                 id=item.diagnostico.id,
-                paciente_id=item.diagnostico.paciente_id,
-                data_diagnostico=item.diagnostico.data_diagnostico,
+                paciente_id=(item.diagnostico.paciente_id),
+                data_diagnostico=(item.diagnostico.data_diagnostico),
                 status=item.diagnostico.status,
-                classificacao=_resumo_classificacao(item.classificacao),
+                classificacao=(_resumo_classificacao(item.classificacao)),
                 tem_revisao=_foi_revisado(item.diagnostico),
             )
             for item in resultado.itens
@@ -599,7 +951,11 @@ async def obter_diagnostico_admin(
     Diferente do detalhe do paciente, NÃO chama `diagnostico_mock`: o admin
     nunca dispara processamento nem altera o diagnóstico.
     """
-    diagnostico = await diagnostico_queries.buscar_por_id(db, diagnostico_id)
+
+    diagnostico = await diagnostico_queries.buscar_por_id(
+        db,
+        diagnostico_id,
+    )
 
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
@@ -608,27 +964,31 @@ async def obter_diagnostico_admin(
 
     if diagnostico.classificacao_id is not None:
         classificacao = await diagnostico_queries.buscar_classificacao(
-            db, diagnostico.classificacao_id
+            db,
+            diagnostico.classificacao_id,
         )
 
-    qtd_imagens = await diagnostico_queries.contar_imagens(db, diagnostico.id)
+    qtd_imagens = await diagnostico_queries.contar_imagens(
+        db,
+        diagnostico.id,
+    )
 
     detalhe = AdminDiagnosticoDetalhe(
         id=diagnostico.id,
         paciente_id=diagnostico.paciente_id,
-        data_diagnostico=diagnostico.data_diagnostico,
+        data_diagnostico=(diagnostico.data_diagnostico),
         status=diagnostico.status,
-        erro=diagnostico.erro if diagnostico.status == "falha" else None,
+        erro=(diagnostico.erro if diagnostico.status == "falha" else None),
         automatica=ClassificacaoAutomatica(
-            classificacao=_resumo_classificacao(classificacao),
-            escala_saburra=diagnostico.escala_saburra,
-            confianca_ia=diagnostico.confianca_ia,
+            classificacao=(_resumo_classificacao(classificacao)),
+            escala_saburra=(diagnostico.escala_saburra),
+            confianca_ia=(diagnostico.confianca_ia),
         ),
         revisao=(
             RevisaoProfissional(
-                profissional_revisor_id=diagnostico.profissional_revisor_id,
-                data_revisao=diagnostico.data_revisao,
-                observacoes=diagnostico.observacoes_revisao,
+                profissional_revisor_id=(diagnostico.profissional_revisor_id),
+                data_revisao=(diagnostico.data_revisao),
+                observacoes=(diagnostico.observacoes_revisao),
             )
             if _foi_revisado(diagnostico)
             else None
@@ -638,7 +998,6 @@ async def obter_diagnostico_admin(
         qtd_imagens=qtd_imagens,
     )
 
-    # Auditoria só depois de o detalhe estar montado com sucesso: 404 não audita.
     await auditoria_queries.registrar_acesso(
         db,
         ator_id=admin_id,
