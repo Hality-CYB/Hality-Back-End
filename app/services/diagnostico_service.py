@@ -1,24 +1,34 @@
 import uuid
 from datetime import UTC, date, datetime, time
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import (
+    UsuarioAutenticado,
+    assinar_url_imagem,
+    pode_acessar_paciente,
+    url_imagem_assinada_valida,
+)
 from app.core.config import get_settings
-from app.db import anamnese_queries, diagnostico_queries
+from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
+from app.schemas.admin_diagnostico import (
+    AdminDiagnosticoDetalhe,
+    AdminDiagnosticoItem,
+    AdminDiagnosticoListResponse,
+    ClassificacaoAutomatica,
+    DatasetInfo,
+    RevisaoProfissional,
+)
 from app.schemas.diagnostico import (
     ClassificacaoDiagnosticoResumo,
     DiagnosticoListItem,
     DiagnosticoListResponse,
 )
 from app.services import diagnostico_mock, diagnostico_storage
-from app.services.atendimento_service import (
-    AtorAutenticado,
-    pode_acessar_titular,
-    resolver_titular,
-)
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
@@ -32,6 +42,9 @@ STATUS_SEM_RESULTADO_LISTAGEM = {
     "falha",
     "processando",
 }
+STATUS_VALIDOS_ADMIN = STATUS_COM_RESULTADO | STATUS_SEM_RESULTADO_LISTAGEM
+ACAO_ADMIN_DETALHE_ABERTO = "diagnostico.detalhe.aberto"
+RECURSO_DIAGNOSTICO = "diagnostico"
 ORDENS_LISTAGEM = {
     "data_asc",
     "data_desc",
@@ -66,6 +79,14 @@ class DiagnosticoNaoEncontradoError(Exception):
 
 
 class DiagnosticoAcessoNegadoError(Exception):
+    pass
+
+
+class ImagemNaoEncontradaError(Exception):
+    pass
+
+
+class ImagemSemCredencialError(Exception):
     pass
 
 
@@ -263,36 +284,31 @@ async def listar_diagnosticos(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    ator: AtorAutenticado,
+    usuario: UsuarioAutenticado,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
     parametros_captura: dict[str, Any],
-    paciente_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """Cria o diagnóstico da anamnese para o titular autorizado.
-
-    `paciente_id` só é aceito como contexto de atendimento: o titular é
-    resolvido pelo vínculo do ator (erros de `atendimento_service` sobem
-    antes de ler a anamnese ou gravar a imagem). A anamnese precisa ser do
-    titular e ter sido preenchida pelo mesmo ator — o profissional não
-    reaproveita a autoavaliação do paciente, e vice-versa.
-    """
-    titular_id = await resolver_titular(db, ator, paciente_id)
-
     anamnese = await anamnese_queries.buscar_por_id(
         db,
         anamnese_id,
     )
 
-    if anamnese is None or anamnese.paciente_id != titular_id:
+    if anamnese is None or not await pode_acessar_paciente(
+        db, usuario, anamnese.paciente_id, recurso=f"anamnese:{anamnese_id}"
+    ):
         raise AnamneseNaoEncontradaError
 
-    # Executor nulo = anamnese legada, preenchida pelo próprio titular.
+    # Quem envia a imagem tem de ser quem preencheu a anamnese: o profissional
+    # não reaproveita a autoavaliação do paciente, e vice-versa. Executor nulo =
+    # anamnese anterior à US-090, preenchida pelo próprio paciente.
     executor_anamnese = anamnese.executor_id or anamnese.paciente_id
-
-    if executor_anamnese != ator.id:
+    if executor_anamnese != usuario.id:
         raise AnamneseNaoEncontradaError
+
+    # O diagnóstico pertence ao dono da anamnese — nunca a um id vindo do cliente.
+    paciente_id = anamnese.paciente_id
 
     existente = await diagnostico_queries.buscar_por_anamnese(
         db,
@@ -316,8 +332,8 @@ async def criar_diagnostico(
     try:
         diagnostico = await diagnostico_queries.inserir(
             db=db,
-            paciente_id=titular_id,
-            executor_id=ator.id,
+            paciente_id=paciente_id,
+            executor_id=usuario.id,
             anamnese_id=anamnese_id,
             url_arquivo=url_arquivo,
             parametros_captura=parametros_captura,
@@ -353,9 +369,40 @@ async def criar_diagnostico(
     }
 
 
+async def obter_caminho_imagem(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado | None,
+    nome_arquivo: str,
+    expira_em: int | None = None,
+    assinatura: str | None = None,
+) -> Path:
+    if usuario is not None:
+        paciente_id = await diagnostico_queries.buscar_paciente_por_arquivo_imagem(
+            db,
+            nome_arquivo,
+        )
+        permitido = paciente_id is not None and await pode_acessar_paciente(
+            db, usuario, paciente_id, recurso=f"imagem:{nome_arquivo}"
+        )
+    elif expira_em is not None and assinatura is not None:
+        permitido = url_imagem_assinada_valida(nome_arquivo, expira_em, assinatura)
+    else:
+        raise ImagemSemCredencialError
+
+    if not permitido:
+        raise ImagemNaoEncontradaError
+
+    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+
+    if caminho is None:
+        raise ImagemNaoEncontradaError
+
+    return caminho
+
+
 async def obter_diagnostico(
     db: AsyncSession,
-    ator: AtorAutenticado,
+    usuario: UsuarioAutenticado,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -366,7 +413,10 @@ async def obter_diagnostico(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
-    if not await pode_acessar_titular(db, ator, diagnostico.paciente_id):
+    # Contrato mantido de antes do RBAC: diagnóstico existente sem acesso -> 403.
+    if not await pode_acessar_paciente(
+        db, usuario, diagnostico.paciente_id, recurso=f"diagnostico:{diagnostico_id}"
+    ):
         raise DiagnosticoAcessoNegadoError
 
     diagnostico = await diagnostico_mock.processar_se_necessario(
@@ -418,7 +468,8 @@ async def obter_diagnostico(
         "imagens": [
             {
                 "id": imagem.id,
-                "url_arquivo": (imagem.url_arquivo),
+                # Assinada: o front usa direto em <img>, que não envia Bearer.
+                "url_arquivo": assinar_url_imagem(imagem.url_arquivo),
                 "ordem": imagem.ordem,
                 "data_captura": (imagem.data_captura),
             }
@@ -455,3 +506,145 @@ async def obter_diagnostico(
             else None
         ),
     }
+
+
+def _resumo_classificacao(classificacao) -> ClassificacaoDiagnosticoResumo | None:
+    if classificacao is None:
+        return None
+
+    return ClassificacaoDiagnosticoResumo(
+        codigo=classificacao.codigo,
+        nome_exibicao=classificacao.nome_exibicao,
+        ordem=classificacao.ordem,
+    )
+
+
+def _foi_revisado(diagnostico: Diagnostico) -> bool:
+    return diagnostico.profissional_revisor_id is not None and diagnostico.data_revisao is not None
+
+
+async def listar_diagnosticos_admin(
+    db: AsyncSession,
+    paciente_id: uuid.UUID | None = None,
+    classificacao: str | None = None,
+    sem_classificacao: bool = False,
+    status: str | None = None,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    pagina: int = 1,
+    limite: int = 20,
+    ordem: str = "data_desc",
+) -> AdminDiagnosticoListResponse:
+    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem,
+    )
+
+    status_normalizado = _normalizar_status(status)
+
+    if status_normalizado is not None and status_normalizado not in STATUS_VALIDOS_ADMIN:
+        raise DiagnosticoFiltroInvalidoError(
+            "status deve ser um de: " + ", ".join(sorted(STATUS_VALIDOS_ADMIN))
+        )
+
+    classificacao_normalizada = (classificacao or "").strip() or None
+
+    if sem_classificacao and classificacao_normalizada is not None:
+        raise DiagnosticoFiltroInvalidoError(
+            "sem_classificacao e classificacao nao podem ser usados juntos"
+        )
+
+    resultado = await diagnostico_queries.listar_admin(
+        db=db,
+        paciente_id=paciente_id,
+        classificacao_codigo=classificacao_normalizada,
+        sem_classificacao=sem_classificacao,
+        status=status_normalizado,
+        data_inicio=data_inicio_normalizada,
+        data_fim=data_fim_normalizada,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem_normalizada,
+    )
+
+    return AdminDiagnosticoListResponse(
+        itens=[
+            AdminDiagnosticoItem(
+                id=item.diagnostico.id,
+                paciente_id=item.diagnostico.paciente_id,
+                data_diagnostico=item.diagnostico.data_diagnostico,
+                status=item.diagnostico.status,
+                classificacao=_resumo_classificacao(item.classificacao),
+                tem_revisao=_foi_revisado(item.diagnostico),
+            )
+            for item in resultado.itens
+        ],
+        pagina=pagina,
+        limite=limite,
+        total=resultado.total,
+        total_paginas=(resultado.total + limite - 1) // limite,
+    )
+
+
+async def obter_diagnostico_admin(
+    db: AsyncSession,
+    admin_id: uuid.UUID,
+    diagnostico_id: int,
+) -> AdminDiagnosticoDetalhe:
+    """Detalhe administrativo. Somente leitura + auditoria de abertura.
+
+    Diferente do detalhe do paciente, NÃO chama `diagnostico_mock`: o admin
+    nunca dispara processamento nem altera o diagnóstico.
+    """
+    diagnostico = await diagnostico_queries.buscar_por_id(db, diagnostico_id)
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    classificacao = None
+
+    if diagnostico.classificacao_id is not None:
+        classificacao = await diagnostico_queries.buscar_classificacao(
+            db, diagnostico.classificacao_id
+        )
+
+    qtd_imagens = await diagnostico_queries.contar_imagens(db, diagnostico.id)
+
+    detalhe = AdminDiagnosticoDetalhe(
+        id=diagnostico.id,
+        paciente_id=diagnostico.paciente_id,
+        data_diagnostico=diagnostico.data_diagnostico,
+        status=diagnostico.status,
+        erro=diagnostico.erro if diagnostico.status == "falha" else None,
+        automatica=ClassificacaoAutomatica(
+            classificacao=_resumo_classificacao(classificacao),
+            escala_saburra=diagnostico.escala_saburra,
+            confianca_ia=diagnostico.confianca_ia,
+        ),
+        revisao=(
+            RevisaoProfissional(
+                profissional_revisor_id=diagnostico.profissional_revisor_id,
+                data_revisao=diagnostico.data_revisao,
+                observacoes=diagnostico.observacoes_revisao,
+            )
+            if _foi_revisado(diagnostico)
+            else None
+        ),
+        dataset=DatasetInfo(),
+        anamnese_id=diagnostico.anamnese_id,
+        qtd_imagens=qtd_imagens,
+    )
+
+    # Auditoria só depois de o detalhe estar montado com sucesso: 404 não audita.
+    await auditoria_queries.registrar_acesso(
+        db,
+        ator_id=admin_id,
+        acao=ACAO_ADMIN_DETALHE_ABERTO,
+        recurso_tipo=RECURSO_DIAGNOSTICO,
+        recurso_id=diagnostico.id,
+    )
+
+    return detalhe

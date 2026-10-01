@@ -1,6 +1,9 @@
+import uuid
+from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CategoriaConteudo(StrEnum):
@@ -30,14 +33,43 @@ class ConteudoSchema(BaseModel):
 
 class ConteudoCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    titulo: str = Field(max_length=255)
+    titulo: str = Field(min_length=1, max_length=255)
     categoria: CategoriaConteudo
     conteudo: ConteudoSchema
-    classificacao_ids: list[int] = []
+    classificacao_ids: list[int] = Field(default_factory=list)
     aparece_na_home: bool = False
     status: StatusConteudo = StatusConteudo.RASCUNHO
-    ordem: int = 0
+    ordem: int = Field(default=0, ge=0)
+
+
+class ConteudoUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    titulo: str | None = Field(default=None, min_length=1, max_length=255)
+    categoria: CategoriaConteudo | None = None
+    conteudo: ConteudoSchema | None = None
+    classificacao_ids: list[int] | None = None
+    aparece_na_home: bool | None = None
+    status: StatusConteudo | None = None
+    ordem: int | None = Field(default=None, ge=0)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _nao_aceita_nulo(cls, valor: Any) -> Any:
+        # Update parcial: campo omitido não muda nada, mas `null` explícito
+        # gravaria NULL em coluna NOT NULL (500). Todos os campos são obrigatórios
+        # no banco, então nenhum aceita nulo.
+        if valor is None:
+            raise ValueError("não pode ser nulo")
+        return valor
 
 
 class ConteudoDetail(ConteudoCreate):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
     id: int
+    created_at: datetime
+    updated_at: datetime
+    criado_por_id: uuid.UUID | None
+    atualizado_por_id: uuid.UUID | None
+    publicado_por_id: uuid.UUID | None
+    publicado_em: datetime | None

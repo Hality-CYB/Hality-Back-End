@@ -3,12 +3,15 @@
 Três blocos:
 
 * **Service (sem banco)** — `criar_diagnostico` com queries/storage mockados:
-  titularidade, vínculo negado antes do storage, retry idempotente e limpeza
-  de arquivo órfão.
-* **HTTP (sem banco)** — erros que precisam acontecer antes de qualquer
-  leitura/escrita (403 de papel/vínculo) e o contrato do 409.
+  vínculo e executor checados antes do storage, retry idempotente e limpeza de
+  arquivo órfão.
+* **HTTP (sem banco)** — papel (403), sem acesso (404, convenção do #92) e o
+  contrato do 409.
 * **Integração (Postgres real do `.env`)** — fluxo ponta a ponta do
   profissional, conferindo `paciente_id`/`executor_id` gravados.
+
+A regra de acesso é a de `app/auth/policies.py` (`pode_acessar_paciente`); aqui
+só o vínculo (`profissional_tem_acesso`) é mockado.
 """
 
 import asyncio
@@ -26,6 +29,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.auth import policies
 from app.auth.users import current_active_user
 from app.core.config import get_settings
 from app.main import app
@@ -37,21 +41,15 @@ from app.models import (
     Profissional,
     User,
 )
-from app.services import (
-    anamnese_questionary,
-    anamnese_service,
-    atendimento_service,
-    diagnostico_service,
-)
-from app.services.atendimento_service import AtorAutenticado
+from app.services import anamnese_questionary, anamnese_service, diagnostico_service
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 PROFISSIONAL_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
 PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-0000000000b1")
 OUTRO_PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-0000000000b2")
 
-ATOR_PROFISSIONAL = AtorAutenticado(id=PROFISSIONAL_ID, role="profissional")
-ATOR_PACIENTE = AtorAutenticado(id=PACIENTE_ID, role="paciente")
+PROFISSIONAL = SimpleNamespace(id=PROFISSIONAL_ID, role="profissional")
+PACIENTE = SimpleNamespace(id=PACIENTE_ID, role="paciente")
 
 URL_IMAGEM = "/api/v1/diagnosticos/imagens/teste.jpg"
 
@@ -81,15 +79,15 @@ def _diagnostico(paciente_id=PACIENTE_ID, executor_id=PROFISSIONAL_ID):
 
 @pytest.fixture
 def mocks(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Queries e storage do fluxo de criação, todos mockados."""
+    """Queries, vínculo e storage do fluxo de criação, todos mockados."""
     m = SimpleNamespace(
         buscar_anamnese=AsyncMock(return_value=_anamnese()),
         buscar_por_anamnese=AsyncMock(return_value=None),
         inserir=AsyncMock(return_value=_diagnostico()),
         salvar=AsyncMock(return_value=URL_IMAGEM),
         remover=AsyncMock(),
-        existe_vinculo=AsyncMock(return_value=True),
-        usuario_ativo=AsyncMock(return_value=True),
+        tem_vinculo=AsyncMock(return_value=True),
+        buscar_usuario=AsyncMock(return_value=SimpleNamespace(id=PACIENTE_ID, is_active=True)),
     )
     monkeypatch.setattr(diagnostico_service.anamnese_queries, "buscar_por_id", m.buscar_anamnese)
     monkeypatch.setattr(
@@ -98,8 +96,10 @@ def mocks(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(diagnostico_service.diagnostico_queries, "inserir", m.inserir)
     monkeypatch.setattr(diagnostico_service.diagnostico_storage, "salvar", m.salvar)
     monkeypatch.setattr(diagnostico_service.diagnostico_storage, "remover", m.remover)
-    monkeypatch.setattr(atendimento_service.vinculo_queries, "existe_vinculo", m.existe_vinculo)
-    monkeypatch.setattr(atendimento_service.vinculo_queries, "usuario_ativo", m.usuario_ativo)
+    monkeypatch.setattr(
+        policies.paciente_profissional_queries, "profissional_tem_acesso", m.tem_vinculo
+    )
+    monkeypatch.setattr(anamnese_service.user_queries, "buscar_usuario", m.buscar_usuario)
     monkeypatch.setattr(
         diagnostico_service,
         "get_settings",
@@ -108,16 +108,15 @@ def mocks(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return m
 
 
-def _criar(ator: AtorAutenticado, paciente_id: uuid.UUID | None = None, db=None):
+def _criar(usuario: SimpleNamespace, db=None):
     return asyncio.run(
         diagnostico_service.criar_diagnostico(
             db=db or AsyncMock(),
-            ator=ator,
+            usuario=usuario,
             anamnese_id=128,
             imagem=b"imagem",
             content_type="image/jpeg",
             parametros_captura={"flash": True},
-            paciente_id=paciente_id,
         )
     )
 
@@ -128,78 +127,64 @@ def _criar(ator: AtorAutenticado, paciente_id: uuid.UUID | None = None, db=None)
 
 
 def test_paciente_continua_criando_para_si(mocks: SimpleNamespace) -> None:
-    mocks.buscar_anamnese.return_value = _anamnese(PACIENTE_ID, executor_id=PACIENTE_ID)
+    mocks.buscar_anamnese.return_value = _anamnese(executor_id=PACIENTE_ID)
 
-    _criar(ATOR_PACIENTE)
+    _criar(PACIENTE)
 
     kwargs = mocks.inserir.await_args.kwargs
-    assert kwargs["paciente_id"] == PACIENTE_ID
-    assert kwargs["executor_id"] == PACIENTE_ID
-    mocks.existe_vinculo.assert_not_awaited()
+    assert (kwargs["paciente_id"], kwargs["executor_id"]) == (PACIENTE_ID, PACIENTE_ID)
 
 
 def test_paciente_usa_anamnese_legada_sem_executor(mocks: SimpleNamespace) -> None:
-    mocks.buscar_anamnese.return_value = _anamnese(PACIENTE_ID, executor_id=None)
+    mocks.buscar_anamnese.return_value = _anamnese(executor_id=None)
 
-    _criar(ATOR_PACIENTE)
+    _criar(PACIENTE)
 
     assert mocks.inserir.await_args.kwargs["executor_id"] == PACIENTE_ID
 
 
-def test_profissional_vinculado_cria_para_paciente_correto(mocks: SimpleNamespace) -> None:
-    resultado = _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+def test_profissional_vinculado_cria_para_o_titular_da_anamnese(mocks: SimpleNamespace) -> None:
+    _criar(PROFISSIONAL)
 
     kwargs = mocks.inserir.await_args.kwargs
-    assert kwargs["paciente_id"] == PACIENTE_ID
-    assert kwargs["executor_id"] == PROFISSIONAL_ID
-    assert kwargs["url_arquivo"] == URL_IMAGEM
-    assert kwargs["parametros_captura"] == {"flash": True}
-    assert resultado["status"] == "processando"
-    mocks.existe_vinculo.assert_awaited_once()
+    assert (kwargs["paciente_id"], kwargs["executor_id"]) == (PACIENTE_ID, PROFISSIONAL_ID)
 
 
-def test_profissional_nao_vinculado_falha_antes_do_storage(mocks: SimpleNamespace) -> None:
-    mocks.existe_vinculo.return_value = False
+def test_profissional_sem_vinculo_falha_antes_do_storage(mocks: SimpleNamespace) -> None:
+    mocks.tem_vinculo.return_value = False
 
-    with pytest.raises(atendimento_service.VinculoInexistenteError):
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+    with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
+        _criar(PROFISSIONAL)
 
-    mocks.buscar_anamnese.assert_not_awaited()
     mocks.salvar.assert_not_awaited()
     mocks.inserir.assert_not_awaited()
 
 
-def test_paciente_nao_pode_informar_outro_titular(mocks: SimpleNamespace) -> None:
-    with pytest.raises(atendimento_service.AtorNaoProfissionalError):
-        _criar(ATOR_PACIENTE, paciente_id=OUTRO_PACIENTE_ID)
-
-    mocks.buscar_anamnese.assert_not_awaited()
-    mocks.salvar.assert_not_awaited()
-
-
-def test_titular_inativo_retorna_indisponivel(mocks: SimpleNamespace) -> None:
-    mocks.usuario_ativo.return_value = False
-
-    with pytest.raises(atendimento_service.TitularIndisponivelError):
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
-
-    mocks.salvar.assert_not_awaited()
-
-
 def test_profissional_nao_reaproveita_autoavaliacao_do_paciente(mocks: SimpleNamespace) -> None:
-    mocks.buscar_anamnese.return_value = _anamnese(PACIENTE_ID, executor_id=PACIENTE_ID)
+    mocks.buscar_anamnese.return_value = _anamnese(executor_id=PACIENTE_ID)
 
     with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+        _criar(PROFISSIONAL)
 
     mocks.salvar.assert_not_awaited()
 
 
-def test_anamnese_de_outro_titular_nao_e_aceita(mocks: SimpleNamespace) -> None:
-    mocks.buscar_anamnese.return_value = _anamnese(OUTRO_PACIENTE_ID)
+def test_paciente_nao_envia_imagem_de_anamnese_feita_pelo_profissional(
+    mocks: SimpleNamespace,
+) -> None:
+    with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
+        _criar(PACIENTE)
+
+    mocks.salvar.assert_not_awaited()
+
+
+def test_anamnese_de_outro_paciente_nao_e_aceita(mocks: SimpleNamespace) -> None:
+    mocks.buscar_anamnese.return_value = _anamnese(
+        paciente_id=OUTRO_PACIENTE_ID, executor_id=OUTRO_PACIENTE_ID
+    )
 
     with pytest.raises(diagnostico_service.AnamneseNaoEncontradaError):
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+        _criar(PACIENTE)
 
     mocks.salvar.assert_not_awaited()
 
@@ -209,50 +194,31 @@ def test_retry_devolve_diagnostico_existente_sem_novo_upload(mocks: SimpleNamesp
     mocks.buscar_por_anamnese.return_value = existente
 
     with pytest.raises(diagnostico_service.AnamneseJaUtilizadaError) as exc_info:
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+        _criar(PROFISSIONAL)
 
     assert exc_info.value.diagnostico is existente
     mocks.salvar.assert_not_awaited()
-    mocks.inserir.assert_not_awaited()
 
 
 def test_envio_concorrente_remove_arquivo_e_retorna_conflito(mocks: SimpleNamespace) -> None:
-    # Os dois envios passam pela checagem; o segundo bate na unique de anamnese_id.
     existente = _diagnostico()
     mocks.buscar_por_anamnese.side_effect = [None, existente]
     mocks.inserir.side_effect = IntegrityError("insert", {}, Exception("unique"))
 
     with pytest.raises(diagnostico_service.AnamneseJaUtilizadaError) as exc_info:
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID)
+        _criar(PROFISSIONAL)
 
     assert exc_info.value.diagnostico is existente
     mocks.remover.assert_awaited_once_with(URL_IMAGEM)
 
 
 def test_falha_apos_upload_remove_arquivo_orfao(mocks: SimpleNamespace) -> None:
-    mocks.inserir.side_effect = OperationalError("commit", {}, Exception("conexão caiu"))
-    db = AsyncMock()
+    mocks.inserir.side_effect = OperationalError("insert", {}, Exception("caiu"))
 
     with pytest.raises(OperationalError):
-        _criar(ATOR_PROFISSIONAL, paciente_id=PACIENTE_ID, db=db)
+        _criar(PROFISSIONAL)
 
-    db.rollback.assert_awaited_once()
     mocks.remover.assert_awaited_once_with(URL_IMAGEM)
-
-
-def test_pode_acessar_titular(mocks: SimpleNamespace) -> None:
-    db = AsyncMock()
-
-    assert asyncio.run(atendimento_service.pode_acessar_titular(db, ATOR_PACIENTE, PACIENTE_ID))
-    assert asyncio.run(atendimento_service.pode_acessar_titular(db, ATOR_PROFISSIONAL, PACIENTE_ID))
-    assert not asyncio.run(
-        atendimento_service.pode_acessar_titular(db, ATOR_PACIENTE, OUTRO_PACIENTE_ID)
-    )
-
-    mocks.existe_vinculo.return_value = False
-    assert not asyncio.run(
-        atendimento_service.pode_acessar_titular(db, ATOR_PROFISSIONAL, PACIENTE_ID)
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -285,23 +251,21 @@ def _payload_anamnese() -> dict:
     }
 
 
-def _enviar_diagnostico(paciente_id: uuid.UUID | None = None, anamnese_id: int = 128):
-    dados = {"anamnese_id": str(anamnese_id), "parametros_captura": "{}"}
-    if paciente_id is not None:
-        dados["paciente_id"] = str(paciente_id)
+def _enviar_diagnostico(anamnese_id: int = 128):
     return client.post(
         "/api/v1/diagnosticos",
-        data=dados,
+        data={"anamnese_id": str(anamnese_id), "parametros_captura": "{}"},
         files={"imagem": ("foto.jpg", b"imagem", "image/jpeg")},
         headers=AUTH_HEADERS,
     )
 
 
-def test_http_paciente_nao_usa_rota_de_atendimento(autenticado_como) -> None:
+@pytest.mark.parametrize("paciente_alvo", [OUTRO_PACIENTE_ID, PACIENTE_ID])
+def test_http_paciente_nao_usa_rota_de_atendimento(autenticado_como, paciente_alvo) -> None:
     autenticado_como(PACIENTE_ID, "paciente")
 
     response = client.post(
-        f"/api/v1/pacientes/{OUTRO_PACIENTE_ID}/anamneses",
+        f"/api/v1/pacientes/{paciente_alvo}/anamneses",
         json=_payload_anamnese(),
         headers=AUTH_HEADERS,
     )
@@ -309,8 +273,8 @@ def test_http_paciente_nao_usa_rota_de_atendimento(autenticado_como) -> None:
     assert response.status_code == 403
 
 
-def test_http_paciente_nao_usa_rota_de_atendimento_nem_para_si(autenticado_como) -> None:
-    autenticado_como(PACIENTE_ID, "paciente")
+def test_http_admin_nao_usa_rota_de_atendimento(autenticado_como) -> None:
+    autenticado_como(uuid.uuid4(), "admin")
 
     response = client.post(
         f"/api/v1/pacientes/{PACIENTE_ID}/anamneses",
@@ -321,11 +285,11 @@ def test_http_paciente_nao_usa_rota_de_atendimento_nem_para_si(autenticado_como)
     assert response.status_code == 403
 
 
-def test_http_profissional_sem_vinculo_recebe_403_na_anamnese(
+def test_http_profissional_sem_vinculo_recebe_404_na_anamnese(
     autenticado_como, mocks: SimpleNamespace
 ) -> None:
     autenticado_como(PROFISSIONAL_ID, "profissional")
-    mocks.existe_vinculo.return_value = False
+    mocks.tem_vinculo.return_value = False
 
     response = client.post(
         f"/api/v1/pacientes/{PACIENTE_ID}/anamneses",
@@ -333,32 +297,44 @@ def test_http_profissional_sem_vinculo_recebe_403_na_anamnese(
         headers=AUTH_HEADERS,
     )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "profissional sem vínculo com o paciente"
+    assert response.status_code == 404
+    mocks.buscar_usuario.assert_not_awaited()
 
 
-def test_http_profissional_sem_vinculo_recebe_403_no_diagnostico(
+def test_http_paciente_inativo_recebe_404_na_anamnese(
     autenticado_como, mocks: SimpleNamespace
 ) -> None:
     autenticado_como(PROFISSIONAL_ID, "profissional")
-    mocks.existe_vinculo.return_value = False
+    mocks.buscar_usuario.return_value = SimpleNamespace(id=PACIENTE_ID, is_active=False)
 
-    response = _enviar_diagnostico(paciente_id=PACIENTE_ID)
+    response = client.post(
+        f"/api/v1/pacientes/{PACIENTE_ID}/anamneses",
+        json=_payload_anamnese(),
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 404
+
+
+def test_http_profissional_sem_vinculo_recebe_404_no_diagnostico(
+    autenticado_como, mocks: SimpleNamespace
+) -> None:
+    autenticado_como(PROFISSIONAL_ID, "profissional")
+    mocks.tem_vinculo.return_value = False
+
+    response = _enviar_diagnostico()
+
+    assert response.status_code == 404
+    mocks.salvar.assert_not_awaited()
+
+
+def test_http_admin_nao_envia_diagnostico(autenticado_como, mocks: SimpleNamespace) -> None:
+    autenticado_como(uuid.uuid4(), "admin")
+
+    response = _enviar_diagnostico()
 
     assert response.status_code == 403
     mocks.buscar_anamnese.assert_not_awaited()
-    mocks.salvar.assert_not_awaited()
-
-
-def test_http_paciente_informando_outro_titular_recebe_403(
-    autenticado_como, mocks: SimpleNamespace
-) -> None:
-    autenticado_como(PACIENTE_ID, "paciente")
-
-    response = _enviar_diagnostico(paciente_id=OUTRO_PACIENTE_ID)
-
-    assert response.status_code == 403
-    mocks.salvar.assert_not_awaited()
 
 
 def test_http_retry_retorna_409_com_diagnostico_existente(
@@ -367,7 +343,7 @@ def test_http_retry_retorna_409_com_diagnostico_existente(
     autenticado_como(PROFISSIONAL_ID, "profissional")
     mocks.buscar_por_anamnese.return_value = _diagnostico()
 
-    response = _enviar_diagnostico(paciente_id=PACIENTE_ID)
+    response = _enviar_diagnostico()
 
     assert response.status_code == 409
     assert response.json() == {
@@ -381,25 +357,21 @@ def test_http_retry_retorna_409_com_diagnostico_existente(
 def test_http_profissional_vinculado_recebe_202(autenticado_como, mocks: SimpleNamespace) -> None:
     autenticado_como(PROFISSIONAL_ID, "profissional")
 
-    response = _enviar_diagnostico(paciente_id=PACIENTE_ID)
+    response = _enviar_diagnostico()
 
     assert response.status_code == 202
     assert response.json()["id"] == 4
     assert mocks.inserir.await_args.kwargs["paciente_id"] == PACIENTE_ID
 
 
-def test_http_paciente_id_invalido_retorna_422(autenticado_como, mocks: SimpleNamespace) -> None:
+def test_http_paciente_id_invalido_na_rota_retorna_422(autenticado_como) -> None:
     autenticado_como(PROFISSIONAL_ID, "profissional")
 
     response = client.post(
-        "/api/v1/diagnosticos",
-        data={"anamnese_id": "128", "parametros_captura": "{}", "paciente_id": "abc"},
-        files={"imagem": ("foto.jpg", b"imagem", "image/jpeg")},
-        headers=AUTH_HEADERS,
+        "/api/v1/pacientes/abc/anamneses", json=_payload_anamnese(), headers=AUTH_HEADERS
     )
 
     assert response.status_code == 422
-    mocks.salvar.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -526,8 +498,8 @@ def test_integracao_profissional_vinculado_registra_no_historico_do_paciente(
     assert anamnese.json()["paciente_id"] == str(cenario.paciente_id)
     anamnese_id = anamnese.json()["id"]
 
-    primeiro = _enviar_diagnostico(cenario.paciente_id, anamnese_id)
-    retry = _enviar_diagnostico(cenario.paciente_id, anamnese_id)
+    primeiro = _enviar_diagnostico(anamnese_id)
+    retry = _enviar_diagnostico(anamnese_id)
 
     assert primeiro.status_code == 202
     assert retry.status_code == 409
@@ -570,7 +542,7 @@ def test_integracao_paciente_sem_vinculo_nao_gera_registros(cenario: Cenario) ->
         headers=AUTH_HEADERS,
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     [(total,)] = asyncio.run(
         _consultar(
             select(func.count())

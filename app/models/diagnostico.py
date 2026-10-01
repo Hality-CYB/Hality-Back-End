@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,9 +17,12 @@ class Diagnostico(Base):
     """
 
     __tablename__ = "diagnosticos"
+    __table_args__ = (Index("ix_diagnosticos_data_diagnostico_id", "data_diagnostico", "id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    paciente_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    paciente_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     anamnese_id: Mapped[int] = mapped_column(
         ForeignKey("anamneses.id", ondelete="CASCADE"), unique=True
     )

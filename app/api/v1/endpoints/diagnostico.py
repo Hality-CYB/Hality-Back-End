@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Annotated, Any
 
 from fastapi import (
@@ -13,9 +12,14 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api.deps import CurrentActorDep, CurrentPatientDep, DbSession
+from app.api.deps import (
+    CurrentClinicalUser,
+    CurrentPatientDep,
+    DbSession,
+    OptionalClinicalUser,
+)
 from app.schemas.diagnostico import DiagnosticoListResponse
-from app.services import atendimento_service, diagnostico_service, diagnostico_storage
+from app.services import diagnostico_service, diagnostico_storage
 
 router = APIRouter(
     prefix="/diagnosticos",
@@ -27,14 +31,36 @@ router = APIRouter(
     "/imagens/{nome_arquivo}",
     include_in_schema=False,
 )
-def obter_imagem(nome_arquivo: str) -> FileResponse:
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+async def obter_imagem(
+    nome_arquivo: str,
+    usuario: OptionalClinicalUser,
+    db: DbSession,
+    expira: Annotated[int | None, Query()] = None,
+    assinatura: Annotated[str | None, Query()] = None,
+) -> FileResponse:
+    # Duas formas de acesso: Bearer (policy) ou `expira`+`assinatura`, a URL que
+    # `GET /diagnosticos/{id}` devolve para o front usar em <img> (sem Bearer).
+    try:
+        caminho = await diagnostico_service.obter_caminho_imagem(
+            db=db,
+            usuario=usuario,
+            nome_arquivo=nome_arquivo,
+            expira_em=expira,
+            assinatura=assinatura,
+        )
 
-    if caminho is None:
+    except diagnostico_service.ImagemSemCredencialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    except diagnostico_service.ImagemNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="imagem não encontrada",
-        )
+        ) from exc
 
     return FileResponse(caminho)
 
@@ -78,11 +104,10 @@ async def criar_diagnostico(
     anamnese_id: Annotated[int, Form()],
     imagem: Annotated[UploadFile, File()],
     parametros_captura: Annotated[str, Form()],
-    ator: CurrentActorDep,
+    # Paciente na autoavaliação ou profissional vinculado (US-090). O titular vem
+    # sempre da anamnese, e o acesso a ela é checado no service.
+    usuario: CurrentClinicalUser,
     db: DbSession,
-    # Contexto de atendimento (US-090): paciente selecionado pelo profissional.
-    # Omitido na autoavaliação; nunca é aceito sem vínculo validado.
-    paciente_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> dict[str, Any] | JSONResponse:
     try:
         parametros = json.loads(parametros_captura)
@@ -101,31 +126,12 @@ async def criar_diagnostico(
     try:
         return await diagnostico_service.criar_diagnostico(
             db=db,
-            ator=ator,
+            usuario=usuario,
             anamnese_id=anamnese_id,
             imagem=imagem_bytes,
             content_type=imagem.content_type or "",
             parametros_captura=parametros,
-            paciente_id=paciente_id,
         )
-
-    except atendimento_service.AtorNaoProfissionalError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="apenas profissionais podem atender outro paciente",
-        ) from exc
-
-    except atendimento_service.VinculoInexistenteError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="profissional sem vínculo com o paciente",
-        ) from exc
-
-    except atendimento_service.TitularIndisponivelError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="paciente indisponível",
-        ) from exc
 
     except diagnostico_service.ImagemInvalidaError as exc:
         return JSONResponse(
@@ -161,13 +167,13 @@ async def criar_diagnostico(
 @router.get("/{diagnostico_id}")
 async def obter_diagnostico(
     diagnostico_id: int,
-    ator: CurrentActorDep,
+    usuario: CurrentClinicalUser,
     db: DbSession,
 ) -> dict[str, Any]:
     try:
         return await diagnostico_service.obter_diagnostico(
             db=db,
-            ator=ator,
+            usuario=usuario,
             diagnostico_id=diagnostico_id,
         )
 

@@ -6,7 +6,7 @@ atendimento. A coluna é nula e sem backfill — registros existentes ficam com
 executor nulo (legado) em vez de serem reclassificados.
 
 Revision ID: f1a2b3c4d5e6
-Revises: 198bcce46c43
+Revises: a82d5d4b3f10
 """
 
 from collections.abc import Sequence
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f1a2b3c4d5e6"
-down_revision: str | None = "198bcce46c43"
+down_revision: str | None = "a82d5d4b3f10"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

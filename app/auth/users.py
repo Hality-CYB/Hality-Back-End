@@ -9,6 +9,7 @@ from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, BearerTransport, JWTStrategy
 from fastapi_users.authentication.strategy import DatabaseStrategy
 from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,11 +55,14 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         """Callback chamado após registro bem-sucedido (ex.: envio de e-mail de boas-vindas)."""
 
 
+password_helper = PasswordHelper()
+
+
 async def get_user_manager(  # noqa: B008
     user_db: Annotated[SQLAlchemyUserDatabase, Depends(get_user_db)],
 ) -> AsyncGenerator[UserManager, None]:
     """Dependency que fornece o UserManager para cada request."""
-    yield UserManager(user_db)
+    yield UserManager(user_db, password_helper)
 
 
 # ---------------------------------------------------------------------------
@@ -122,3 +126,7 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
 
 # Dependency pronta: retorna o usuário autenticado e ativo
 current_active_user = fastapi_users.current_user(active=True)
+
+# Igual, mas devolve None (em vez de 401) sem token, com token inválido ou inativo.
+# Usada só onde existe outra forma de autorização (URL assinada de imagem).
+current_active_user_opcional = fastapi_users.current_user(active=True, optional=True)
