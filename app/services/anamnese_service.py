@@ -1,5 +1,6 @@
 import uuid
 
+from app.auth.policies import UsuarioAutenticado, pode_acessar_paciente
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail
 from app.services.anamnese_lexer import AnamneseValidationError, lexar_respostas
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -54,21 +55,32 @@ async def listar_anamneses(
     return [_para_detalhe(r) for r in registros]
 
 
-async def obter_anamnese(
-    repo: AnamneseRepository, paciente_id: uuid.UUID, id_resp: int
-) -> AnamneseDetail:
+async def _buscar_com_acesso(
+    repo: AnamneseRepository, usuario: UsuarioAutenticado, id_resp: int
+) -> AnamneseRecord:
     registro = await repo.obter_por_id(id_resp)
-    if registro is None or registro.paciente_id != paciente_id:
+    # Sem acesso responde igual a inexistente (404) para não permitir enumeração.
+    if registro is None or not await pode_acessar_paciente(
+        repo.db, usuario, registro.paciente_id, recurso=f"anamnese:{id_resp}"
+    ):
         raise AnamneseNaoEncontradaError
+    return registro
+
+
+async def obter_anamnese(
+    repo: AnamneseRepository, usuario: UsuarioAutenticado, id_resp: int
+) -> AnamneseDetail:
+    registro = await _buscar_com_acesso(repo, usuario, id_resp)
     return _para_detalhe(registro)
 
 
 async def atualizar_anamnese(
-    repo: AnamneseRepository, paciente_id: uuid.UUID, id_resp: int, payload: AnamneseCreate
+    repo: AnamneseRepository,
+    usuario: UsuarioAutenticado,
+    id_resp: int,
+    payload: AnamneseCreate,
 ) -> AnamneseDetail:
-    registro = await repo.obter_por_id(id_resp)
-    if registro is None or registro.paciente_id != paciente_id:
-        raise AnamneseNaoEncontradaError
+    await _buscar_com_acesso(repo, usuario, id_resp)
     questionario = await get_questionario_ativo(repo.db)
     respostas_lexadas = lexar_respostas(questionario, payload)
     atualizado = await repo.atualizar(
@@ -81,8 +93,8 @@ async def atualizar_anamnese(
     return _para_detalhe(atualizado)
 
 
-async def deletar_anamnese(repo: AnamneseRepository, paciente_id: uuid.UUID, id_resp: int) -> None:
-    registro = await repo.obter_por_id(id_resp)
-    if registro is None or registro.paciente_id != paciente_id:
-        raise AnamneseNaoEncontradaError
+async def deletar_anamnese(
+    repo: AnamneseRepository, usuario: UsuarioAutenticado, id_resp: int
+) -> None:
+    await _buscar_com_acesso(repo, usuario, id_resp)
     await repo.deletar(id_resp)

@@ -31,7 +31,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    role: Mapped[str] = mapped_column(String(20), default="patient", nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="paciente", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

@@ -5,15 +5,13 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import paciente_profissional_queries
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
 )
 from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
 from app.models.imagem import Imagem
-from app.models.paciente_profissional import (
-    PacienteProfissional,
-)
 from app.models.user import User
 
 
@@ -43,6 +41,20 @@ async def buscar_por_id(
     diagnostico_id: int,
 ) -> Diagnostico | None:
     result = await db.execute(select(Diagnostico).where(Diagnostico.id == diagnostico_id))
+
+    return result.scalar_one_or_none()
+
+
+async def buscar_paciente_por_arquivo_imagem(
+    db: AsyncSession,
+    nome_arquivo: str,
+) -> uuid.UUID | None:
+    result = await db.execute(
+        select(Diagnostico.paciente_id)
+        .join(Imagem, Imagem.diagnostico_id == Diagnostico.id)
+        .where(Imagem.url_arquivo.endswith(f"/{nome_arquivo}", autoescape=True))
+        .limit(1)
+    )
 
     return result.scalar_one_or_none()
 
@@ -190,19 +202,6 @@ async def listar_conteudos_por_classificacao(
     return list(result.scalars().all())
 
 
-async def tem_profissional_vinculado(
-    db: AsyncSession,
-    paciente_id: uuid.UUID,
-) -> bool:
-    result = await db.execute(
-        select(PacienteProfissional.id)
-        .where(PacienteProfissional.paciente_id == paciente_id)
-        .limit(1)
-    )
-
-    return result.scalar_one_or_none() is not None
-
-
 async def buscar_nome_usuario(
     db: AsyncSession,
     usuario_id: uuid.UUID,
@@ -235,7 +234,7 @@ async def buscar_dados_detalhe(
             diagnostico.classificacao_id,
         )
 
-    vinculado = await tem_profissional_vinculado(
+    vinculado = await paciente_profissional_queries.paciente_tem_vinculo_ativo(
         db,
         diagnostico.paciente_id,
     )

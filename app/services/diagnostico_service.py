@@ -1,10 +1,16 @@
-import uuid
 from datetime import UTC, date, datetime, time
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import (
+    UsuarioAutenticado,
+    assinar_url_imagem,
+    pode_acessar_paciente,
+    url_imagem_assinada_valida,
+)
 from app.core.config import get_settings
 from app.db import anamnese_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
@@ -56,6 +62,14 @@ class DiagnosticoNaoEncontradoError(Exception):
 
 
 class DiagnosticoAcessoNegadoError(Exception):
+    pass
+
+
+class ImagemNaoEncontradaError(Exception):
+    pass
+
+
+class ImagemSemCredencialError(Exception):
     pass
 
 
@@ -253,7 +267,7 @@ async def listar_diagnosticos(
 
 async def criar_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    usuario: UsuarioAutenticado,
     anamnese_id: int,
     imagem: bytes,
     content_type: str,
@@ -264,8 +278,13 @@ async def criar_diagnostico(
         anamnese_id,
     )
 
-    if anamnese is None or anamnese.paciente_id != paciente_id:
+    if anamnese is None or not await pode_acessar_paciente(
+        db, usuario, anamnese.paciente_id, recurso=f"anamnese:{anamnese_id}"
+    ):
         raise AnamneseNaoEncontradaError
+
+    # O diagnóstico pertence ao dono da anamnese — nunca a um id vindo do cliente.
+    paciente_id = anamnese.paciente_id
 
     existente = await diagnostico_queries.buscar_por_anamnese(
         db,
@@ -325,9 +344,40 @@ async def criar_diagnostico(
     }
 
 
+async def obter_caminho_imagem(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado | None,
+    nome_arquivo: str,
+    expira_em: int | None = None,
+    assinatura: str | None = None,
+) -> Path:
+    if usuario is not None:
+        paciente_id = await diagnostico_queries.buscar_paciente_por_arquivo_imagem(
+            db,
+            nome_arquivo,
+        )
+        permitido = paciente_id is not None and await pode_acessar_paciente(
+            db, usuario, paciente_id, recurso=f"imagem:{nome_arquivo}"
+        )
+    elif expira_em is not None and assinatura is not None:
+        permitido = url_imagem_assinada_valida(nome_arquivo, expira_em, assinatura)
+    else:
+        raise ImagemSemCredencialError
+
+    if not permitido:
+        raise ImagemNaoEncontradaError
+
+    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+
+    if caminho is None:
+        raise ImagemNaoEncontradaError
+
+    return caminho
+
+
 async def obter_diagnostico(
     db: AsyncSession,
-    paciente_id: uuid.UUID,
+    usuario: UsuarioAutenticado,
     diagnostico_id: int,
 ) -> dict[str, Any]:
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -338,7 +388,10 @@ async def obter_diagnostico(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
-    if diagnostico.paciente_id != paciente_id:
+    # Contrato mantido de antes do RBAC: diagnóstico existente sem acesso -> 403.
+    if not await pode_acessar_paciente(
+        db, usuario, diagnostico.paciente_id, recurso=f"diagnostico:{diagnostico_id}"
+    ):
         raise DiagnosticoAcessoNegadoError
 
     diagnostico = await diagnostico_mock.processar_se_necessario(
@@ -390,7 +443,8 @@ async def obter_diagnostico(
         "imagens": [
             {
                 "id": imagem.id,
-                "url_arquivo": (imagem.url_arquivo),
+                # Assinada: o front usa direto em <img>, que não envia Bearer.
+                "url_arquivo": assinar_url_imagem(imagem.url_arquivo),
                 "ordem": imagem.ordem,
                 "data_captura": (imagem.data_captura),
             }
