@@ -1,6 +1,7 @@
 import uuid
 
 from app.auth.policies import UsuarioAutenticado, pode_acessar_paciente
+from app.db import user_queries
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail
 from app.services.anamnese_lexer import AnamneseValidationError, lexar_respostas
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -9,7 +10,9 @@ from app.services.anamnese_store import AnamneseRecord, AnamneseRepository
 __all__ = [
     "AnamneseValidationError",
     "AnamneseNaoEncontradaError",
+    "PacienteNaoEncontradoError",
     "criar_anamnese",
+    "criar_anamnese_para_paciente",
     "listar_anamneses",
     "obter_anamnese",
     "atualizar_anamnese",
@@ -18,6 +21,10 @@ __all__ = [
 
 
 class AnamneseNaoEncontradaError(Exception):
+    pass
+
+
+class PacienteNaoEncontradoError(Exception):
     pass
 
 
@@ -32,20 +39,48 @@ def _para_detalhe(registro: AnamneseRecord) -> AnamneseDetail:
 
 
 async def criar_anamnese(
-    repo: AnamneseRepository, paciente_id: uuid.UUID, payload: AnamneseCreate
+    repo: AnamneseRepository,
+    paciente_id: uuid.UUID,
+    payload: AnamneseCreate,
+    executor_id: uuid.UUID | None = None,
 ) -> AnamneseCreated:
+    """Sem `executor_id`, é autoavaliação: o próprio titular é o executor."""
     questionario = await get_questionario_ativo(repo.db)
     respostas_lexadas = lexar_respostas(questionario, payload)
     registro = await repo.salvar(
         paciente_id=paciente_id,
         id_versao_questionario=payload.versao_questionario,
         respostas=respostas_lexadas,
+        executor_id=executor_id or paciente_id,
     )
     return AnamneseCreated(
         id=registro.id_resp,
         paciente_id=registro.paciente_id,
         data_preenchimento=registro.data_preenchimento,
     )
+
+
+async def criar_anamnese_para_paciente(
+    repo: AnamneseRepository,
+    profissional: UsuarioAutenticado,
+    paciente_id: uuid.UUID,
+    payload: AnamneseCreate,
+) -> AnamneseCreated:
+    """Profissional preenchendo a anamnese de um paciente vinculado (US-090).
+
+    O acesso é checado antes de ler o questionário ou gravar qualquer coisa.
+    Sem vínculo ativo, ou paciente inativo, responde igual a inexistente (404).
+    """
+    if not await pode_acessar_paciente(
+        repo.db, profissional, paciente_id, recurso=f"paciente:{paciente_id}"
+    ):
+        raise PacienteNaoEncontradoError
+
+    paciente = await user_queries.buscar_usuario(repo.db, paciente_id)
+    if paciente is None or not paciente.is_active:
+        raise PacienteNaoEncontradoError
+
+    return await criar_anamnese(repo, paciente_id, payload, executor_id=profissional.id)
 
 
 async def listar_anamneses(

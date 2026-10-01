@@ -205,12 +205,16 @@ async def buscar_por_anamnese(
 async def inserir(
     db: AsyncSession,
     paciente_id: uuid.UUID,
+    executor_id: uuid.UUID,
     anamnese_id: int,
     url_arquivo: str,
     parametros_captura: dict,
 ) -> Diagnostico:
+    # Diagnóstico e imagem entram no mesmo commit: ou os dois existem, ou
+    # nenhum (e o service remove o arquivo do storage).
     diagnostico = Diagnostico(
         paciente_id=paciente_id,
+        executor_id=executor_id,
         anamnese_id=anamnese_id,
         classificacao_id=None,
         escala_saburra=None,

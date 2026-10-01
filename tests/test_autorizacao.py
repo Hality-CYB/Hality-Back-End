@@ -358,7 +358,14 @@ def test_nao_paciente_nao_passa_por_current_patient_dep(cenario: Cenario, quem: 
     ]
     for metodo, rota, kwargs in rotas:
         response = client.request(metodo, rota, headers=AUTH_HEADERS, **kwargs)
-        assert response.status_code == 403, (metodo, rota, response.status_code)
+        # Profissional vinculado pode enviar diagnóstico (US-090), mas só de
+        # anamnese que ele mesmo preencheu; a autoavaliação do paciente dá 404.
+        esperado = (
+            404
+            if (quem, metodo, rota) == ("profissional_vinculado", "POST", "/api/v1/diagnosticos")
+            else 403
+        )
+        assert response.status_code == esperado, (metodo, rota, response.status_code)
 
     # Nada foi apagado ou alterado: o dono continua lendo a anamnese.
     _autenticar_como(cenario.paciente)
@@ -653,7 +660,7 @@ def test_toda_rota_clinica_declara_papeis_via_exigir_papeis() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and r.path not in _ROTAS_CLINICAS_PUBLICAS
     ]
-    assert len(rotas) == 11
+    assert len(rotas) == 12
 
     for rota in rotas:
         papeis = _papeis_declarados(rota.dependant)

@@ -10,6 +10,12 @@ from app.db.base import Base
 
 
 class Diagnostico(Base):
+    """Tabela `diagnosticos`.
+
+    `paciente_id` é o titular; `executor_id` é quem enviou a imagem (o próprio
+    paciente ou o profissional vinculado). Nulo = registro legado.
+    """
+
     __tablename__ = "diagnosticos"
     __table_args__ = (Index("ix_diagnosticos_data_diagnostico_id", "data_diagnostico", "id"),)
 
@@ -19,6 +25,9 @@ class Diagnostico(Base):
     )
     anamnese_id: Mapped[int] = mapped_column(
         ForeignKey("anamneses.id", ondelete="CASCADE"), unique=True
+    )
+    executor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     classificacao_id: Mapped[int | None] = mapped_column(
         ForeignKey("classificacoes_diagnostico.id"), nullable=True

@@ -14,7 +14,6 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.deps import (
     CurrentClinicalUser,
-    CurrentPatient,
     CurrentPatientDep,
     DbSession,
     OptionalClinicalUser,
@@ -105,7 +104,9 @@ async def criar_diagnostico(
     anamnese_id: Annotated[int, Form()],
     imagem: Annotated[UploadFile, File()],
     parametros_captura: Annotated[str, Form()],
-    usuario: CurrentPatient,
+    # Paciente na autoavaliação ou profissional vinculado (US-090). O titular vem
+    # sempre da anamnese, e o acesso a ela é checado no service.
+    usuario: CurrentClinicalUser,
     db: DbSession,
 ) -> dict[str, Any] | JSONResponse:
     try:
@@ -151,10 +152,16 @@ async def criar_diagnostico(
         ) from exc
 
     except diagnostico_service.AnamneseJaUtilizadaError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=("anamnese já vinculada a outro diagnóstico"),
-        ) from exc
+        # 409 com o diagnóstico existente: retry/duplo envio não duplica nada
+        # e o cliente retoma o acompanhamento pelo id devolvido.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": "anamnese já vinculada a outro diagnóstico",
+                "diagnostico_id": exc.diagnostico.id,
+                "status": exc.diagnostico.status,
+            },
+        )
 
 
 @router.get("/{diagnostico_id}")

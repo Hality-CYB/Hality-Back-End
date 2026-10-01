@@ -22,6 +22,7 @@ class AnamneseRecord:
     data_preenchimento: datetime
     id_versao_questionario: str
     respostas: list[ItemRespostaRegistrada]
+    executor_id: uuid.UUID | None = None
 
 
 def _para_record(orm: Anamnese) -> AnamneseRecord:
@@ -31,6 +32,7 @@ def _para_record(orm: Anamnese) -> AnamneseRecord:
         data_preenchimento=orm.data_preenchimento,
         id_versao_questionario=orm.id_versao_questionario,
         respostas=[ItemRespostaRegistrada.model_validate(r) for r in orm.respostas],
+        executor_id=orm.executor_id,
     )
 
 
@@ -47,9 +49,11 @@ class AnamneseRepository:
         paciente_id: uuid.UUID,
         id_versao_questionario: str,
         respostas: list[ItemRespostaRegistrada],
+        executor_id: uuid.UUID,
     ) -> AnamneseRecord:
         orm = Anamnese(
             paciente_id=paciente_id,
+            executor_id=executor_id,
             id_versao_questionario=id_versao_questionario,
             respostas=_para_json(respostas),
         )

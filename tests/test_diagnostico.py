@@ -36,6 +36,7 @@ def _anamnese(paciente_id=PACIENTE_STUB_ID):
     return SimpleNamespace(
         id=128,
         paciente_id=paciente_id,
+        executor_id=paciente_id,
         data_preenchimento=datetime.now(UTC),
         respostas=[],
     )

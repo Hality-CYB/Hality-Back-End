@@ -66,7 +66,12 @@ class AnamneseNaoEncontradaError(Exception):
 
 
 class AnamneseJaUtilizadaError(Exception):
-    pass
+    """Carrega o diagnóstico já criado para a anamnese, para o cliente
+    retomar o acompanhamento em vez de reenviar (retry idempotente)."""
+
+    def __init__(self, diagnostico: Diagnostico) -> None:
+        self.diagnostico = diagnostico
+        super().__init__("anamnese já vinculada a outro diagnóstico")
 
 
 class DiagnosticoNaoEncontradoError(Exception):
@@ -295,6 +300,13 @@ async def criar_diagnostico(
     ):
         raise AnamneseNaoEncontradaError
 
+    # Quem envia a imagem tem de ser quem preencheu a anamnese: o profissional
+    # não reaproveita a autoavaliação do paciente, e vice-versa. Executor nulo =
+    # anamnese anterior à US-090, preenchida pelo próprio paciente.
+    executor_anamnese = anamnese.executor_id or anamnese.paciente_id
+    if executor_anamnese != usuario.id:
+        raise AnamneseNaoEncontradaError
+
     # O diagnóstico pertence ao dono da anamnese — nunca a um id vindo do cliente.
     paciente_id = anamnese.paciente_id
 
@@ -304,7 +316,7 @@ async def criar_diagnostico(
     )
 
     if existente is not None:
-        raise AnamneseJaUtilizadaError
+        raise AnamneseJaUtilizadaError(existente)
 
     _validar_imagem(
         imagem,
@@ -321,6 +333,7 @@ async def criar_diagnostico(
         diagnostico = await diagnostico_queries.inserir(
             db=db,
             paciente_id=paciente_id,
+            executor_id=usuario.id,
             anamnese_id=anamnese_id,
             url_arquivo=url_arquivo,
             parametros_captura=parametros_captura,
@@ -337,7 +350,7 @@ async def criar_diagnostico(
         )
 
         if existente is not None:
-            raise AnamneseJaUtilizadaError from exc
+            raise AnamneseJaUtilizadaError(existente) from exc
 
         raise
 

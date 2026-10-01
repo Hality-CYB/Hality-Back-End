@@ -4,8 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentProfessional, DbSession
+from app.api.v1.endpoints.anamnese import AnamneseRepoDep
+from app.schemas.anamnese import AnamneseCreate, AnamneseCreated
 from app.schemas.paciente import PacienteDetail, PacienteListResponse
-from app.services import paciente_service
+from app.services import anamnese_service, paciente_service
 
 # Só profissional, e só pacientes com vínculo ativo. Admin não herda acesso
 # clínico (ver app/auth/policies.py); diagnósticos para o admin ficam em
@@ -67,3 +69,30 @@ async def obter_paciente(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="paciente não encontrado",
         ) from exc
+
+
+@router.post(
+    "/{paciente_id}/anamneses",
+    response_model=AnamneseCreated,
+    status_code=status.HTTP_201_CREATED,
+)
+async def criar_anamnese_para_paciente(
+    paciente_id: uuid.UUID,
+    payload: AnamneseCreate,
+    usuario: CurrentProfessional,
+    repo: AnamneseRepoDep,
+) -> AnamneseCreated:
+    """Profissional preenche a anamnese de um paciente vinculado (US-090)."""
+    try:
+        return await anamnese_service.criar_anamnese_para_paciente(
+            repo, usuario, paciente_id, payload
+        )
+
+    except anamnese_service.PacienteNaoEncontradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="paciente não encontrado",
+        ) from exc
+
+    except anamnese_service.AnamneseValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.erros) from exc
