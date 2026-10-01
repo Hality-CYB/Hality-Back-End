@@ -126,3 +126,7 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
 
 # Dependency pronta: retorna o usuário autenticado e ativo
 current_active_user = fastapi_users.current_user(active=True)
+
+# Igual, mas devolve None (em vez de 401) sem token, com token inválido ou inativo.
+# Usada só onde existe outra forma de autorização (URL assinada de imagem).
+current_active_user_opcional = fastapi_users.current_user(active=True, optional=True)
