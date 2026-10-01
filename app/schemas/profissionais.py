@@ -32,6 +32,8 @@ class ResumoProfissionalResponse(BaseModel):
     diagnosticos_total: int
     pendentes_revisao: int
     ultimo_diagnostico_em: datetime | None
+
+
 class ProfissionalPerfilRead(BaseModel):
     """Bloco profissional agregado na resposta de /users/me."""
 

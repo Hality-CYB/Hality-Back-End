@@ -10,6 +10,7 @@ from httpx import AsyncClient
 
 from app.api import deps
 from app.db import profissional_queries
+from app.main import app
 from app.services import profissional_service
 
 RESUMO_URL = "/api/v1/profissional/resumo"
@@ -162,3 +163,38 @@ async def test_resumo_sem_token_retorna_401(client: AsyncClient) -> None:
     response = await client.get(RESUMO_URL)
 
     assert response.status_code == 401
+
+
+# datas sem fuso e timezone invalido (antes davam 500 / eram aceitos)
+
+
+@pytest.fixture
+def profissional_logado():
+    app.dependency_overrides[deps.get_current_professional] = lambda: _usuario()
+    yield
+    app.dependency_overrides.pop(deps.get_current_professional, None)
+
+
+@pytest.mark.asyncio
+async def test_resumo_inicio_sem_fuso_usa_o_timezone_informado(
+    client: AsyncClient, monkeypatch, profissional_logado
+) -> None:
+    _mockar_queries(monkeypatch)
+
+    response = await client.get(
+        RESUMO_URL, params={"inicio": "2026-09-01T00:00:00", "timezone": "America/Sao_Paulo"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["periodo"]["inicio"] == "2026-09-01T00:00:00-03:00"
+
+
+@pytest.mark.asyncio
+async def test_resumo_timezone_invalido_retorna_400(
+    client: AsyncClient, monkeypatch, profissional_logado
+) -> None:
+    _mockar_queries(monkeypatch)
+
+    response = await client.get(RESUMO_URL, params={"timezone": "Marte/Base"})
+
+    assert response.status_code == 400

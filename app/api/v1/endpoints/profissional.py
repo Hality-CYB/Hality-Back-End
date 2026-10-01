@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -22,6 +23,21 @@ async def obter_resumo(
     fim: Annotated[datetime | None, Query()] = None,
     timezone: Annotated[str, Query()] = "UTC",
 ) -> ResumoProfissionalResponse:
+    try:
+        fuso = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="timezone invalido",
+        ) from exc
+
+    # Data sem fuso é interpretada no `timezone` informado; sem isso, comparar
+    # com o `fim` padrão (com fuso) levanta TypeError e a rota responde 500.
+    if inicio is not None and inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=fuso)
+    if fim is not None and fim.tzinfo is None:
+        fim = fim.replace(tzinfo=fuso)
+
     fim_efetivo = fim or datetime.now(UTC)
     inicio_efetivo = inicio or (fim_efetivo - timedelta(days=PERIODO_PADRAO_DIAS))
 
