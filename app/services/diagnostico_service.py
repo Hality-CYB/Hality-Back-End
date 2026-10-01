@@ -12,8 +12,16 @@ from app.auth.policies import (
     url_imagem_assinada_valida,
 )
 from app.core.config import get_settings
-from app.db import anamnese_queries, diagnostico_queries
+from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
+from app.schemas.admin_diagnostico import (
+    AdminDiagnosticoDetalhe,
+    AdminDiagnosticoItem,
+    AdminDiagnosticoListResponse,
+    ClassificacaoAutomatica,
+    DatasetInfo,
+    RevisaoProfissional,
+)
 from app.schemas.diagnostico import (
     ClassificacaoDiagnosticoResumo,
     DiagnosticoListItem,
@@ -33,6 +41,9 @@ STATUS_SEM_RESULTADO_LISTAGEM = {
     "falha",
     "processando",
 }
+STATUS_VALIDOS_ADMIN = STATUS_COM_RESULTADO | STATUS_SEM_RESULTADO_LISTAGEM
+ACAO_ADMIN_DETALHE_ABERTO = "diagnostico.detalhe.aberto"
+RECURSO_DIAGNOSTICO = "diagnostico"
 ORDENS_LISTAGEM = {
     "data_asc",
     "data_desc",
@@ -481,3 +492,145 @@ async def obter_diagnostico(
             else None
         ),
     }
+
+
+def _resumo_classificacao(classificacao) -> ClassificacaoDiagnosticoResumo | None:
+    if classificacao is None:
+        return None
+
+    return ClassificacaoDiagnosticoResumo(
+        codigo=classificacao.codigo,
+        nome_exibicao=classificacao.nome_exibicao,
+        ordem=classificacao.ordem,
+    )
+
+
+def _foi_revisado(diagnostico: Diagnostico) -> bool:
+    return diagnostico.profissional_revisor_id is not None and diagnostico.data_revisao is not None
+
+
+async def listar_diagnosticos_admin(
+    db: AsyncSession,
+    paciente_id: uuid.UUID | None = None,
+    classificacao: str | None = None,
+    sem_classificacao: bool = False,
+    status: str | None = None,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    pagina: int = 1,
+    limite: int = 20,
+    ordem: str = "data_desc",
+) -> AdminDiagnosticoListResponse:
+    data_inicio_normalizada, data_fim_normalizada, ordem_normalizada = _validar_filtros_listagem(
+        data_inicio=data_inicio,
+        data_fim=data_fim,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem,
+    )
+
+    status_normalizado = _normalizar_status(status)
+
+    if status_normalizado is not None and status_normalizado not in STATUS_VALIDOS_ADMIN:
+        raise DiagnosticoFiltroInvalidoError(
+            "status deve ser um de: " + ", ".join(sorted(STATUS_VALIDOS_ADMIN))
+        )
+
+    classificacao_normalizada = (classificacao or "").strip() or None
+
+    if sem_classificacao and classificacao_normalizada is not None:
+        raise DiagnosticoFiltroInvalidoError(
+            "sem_classificacao e classificacao nao podem ser usados juntos"
+        )
+
+    resultado = await diagnostico_queries.listar_admin(
+        db=db,
+        paciente_id=paciente_id,
+        classificacao_codigo=classificacao_normalizada,
+        sem_classificacao=sem_classificacao,
+        status=status_normalizado,
+        data_inicio=data_inicio_normalizada,
+        data_fim=data_fim_normalizada,
+        pagina=pagina,
+        limite=limite,
+        ordem=ordem_normalizada,
+    )
+
+    return AdminDiagnosticoListResponse(
+        itens=[
+            AdminDiagnosticoItem(
+                id=item.diagnostico.id,
+                paciente_id=item.diagnostico.paciente_id,
+                data_diagnostico=item.diagnostico.data_diagnostico,
+                status=item.diagnostico.status,
+                classificacao=_resumo_classificacao(item.classificacao),
+                tem_revisao=_foi_revisado(item.diagnostico),
+            )
+            for item in resultado.itens
+        ],
+        pagina=pagina,
+        limite=limite,
+        total=resultado.total,
+        total_paginas=(resultado.total + limite - 1) // limite,
+    )
+
+
+async def obter_diagnostico_admin(
+    db: AsyncSession,
+    admin_id: uuid.UUID,
+    diagnostico_id: int,
+) -> AdminDiagnosticoDetalhe:
+    """Detalhe administrativo. Somente leitura + auditoria de abertura.
+
+    Diferente do detalhe do paciente, NÃO chama `diagnostico_mock`: o admin
+    nunca dispara processamento nem altera o diagnóstico.
+    """
+    diagnostico = await diagnostico_queries.buscar_por_id(db, diagnostico_id)
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    classificacao = None
+
+    if diagnostico.classificacao_id is not None:
+        classificacao = await diagnostico_queries.buscar_classificacao(
+            db, diagnostico.classificacao_id
+        )
+
+    qtd_imagens = await diagnostico_queries.contar_imagens(db, diagnostico.id)
+
+    detalhe = AdminDiagnosticoDetalhe(
+        id=diagnostico.id,
+        paciente_id=diagnostico.paciente_id,
+        data_diagnostico=diagnostico.data_diagnostico,
+        status=diagnostico.status,
+        erro=diagnostico.erro if diagnostico.status == "falha" else None,
+        automatica=ClassificacaoAutomatica(
+            classificacao=_resumo_classificacao(classificacao),
+            escala_saburra=diagnostico.escala_saburra,
+            confianca_ia=diagnostico.confianca_ia,
+        ),
+        revisao=(
+            RevisaoProfissional(
+                profissional_revisor_id=diagnostico.profissional_revisor_id,
+                data_revisao=diagnostico.data_revisao,
+                observacoes=diagnostico.observacoes_revisao,
+            )
+            if _foi_revisado(diagnostico)
+            else None
+        ),
+        dataset=DatasetInfo(),
+        anamnese_id=diagnostico.anamnese_id,
+        qtd_imagens=qtd_imagens,
+    )
+
+    # Auditoria só depois de o detalhe estar montado com sucesso: 404 não audita.
+    await auditoria_queries.registrar_acesso(
+        db,
+        ator_id=admin_id,
+        acao=ACAO_ADMIN_DETALHE_ABERTO,
+        recurso_tipo=RECURSO_DIAGNOSTICO,
+        recurso_id=diagnostico.id,
+    )
+
+    return detalhe
