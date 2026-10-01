@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +38,17 @@ class StatusConteudo(StrEnum):
 
 class Conteudo(Base):
     __tablename__ = "conteudos"
+    # Criados nas migrations e7c1d2a3b4f5 (índice GIN) e a82d5d4b3f10 (regra de
+    # publicação); declarados aqui para o autogenerate não propor removê-los.
+    __table_args__ = (
+        Index("ix_conteudos_classificacao_ids", "classificacao_ids", postgresql_using="gin"),
+        CheckConstraint(
+            "status <> 'publicado' OR "
+            "(criado_por_id IS NOT NULL AND publicado_por_id IS NOT NULL "
+            "AND publicado_em IS NOT NULL)",
+            name="ck_conteudos_publicado_com_owner",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     titulo: Mapped[str] = mapped_column(String(255), nullable=False)
     categoria: Mapped[CategoriaConteudo] = mapped_column(

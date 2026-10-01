@@ -87,5 +87,10 @@ jobs:
       - name: Run migrations
         run: uv run alembic upgrade head
 
+      # Falha se models e migrations divergirem (ex.: índice ou constraint criados
+      # só na migration), antes que um `--autogenerate` proponha removê-los.
+      - name: Check models match migrations
+        run: uv run alembic check
+
       - name: Run tests
         run: uv run pytest
