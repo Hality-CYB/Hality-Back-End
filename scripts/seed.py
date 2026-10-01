@@ -337,7 +337,9 @@ async def seed() -> None:
                             {"tipo": "texto", "texto": "Escove os dentes após as refeições."}  # noqa: E501
                         ]
                     },
-                    classificacao_ids=[halito_normal.id],
+                    # Halitose Íntima usa a mesma orientação do Hálito Normal até o
+                    # time definir um conteúdo próprio para ela.
+                    classificacao_ids=[halito_normal.id, halitose_intima.id],
                     aparece_na_home=True,
                     status="publicado",
                     criado_por_id=admin.id,

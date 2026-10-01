@@ -145,7 +145,9 @@ def downgrade() -> None:
     op.drop_table("imagens")
     op.drop_table("profissionais")
     op.drop_table("diagnosticos")
-    op.drop_table("conteudos_diagnostico")
+    # A e7c1d2a3b4f5 apaga `conteudos_diagnostico` (substituída por `conteudos`)
+    # e não a recria no downgrade; por isso a tabela pode já não existir aqui.
+    op.execute(sa.text("DROP TABLE IF EXISTS conteudos_diagnostico"))
     op.drop_index(op.f("ix_users_email"), table_name="users")
     op.drop_table("users")
     op.drop_index(
