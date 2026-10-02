@@ -660,7 +660,7 @@ def test_toda_rota_clinica_declara_papeis_via_exigir_papeis() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and r.path not in _ROTAS_CLINICAS_PUBLICAS
     ]
-    assert len(rotas) == 12
+    assert len(rotas) == 13
 
     for rota in rotas:
         papeis = _papeis_declarados(rota.dependant)
