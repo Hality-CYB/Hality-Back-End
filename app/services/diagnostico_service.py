@@ -240,8 +240,10 @@ def _para_item_listagem(
     diagnostico = item.diagnostico
     tem_resultado = diagnostico.status not in STATUS_SEM_RESULTADO_LISTAGEM
     classificacao = (
-        revisao.classificacao if revisao is not None else item.classificacao
-    ) if tem_resultado else None
+        (revisao.classificacao if revisao is not None else item.classificacao)
+        if tem_resultado
+        else None
+    )
 
     return DiagnosticoListItem(
         id=diagnostico.id,
@@ -558,8 +560,7 @@ async def obter_diagnostico(
         tem_resultado
         and ultima_revisao is not None
         and (
-            dados.classificacao is None
-            or dados.classificacao.id != ultima_revisao.classificacao.id
+            dados.classificacao is None or dados.classificacao.id != ultima_revisao.classificacao.id
         )
     ):
         conteudos = await diagnostico_queries.listar_conteudos_por_classificacao(
