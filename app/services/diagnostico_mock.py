@@ -96,7 +96,8 @@ async def processar_se_necessario(
 
     diagnostico.confianca_ia = resultado_mock.confianca_ia
 
-    diagnostico.status = "concluido"
+    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
+    diagnostico.status = "aguardando_revisao"
 
     if hasattr(
         diagnostico,

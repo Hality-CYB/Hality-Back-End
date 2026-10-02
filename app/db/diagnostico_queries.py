@@ -795,6 +795,8 @@ async def inserir_revisao(
     diagnostico.profissional_revisor_id = profissional_id
     diagnostico.data_revisao = agora
     diagnostico.observacoes_revisao = observacao
+    # Revisado por um profissional: é o status que diz isso nos payloads.
+    diagnostico.status = "concluido"
 
     await db.commit()
     await db.refresh(revisao)
@@ -815,7 +817,8 @@ async def concluir_mock(
 
     diagnostico.confianca_ia = confianca_ia
 
-    diagnostico.status = "concluido"
+    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
+    diagnostico.status = "aguardando_revisao"
 
     if hasattr(diagnostico, "erro"):
         diagnostico.erro = None

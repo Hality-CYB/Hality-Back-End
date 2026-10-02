@@ -431,7 +431,7 @@ async def seed() -> None:
             classificacao_id=halito_normal.id,
             escala_saburra=24,
             confianca_ia=0.91,
-            status="concluido",
+            status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=3),
         )
         diagnostico_revisado = Diagnostico(
@@ -471,7 +471,7 @@ async def seed() -> None:
             classificacao_id=mau_halito_social.id,
             escala_saburra=68,
             confianca_ia=0.87,
-            status="concluido",
+            status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=5),
         )
         diagnostico_elisa = Diagnostico(
@@ -480,7 +480,7 @@ async def seed() -> None:
             classificacao_id=halito_normal.id,
             escala_saburra=3,
             confianca_ia=0.75,
-            status="concluido",
+            status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=2),
         )
         db.add_all(
