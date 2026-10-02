@@ -497,53 +497,6 @@ async def seed() -> None:
 
         db.add_all(
             [
-                Imagem(
-                    diagnostico_id=diagnostico_concluido.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico1-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_revisado.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico2-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_revisado.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico2-2.jpg",
-                    ordem=2,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_processando.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico3-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_falha.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico4-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_diego.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico5-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-                Imagem(
-                    diagnostico_id=diagnostico_elisa.id,
-                    url_arquivo="https://cdn.hality.com/seed/diagnostico6-1.jpg",
-                    ordem=1,
-                    parametros_captura=PARAMETROS_CAPTURA,
-                ),
-            ]
-        )
-
-        db.add_all(
-            [
                 Conteudo(
                     titulo="O que é halitose?",
                     categoria="saude",
@@ -642,7 +595,7 @@ async def seed() -> None:
 
     print(
         "Seed concluído: 7 usuarios, 2 profissionais, 4 classificacoes, "
-        "6 conteudos, 6 anamneses, 6 diagnosticos, 7 imagens, "
+        "6 conteudos, 6 anamneses, 6 diagnosticos, sem imagens externas, "
         "1 questionario (11 perguntas).\n"
     )
     print(f"Senha de todos os usuarios: {SEED_PASSWORD}\n")

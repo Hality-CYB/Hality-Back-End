@@ -6,9 +6,16 @@ from pydantic import BaseModel, Field
 
 # Esta classe só será usada caso o dentista puxe o cliente para uma consulta!!!
 class StatusDiagnostico(StrEnum):
-    GERADO = "gerado"
-    EM_REVISAO = "em_revisao"
-    REVISADO = "revisado"
+    """Estados do processamento do diagnóstico.
+
+    A revisão profissional não é um estado concorrente: ela é representada
+    separadamente por `revisao`/`tem_revisao`.
+    """
+
+    PROCESSANDO = "processando"
+    AGUARDANDO_REVISAO = "aguardando_revisao"
+    CONCLUIDO = "concluido"
+    FALHA = "falha"
 
 
 class DiagnosticoCreate(BaseModel):
@@ -45,7 +52,7 @@ class ClassificacaoDiagnosticoResumo(BaseModel):
 class DiagnosticoListItem(BaseModel):
     id: int
     data_diagnostico: datetime
-    status: str
+    status: StatusDiagnostico
     classificacao: ClassificacaoDiagnosticoResumo | None
     escala_saburra: int | None
 
@@ -66,7 +73,7 @@ class DiagnosticoRevisao(BaseModel):
 
     profissional_revisor_id: int
     observacoes_revisao: str | None = None
-    status: StatusDiagnostico = StatusDiagnostico.REVISADO
+    status: StatusDiagnostico = StatusDiagnostico.CONCLUIDO
 
 
 class DiagnosticoInteresseConsulta(BaseModel):

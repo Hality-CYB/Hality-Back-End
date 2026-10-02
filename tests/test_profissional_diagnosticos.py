@@ -518,6 +518,13 @@ async def test_lista_intersecta_vinculo_ativo(
     assert {item["paciente"]["id"] for item in corpo["itens"]} == {
         str(PACIENTE_A),
     }
+    assert {item["status"] for item in corpo["itens"]} == {
+        "concluido",
+        "aguardando_revisao",
+        "processando",
+        "falha",
+    }
+    assert all(item["status"] != "revisado" for item in corpo["itens"])
 
 
 async def test_paciente_id_nao_concede_acesso(

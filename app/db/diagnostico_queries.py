@@ -593,6 +593,52 @@ async def buscar_ultima_revisao(
     )
 
 
+async def buscar_ultimas_revisoes(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, DiagnosticoRevisaoDetalhada]:
+    """Retorna a revisão mais recente de cada diagnóstico informado."""
+
+    if not diagnostico_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
+        )
+        .join(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .where(DiagnosticoRevisao.diagnostico_id.in_(diagnostico_ids))
+        .order_by(
+            DiagnosticoRevisao.diagnostico_id.asc(),
+            DiagnosticoRevisao.versao.desc(),
+            DiagnosticoRevisao.id.desc(),
+        )
+    )
+
+    revisoes: dict[int, DiagnosticoRevisaoDetalhada] = {}
+
+    for revisao, classificacao, profissional_nome in result.all():
+        if revisao.diagnostico_id in revisoes:
+            continue
+
+        revisoes[revisao.diagnostico_id] = DiagnosticoRevisaoDetalhada(
+            revisao=revisao,
+            classificacao=classificacao,
+            profissional_nome=profissional_nome,
+        )
+
+    return revisoes
+
+
 async def listar_revisoes(
     db: AsyncSession,
     diagnostico_id: int,
