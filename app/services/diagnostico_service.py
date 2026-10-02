@@ -297,7 +297,6 @@ def _montar_revisao(
         }
 
     return {
-        "revisado": True,
         "profissional_nome": profissional_nome,
         "data_revisao": diagnostico.data_revisao,
         "observacoes": diagnostico.observacoes_revisao,
