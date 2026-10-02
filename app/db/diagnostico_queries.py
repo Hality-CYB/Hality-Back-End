@@ -636,6 +636,59 @@ async def listar_revisoes(
     ]
 
 
+async def listar_ultimas_revisoes(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, DiagnosticoRevisaoDetalhada]:
+
+    if not diagnostico_ids:
+        return {}
+
+    ultimas_versoes = (
+        select(
+            DiagnosticoRevisao.diagnostico_id.label("diagnostico_id"),
+            func.max(DiagnosticoRevisao.versao).label("versao"),
+        )
+        .where(
+            DiagnosticoRevisao.diagnostico_id.in_(diagnostico_ids),
+        )
+        .group_by(
+            DiagnosticoRevisao.diagnostico_id,
+        )
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ultimas_versoes,
+            (ultimas_versoes.c.diagnostico_id == DiagnosticoRevisao.diagnostico_id)
+            & (ultimas_versoes.c.versao == DiagnosticoRevisao.versao),
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            DiagnosticoRevisao.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .outerjoin(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+    )
+
+    return {
+        revisao.diagnostico_id: DiagnosticoRevisaoDetalhada(
+            revisao=revisao,
+            classificacao=classificacao,
+            profissional_nome=profissional_nome,
+        )
+        for revisao, classificacao, profissional_nome in result.all()
+    }
+
+
 async def inserir_revisao(
     db: AsyncSession,
     diagnostico: Diagnostico,

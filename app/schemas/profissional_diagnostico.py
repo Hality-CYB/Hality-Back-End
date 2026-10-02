@@ -14,6 +14,16 @@ class PacienteDiagnosticoResumo(BaseModel):
     nome: str
 
 
+class RevisaoProfissionalListagem(BaseModel):
+    version: int
+    revisado: bool
+    profissional_nome: str | None
+    data_revisao: datetime | None
+    observacoes: str | None
+    nivel_corrigido: bool
+    classificacao: ClassificacaoDiagnosticoResumo
+
+
 class DiagnosticoProfissionalItem(BaseModel):
     id: int
     paciente: PacienteDiagnosticoResumo
@@ -21,6 +31,7 @@ class DiagnosticoProfissionalItem(BaseModel):
     status: str
     classificacao_automatica: ClassificacaoDiagnosticoResumo | None
     tem_revisao: bool
+    revisao: RevisaoProfissionalListagem | None = None
 
 
 class DiagnosticoProfissionalListResponse(BaseModel):
@@ -64,21 +75,13 @@ class DiagnosticoProfissionalDetalhe(BaseModel):
     id: int
     data_diagnostico: datetime
     status: str
-
     paciente: PacienteDiagnosticoResumo
     anamnese: AnamneseDiagnosticoProfissional
-
     imagens: list[ImagemDiagnosticoProfissional]
-
     automatico: ResultadoAutomaticoDiagnostico | None
-
     revisao: RevisaoProfissionalResumo | None
     historico_revisoes: list[RevisaoProfissionalResumo]
-
-    # 0 significa que ainda não houve revisão.
-    # O cliente deve reenviar este valor ao realizar PATCH.
     version: int
-
     aviso_legal: str
     erro: str | None = None
 
@@ -89,12 +92,10 @@ class RevisaoProfissionalInput(BaseModel):
         max_length=50,
         description="Código canônico da classificação.",
     )
-
     observacao: str | None = Field(
         default=None,
         max_length=MAX_OBSERVACAO_REVISAO,
     )
-
     version: int = Field(
         ge=0,
         description="Versão atual conhecida pelo cliente.",

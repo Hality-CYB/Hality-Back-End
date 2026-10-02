@@ -36,6 +36,7 @@ from app.schemas.profissional_diagnostico import (
     ImagemDiagnosticoProfissional,
     PacienteDiagnosticoResumo,
     ResultadoAutomaticoDiagnostico,
+    RevisaoProfissionalListagem,
     RevisaoProfissionalResponse,
     RevisaoProfissionalResumo,
 )
@@ -257,30 +258,54 @@ def _para_item_listagem(
 def _montar_revisao(
     diagnostico: Diagnostico,
     profissional_nome: str | None,
+    revisao_detalhada: diagnostico_queries.DiagnosticoRevisaoDetalhada | None = None,
 ) -> dict[str, Any] | None:
     if diagnostico.status not in STATUS_COM_RESULTADO:
         return None
 
-    revisado = (
+    if revisao_detalhada is not None:
+        classificacao = revisao_detalhada.classificacao
+
+        return {
+            "revisado": True,
+            "profissional_nome": revisao_detalhada.profissional_nome,
+            "data_revisao": revisao_detalhada.revisao.criado_em,
+            "observacoes": revisao_detalhada.revisao.observacao,
+            "nivel_corrigido": (diagnostico.classificacao_id != classificacao.id),
+            "classificacao": {
+                "id": classificacao.id,
+                "codigo": classificacao.codigo,
+                "nome_exibicao": classificacao.nome_exibicao,
+                "ordem": classificacao.ordem,
+            },
+            "version": revisao_detalhada.revisao.versao,
+        }
+
+    revisado_legado = (
         diagnostico.status == "concluido"
         and diagnostico.profissional_revisor_id is not None
         and diagnostico.data_revisao is not None
     )
 
+    if not revisado_legado:
+        return {
+            "revisado": False,
+            "profissional_nome": None,
+            "data_revisao": None,
+            "observacoes": None,
+            "nivel_corrigido": False,
+            "classificacao": None,
+            "version": 0,
+        }
+
     return {
-        "revisado": revisado,
-        "profissional_nome": (profissional_nome if revisado else None),
-        "data_revisao": (diagnostico.data_revisao if revisado else None),
-        "observacoes": (diagnostico.observacoes_revisao if revisado else None),
-        "nivel_corrigido": (
-            getattr(
-                diagnostico,
-                "nivel_corrigido",
-                False,
-            )
-            if revisado
-            else False
-        ),
+        "revisado": True,
+        "profissional_nome": profissional_nome,
+        "data_revisao": diagnostico.data_revisao,
+        "observacoes": diagnostico.observacoes_revisao,
+        "nivel_corrigido": False,
+        "classificacao": None,
+        "version": 0,
     }
 
 
@@ -464,6 +489,7 @@ async def obter_diagnostico(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
+    # Contrato legado: diagnóstico existente sem acesso -> 403.
     if not await pode_acessar_paciente(
         db,
         usuario,
@@ -497,9 +523,18 @@ async def obter_diagnostico(
 
     classificacao = dados.classificacao if tem_resultado else None
 
+    ultima_revisao = None
+
+    if tem_resultado:
+        ultima_revisao = await diagnostico_queries.buscar_ultima_revisao(
+            db,
+            diagnostico.id,
+        )
+
     revisao = _montar_revisao(
-        diagnostico,
-        dados.profissional_nome,
+        diagnostico=diagnostico,
+        profissional_nome=dados.profissional_nome,
+        revisao_detalhada=ultima_revisao,
     )
 
     return {
@@ -521,7 +556,9 @@ async def obter_diagnostico(
         "imagens": [
             {
                 "id": imagem.id,
-                "url_arquivo": assinar_url_imagem(imagem.url_arquivo),
+                "url_arquivo": assinar_url_imagem(
+                    imagem.url_arquivo,
+                ),
                 "ordem": imagem.ordem,
                 "data_captura": imagem.data_captura,
             }
@@ -531,14 +568,7 @@ async def obter_diagnostico(
             "id": anamnese.id,
             "data_preenchimento": (anamnese.data_preenchimento),
             "respostas": [
-                (
-                    resposta.model_dump(mode="json")
-                    if hasattr(
-                        resposta,
-                        "model_dump",
-                    )
-                    else resposta
-                )
+                (resposta.model_dump(mode="json") if hasattr(resposta, "model_dump") else resposta)
                 for resposta in anamnese.respostas
             ],
         },
@@ -557,15 +587,7 @@ async def obter_diagnostico(
             else []
         ),
         "aviso_legal": AVISO_LEGAL,
-        "erro": (
-            getattr(
-                diagnostico,
-                "erro",
-                None,
-            )
-            if diagnostico.status == "falha"
-            else None
-        ),
+        "erro": (diagnostico.erro if diagnostico.status == "falha" else None),
     }
 
 
@@ -603,6 +625,25 @@ def _para_revisao_profissional(
         profissional_nome=detalhe.profissional_nome,
         observacao=detalhe.revisao.observacao,
         criado_em=detalhe.revisao.criado_em,
+    )
+
+
+def _para_revisao_profissional_listagem(
+    diagnostico: Diagnostico,
+    detalhe: diagnostico_queries.DiagnosticoRevisaoDetalhada,
+) -> RevisaoProfissionalListagem:
+    return RevisaoProfissionalListagem(
+        version=detalhe.revisao.versao,
+        revisado=True,
+        profissional_nome=detalhe.profissional_nome,
+        data_revisao=detalhe.revisao.criado_em,
+        observacoes=detalhe.revisao.observacao,
+        nivel_corrigido=(diagnostico.classificacao_id != detalhe.classificacao.id),
+        classificacao=ClassificacaoDiagnosticoResumo(
+            codigo=detalhe.classificacao.codigo,
+            nome_exibicao=detalhe.classificacao.nome_exibicao,
+            ordem=detalhe.classificacao.ordem,
+        ),
     )
 
 
@@ -648,25 +689,50 @@ async def listar_diagnosticos_profissional(
         ordem=ordem_normalizada,
     )
 
-    return DiagnosticoProfissionalListResponse(
-        itens=[
+    diagnostico_ids = [item.diagnostico.id for item in resultado.itens]
+
+    ultimas_revisoes = await diagnostico_queries.listar_ultimas_revisoes(
+        db,
+        diagnostico_ids,
+    )
+
+    itens: list[DiagnosticoProfissionalItem] = []
+
+    for item in resultado.itens:
+        diagnostico = item.diagnostico
+
+        ultima_revisao = ultimas_revisoes.get(diagnostico.id)
+
+        revisao = (
+            _para_revisao_profissional_listagem(
+                diagnostico,
+                ultima_revisao,
+            )
+            if ultima_revisao is not None
+            else None
+        )
+
+        itens.append(
             DiagnosticoProfissionalItem(
-                id=item.diagnostico.id,
+                id=diagnostico.id,
                 paciente=PacienteDiagnosticoResumo(
-                    id=item.diagnostico.paciente_id,
+                    id=diagnostico.paciente_id,
                     nome=item.paciente_nome,
                 ),
-                data_diagnostico=(item.diagnostico.data_diagnostico),
-                status=item.diagnostico.status,
+                data_diagnostico=(diagnostico.data_diagnostico),
+                status=diagnostico.status,
                 classificacao_automatica=(
                     _resumo_classificacao(item.classificacao)
-                    if item.diagnostico.status in STATUS_COM_RESULTADO
+                    if diagnostico.status in STATUS_COM_RESULTADO
                     else None
                 ),
-                tem_revisao=_foi_revisado(item.diagnostico),
+                tem_revisao=(ultima_revisao is not None or _foi_revisado(diagnostico)),
+                revisao=revisao,
             )
-            for item in resultado.itens
-        ],
+        )
+
+    return DiagnosticoProfissionalListResponse(
+        itens=itens,
         pagina=pagina,
         limite=limite,
         total=resultado.total,
