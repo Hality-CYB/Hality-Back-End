@@ -34,6 +34,10 @@ def _classificacao():
     return SimpleNamespace(codigo="NIVEL_3", nome_exibicao="Halitose Severa")
 
 
+def _revisao(classificacao):
+    return SimpleNamespace(classificacao=classificacao)
+
+
 def _dica(dica_id, titulo, categoria="higiene"):
     return SimpleNamespace(
         id=dica_id,
@@ -109,6 +113,11 @@ def test_home_com_historico_monta_preview_do_ultimo_diagnostico(monkeypatch):
         "buscar_classificacao",
         AsyncMock(return_value=_classificacao()),
     )
+    monkeypatch.setattr(
+        home_service.diagnostico_queries,
+        "buscar_ultima_revisao",
+        AsyncMock(return_value=None),
+    )
 
     resultado = asyncio.run(home_service.montar_home(AsyncMock(), _usuario()))
 
@@ -116,6 +125,38 @@ def test_home_com_historico_monta_preview_do_ultimo_diagnostico(monkeypatch):
     assert resultado.ultimo_diagnostico.classificacao.codigo == "NIVEL_3"
     assert resultado.ultimo_diagnostico.classificacao.nome_exibicao == "Halitose Severa"
     assert [dica.titulo for dica in resultado.dicas] == ["Higiene da Língua", "Hidratação"]
+
+
+def test_home_prioriza_classificacao_da_ultima_revisao(monkeypatch):
+    diagnostico = _diagnostico(diagnostico_id=4, classificacao_id=3)
+    classificacao_automatica = SimpleNamespace(
+        codigo="halito_normal",
+        nome_exibicao="Halito Normal",
+    )
+    classificacao_revisada = SimpleNamespace(
+        codigo="halitose_intima",
+        nome_exibicao="Halitose Intima",
+    )
+    _mockar_home_queries(monkeypatch, diagnostico=diagnostico)
+    buscar_classificacao = AsyncMock(return_value=classificacao_automatica)
+    buscar_ultima_revisao = AsyncMock(return_value=_revisao(classificacao_revisada))
+    monkeypatch.setattr(
+        home_service.diagnostico_queries,
+        "buscar_classificacao",
+        buscar_classificacao,
+    )
+    monkeypatch.setattr(
+        home_service.diagnostico_queries,
+        "buscar_ultima_revisao",
+        buscar_ultima_revisao,
+    )
+
+    resultado = asyncio.run(home_service.montar_home(AsyncMock(), _usuario()))
+
+    assert resultado.ultimo_diagnostico.classificacao.codigo == "halitose_intima"
+    assert resultado.ultimo_diagnostico.classificacao.nome_exibicao == "Halitose Intima"
+    buscar_ultima_revisao.assert_awaited_once()
+    buscar_classificacao.assert_not_awaited()
 
 
 def test_home_diagnostico_sem_resultado_nao_expoe_classificacao(monkeypatch):
@@ -126,6 +167,20 @@ def test_home_diagnostico_sem_resultado_nao_expoe_classificacao(monkeypatch):
 
     assert resultado.ultimo_diagnostico.classificacao is None
     assert resultado.ultimo_diagnostico.escala_saburra is None
+
+
+def test_home_diagnostico_concluido_sem_classificacao_nao_quebra(monkeypatch):
+    diagnostico = _diagnostico(diagnostico_id=6, classificacao_id=None, status="concluido")
+    _mockar_home_queries(monkeypatch, diagnostico=diagnostico)
+    monkeypatch.setattr(
+        home_service.diagnostico_queries,
+        "buscar_ultima_revisao",
+        AsyncMock(return_value=None),
+    )
+
+    resultado = asyncio.run(home_service.montar_home(AsyncMock(), _usuario()))
+
+    assert resultado.ultimo_diagnostico.classificacao is None
 
 
 def test_home_repassa_conteudos_na_ordem_do_catalogo(monkeypatch):

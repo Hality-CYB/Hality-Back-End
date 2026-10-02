@@ -9,14 +9,19 @@ schema `UserUpdate` (role, id, status e senha nem chegam aqui).
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import tem_papel
+from app.auth.users import password_helper
 from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.profissionais import ProfissionalPerfilRead
-from app.schemas.user import UserRead, UserUpdate
+from app.schemas.user import PasswordUpdate, UserRead, UserUpdate
 from app.schemas.usuario import TipoUsuario
 
 
 class DadosProfissionaisNaoPermitidosError(Exception):
+    pass
+
+
+class SenhaAtualInvalidaError(Exception):
     pass
 
 
@@ -68,3 +73,20 @@ async def atualizar_perfil(db: AsyncSession, user: User, dados: UserUpdate) -> U
     await db.commit()
 
     return _para_leitura(user, profissional)
+
+
+async def atualizar_senha(
+    db: AsyncSession,
+    user: User,
+    dados: PasswordUpdate,
+) -> None:
+    senha_valida, _ = password_helper.verify_and_update(
+        dados.senha_atual,
+        user.hashed_password,
+    )
+
+    if not senha_valida:
+        raise SenhaAtualInvalidaError
+
+    user.hashed_password = password_helper.hash(dados.nova_senha)
+    await db.commit()

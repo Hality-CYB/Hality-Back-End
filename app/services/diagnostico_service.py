@@ -23,10 +23,12 @@ from app.schemas.admin_diagnostico import (
     DatasetInfo,
     RevisaoProfissional,
 )
+from app.schemas.anamnese import ItemRespostaRegistrada
 from app.schemas.diagnostico import (
     ClassificacaoDiagnosticoResumo,
     DiagnosticoListItem,
     DiagnosticoListResponse,
+    StatusDiagnostico,
 )
 from app.schemas.profissional_diagnostico import (
     AnamneseDiagnosticoProfissional,
@@ -47,13 +49,13 @@ AVISO_LEGAL = (
 )
 
 STATUS_COM_RESULTADO = {
-    "aguardando_revisao",
-    "concluido",
+    StatusDiagnostico.AGUARDANDO_REVISAO.value,
+    StatusDiagnostico.CONCLUIDO.value,
 }
 
 STATUS_SEM_RESULTADO_LISTAGEM = {
-    "falha",
-    "processando",
+    StatusDiagnostico.FALHA.value,
+    StatusDiagnostico.PROCESSANDO.value,
 }
 
 STATUS_VALIDOS_ADMIN = STATUS_COM_RESULTADO | STATUS_SEM_RESULTADO_LISTAGEM
@@ -233,10 +235,15 @@ def _validar_filtros_listagem(
 
 def _para_item_listagem(
     item: diagnostico_queries.DiagnosticoListado,
+    revisao: diagnostico_queries.DiagnosticoRevisaoDetalhada | None = None,
 ) -> DiagnosticoListItem:
     diagnostico = item.diagnostico
     tem_resultado = diagnostico.status not in STATUS_SEM_RESULTADO_LISTAGEM
-    classificacao = item.classificacao if tem_resultado else None
+    classificacao = (
+        (revisao.classificacao if revisao is not None else item.classificacao)
+        if tem_resultado
+        else None
+    )
 
     return DiagnosticoListItem(
         id=diagnostico.id,
@@ -339,8 +346,19 @@ async def listar_diagnosticos(
         ordem=ordem_normalizada,
     )
 
+    revisoes = await diagnostico_queries.buscar_ultimas_revisoes(
+        db,
+        [item.diagnostico.id for item in resultado.itens],
+    )
+
     return DiagnosticoListResponse(
-        itens=[_para_item_listagem(item) for item in resultado.itens],
+        itens=[
+            _para_item_listagem(
+                item,
+                revisoes.get(item.diagnostico.id),
+            )
+            for item in resultado.itens
+        ],
         pagina=pagina,
         limite=limite,
         total=resultado.total,
@@ -518,14 +536,33 @@ async def obter_diagnostico(
 
     tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
 
-    classificacao = dados.classificacao if tem_resultado else None
-
     ultima_revisao = None
 
     if tem_resultado:
         ultima_revisao = await diagnostico_queries.buscar_ultima_revisao(
             db,
             diagnostico.id,
+        )
+
+    classificacao = (
+        ultima_revisao.classificacao
+        if tem_resultado and ultima_revisao is not None
+        else dados.classificacao
+        if tem_resultado
+        else None
+    )
+
+    conteudos = dados.conteudos
+    if (
+        tem_resultado
+        and ultima_revisao is not None
+        and (
+            dados.classificacao is None or dados.classificacao.id != ultima_revisao.classificacao.id
+        )
+    ):
+        conteudos = await diagnostico_queries.listar_conteudos_por_classificacao(
+            db,
+            ultima_revisao.classificacao.id,
         )
 
     revisao = _montar_revisao(
@@ -563,9 +600,14 @@ async def obter_diagnostico(
         ],
         "anamnese": {
             "id": anamnese.id,
-            "data_preenchimento": (anamnese.data_preenchimento),
+            "paciente_id": anamnese.paciente_id,
+            "data_preenchimento": anamnese.data_preenchimento,
+            "versao_questionario": anamnese.id_versao_questionario,
             "respostas": [
-                (resposta.model_dump(mode="json") if hasattr(resposta, "model_dump") else resposta)
+                ItemRespostaRegistrada.model_validate(resposta).model_dump(
+                    mode="json",
+                    by_alias=True,
+                )
                 for resposta in anamnese.respostas
             ],
         },
@@ -578,7 +620,7 @@ async def obter_diagnostico(
                     "conteudo": conteudo.conteudo,
                     "titulo": conteudo.titulo,
                 }
-                for conteudo in dados.conteudos
+                for conteudo in conteudos
             ]
             if tem_resultado
             else []

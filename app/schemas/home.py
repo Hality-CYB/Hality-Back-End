@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.schemas.conteudo import CategoriaConteudo, ConteudoSchema
+from app.schemas.diagnostico import StatusDiagnostico
 
 
 class HomeUsuario(BaseModel):
@@ -20,7 +21,7 @@ class HomeClassificacao(BaseModel):
 class HomeUltimoDiagnostico(BaseModel):
     id: int
     data_diagnostico: datetime
-    status: str
+    status: StatusDiagnostico
     classificacao: HomeClassificacao | None
     escala_saburra: int | None
 

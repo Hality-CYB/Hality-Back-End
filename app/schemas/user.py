@@ -5,6 +5,7 @@ import uuid
 from fastapi_users import schemas
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO
 from app.schemas.profissionais import ProfissionalPerfilRead, ProfissionalPerfilUpdate
 
 
@@ -49,3 +50,10 @@ class UserUpdate(BaseModel):
         if "name" in self.model_fields_set and self.name is None:
             raise ValueError("name não pode ser nulo")
         return self
+
+
+class PasswordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    senha_atual: str = Field(..., min_length=1)
+    nova_senha: str = Field(..., min_length=SENHA_TAMANHO_MINIMO)

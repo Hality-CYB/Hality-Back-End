@@ -8,7 +8,7 @@ profissional e travar o payload aos campos permitidos. As rotas /users/{id}
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import CurrentUser, DbSession
-from app.schemas.user import UserRead, UserUpdate
+from app.schemas.user import PasswordUpdate, UserRead, UserUpdate
 from app.services import perfil_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -28,4 +28,15 @@ async def atualizar_perfil(dados: UserUpdate, user: CurrentUser, db: DbSession) 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="dados profissionais restritos a profissionais",
+        ) from exc
+
+
+@router.patch("/me/senha", status_code=status.HTTP_204_NO_CONTENT, name="users:change_password")
+async def atualizar_senha(dados: PasswordUpdate, user: CurrentUser, db: DbSession) -> None:
+    try:
+        await perfil_service.atualizar_senha(db=db, user=user, dados=dados)
+    except perfil_service.SenhaAtualInvalidaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="senha atual inválida",
         ) from exc

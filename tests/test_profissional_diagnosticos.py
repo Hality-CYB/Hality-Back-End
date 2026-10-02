@@ -518,6 +518,13 @@ async def test_lista_intersecta_vinculo_ativo(
     assert {item["paciente"]["id"] for item in corpo["itens"]} == {
         str(PACIENTE_A),
     }
+    assert {item["status"] for item in corpo["itens"]} == {
+        "concluido",
+        "aguardando_revisao",
+        "processando",
+        "falha",
+    }
+    assert all(item["status"] != "revisado" for item in corpo["itens"])
 
 
 async def test_paciente_id_nao_concede_acesso(
@@ -898,6 +905,50 @@ async def test_revisao_nao_sobrescreve_resultado_da_ia(
         assert atual.profissional_revisor_id == PROFISSIONAL_A
 
         assert atual.data_revisao is not None
+
+
+async def test_ia_deixa_diagnostico_aguardando_revisao(
+    dados,
+    session_factory,
+) -> None:
+    d3 = dados["d"]["d3"]
+
+    async with session_factory() as db:
+        diagnostico = await db.get(Diagnostico, d3.id)
+        # Passado o tempo de processamento do mock da IA.
+        diagnostico.data_diagnostico = datetime.now(UTC) - timedelta(minutes=1)
+
+        await diagnostico_mock.processar_se_necessario(db, diagnostico)
+
+        assert diagnostico.status == "aguardando_revisao"
+        assert diagnostico.classificacao_id is not None
+
+
+async def test_revisao_marca_diagnostico_como_concluido(
+    http,
+    dados,
+    como,
+    session_factory,
+) -> None:
+    como()
+
+    d2 = dados["d"]["d2"]
+
+    response = await http.patch(
+        f"{BASE}/{d2.id}/revisao",
+        json={"classificacao": "halitose_intima", "version": 0},
+    )
+
+    assert response.status_code == 200
+
+    async with session_factory() as db:
+        atual = await db.get(Diagnostico, d2.id)
+
+        assert atual.status == "concluido"
+
+    detalhe = await http.get(f"{BASE}/{d2.id}")
+
+    assert detalhe.json()["status"] == "concluido"
 
 
 async def test_revisor_vem_do_token_e_nao_do_body(

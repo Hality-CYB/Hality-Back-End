@@ -13,7 +13,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo
+from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo, StatusDiagnostico
 
 MOTIVO_DATASET_INDISPONIVEL = "pendente de decisão DEC-04/DEC-07"
 
@@ -22,7 +22,7 @@ class AdminDiagnosticoItem(BaseModel):
     id: int
     paciente_id: uuid.UUID
     data_diagnostico: datetime
-    status: str
+    status: StatusDiagnostico
     classificacao: ClassificacaoDiagnosticoResumo | None  # automática (IA)
     tem_revisao: bool
 
@@ -66,7 +66,7 @@ class AdminDiagnosticoDetalhe(BaseModel):
     id: int
     paciente_id: uuid.UUID
     data_diagnostico: datetime
-    status: str
+    status: StatusDiagnostico
     erro: str | None
     automatica: ClassificacaoAutomatica
     revisao: RevisaoProfissional | None

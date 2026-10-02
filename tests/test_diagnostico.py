@@ -509,6 +509,58 @@ def test_listar_diagnosticos_concluido_traz_ordem_da_classificacao(
     assert all(item["classificacao"]["ordem"] == 3 for item in corpo["itens"])
 
 
+def test_listar_diagnosticos_prioriza_classificacao_da_revisao(monkeypatch) -> None:
+    diagnostico = SimpleNamespace(
+        id=42,
+        data_diagnostico=datetime.now(UTC),
+        status="concluido",
+        classificacao_id=1,
+        escala_saburra=2,
+    )
+    classificacao_automatica = SimpleNamespace(
+        codigo="halito_normal",
+        nome_exibicao="Hálito Normal",
+        ordem=1,
+    )
+    classificacao_revisada = SimpleNamespace(
+        codigo="halitose_intima",
+        nome_exibicao="Halitose Íntima",
+        ordem=3,
+    )
+    revisao = SimpleNamespace(classificacao=classificacao_revisada)
+
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "listar_por_paciente",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                itens=[
+                    SimpleNamespace(
+                        diagnostico=diagnostico,
+                        classificacao=classificacao_automatica,
+                    )
+                ],
+                total=1,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "buscar_ultimas_revisoes",
+        AsyncMock(return_value={42: revisao}),
+    )
+
+    resultado = asyncio.run(
+        diagnostico_service.listar_diagnosticos(
+            db=AsyncMock(),
+            paciente_id=PACIENTE_STUB_ID,
+        )
+    )
+
+    assert resultado.itens[0].classificacao.codigo == "halitose_intima"
+    assert resultado.itens[0].classificacao.nome_exibicao == "Halitose Íntima"
+
+
 def test_listar_diagnosticos_data_inicio_maior_que_fim_retorna_400() -> None:
     response = client.get(
         "/api/v1/diagnosticos",
