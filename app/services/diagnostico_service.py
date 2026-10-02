@@ -274,7 +274,6 @@ def _montar_revisao(
         classificacao = revisao_detalhada.classificacao
 
         return {
-            "revisado": True,
             "profissional_nome": revisao_detalhada.profissional_nome,
             "data_revisao": revisao_detalhada.revisao.criado_em,
             "observacoes": revisao_detalhada.revisao.observacao,
@@ -296,7 +295,6 @@ def _montar_revisao(
 
     if not revisado_legado:
         return {
-            "revisado": False,
             "profissional_nome": None,
             "data_revisao": None,
             "observacoes": None,
@@ -306,7 +304,6 @@ def _montar_revisao(
         }
 
     return {
-        "revisado": True,
         "profissional_nome": profissional_nome,
         "data_revisao": diagnostico.data_revisao,
         "observacoes": diagnostico.observacoes_revisao,
@@ -676,7 +673,6 @@ def _para_revisao_profissional_listagem(
 ) -> RevisaoProfissionalListagem:
     return RevisaoProfissionalListagem(
         version=detalhe.revisao.versao,
-        revisado=True,
         profissional_nome=detalhe.profissional_nome,
         data_revisao=detalhe.revisao.criado_em,
         observacoes=detalhe.revisao.observacao,
