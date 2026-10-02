@@ -1,17 +1,23 @@
 import uuid
 
 from sqlalchemy import Row
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.policies import pode_acessar_paciente
-from app.db import paciente_queries
+from app.auth.policies import pode_acessar_paciente, registrar_decisao
+from app.auth.users import password_helper
+from app.db import paciente_profissional_queries as vinculo_queries
+from app.db import paciente_queries, user_queries
 from app.models.user import User
 from app.schemas.paciente import (
+    PacienteCreate,
     PacienteDetail,
     PacienteListItem,
     PacienteListResponse,
     PacienteVinculo,
 )
+from app.schemas.paciente_profissional import VinculoDetail
+from app.schemas.usuario import TipoUsuario
 from app.services import diagnostico_service
 
 ORDENS_LISTAGEM = {"nome_asc"}
@@ -26,6 +32,10 @@ class PacienteFiltroInvalidoError(Exception):
 
 
 class PacienteNaoEncontradoError(Exception):
+    pass
+
+
+class EmailJaCadastradoError(Exception):
     pass
 
 
@@ -166,4 +176,52 @@ async def obter_paciente(
             for vinculo, profissional_nome in vinculos
         ],
         diagnosticos=diagnosticos,
+    )
+
+
+async def criar_paciente(
+    db: AsyncSession,
+    usuario: User,
+    dados: PacienteCreate,
+) -> VinculoDetail:
+    """Profissional cadastra um paciente novo, já vinculado a ele.
+
+    Usuário e vínculo saem no mesmo commit: não fica paciente órfão se o vínculo
+    falhar. E-mail já cadastrado -> ``EmailJaCadastradoError``; para um paciente
+    que já tem conta o caminho é ``POST /vinculos``.
+    """
+    if await user_queries.email_em_uso(db, dados.email):
+        raise EmailJaCadastradoError
+
+    try:
+        paciente = await user_queries.criar_usuario(
+            db,
+            name=dados.nome,
+            email=dados.email,
+            phone=dados.telefone,
+            role=TipoUsuario.PACIENTE.value,
+            hashed_password=password_helper.hash(dados.senha),
+        )
+        vinculo = await vinculo_queries.criar_vinculo(db, paciente.id, usuario.id)
+        await db.commit()
+
+    except IntegrityError as exc:
+        await db.rollback()
+        if await user_queries.email_em_uso(db, dados.email):
+            raise EmailJaCadastradoError from exc
+        raise
+
+    registrar_decisao(
+        permitido=True,
+        motivo="paciente_cadastrado_pelo_profissional",
+        recurso=f"paciente:{paciente.id}",
+        usuario=usuario,
+    )
+    return VinculoDetail(
+        id=vinculo.id,
+        paciente_id=paciente.id,
+        paciente_nome=paciente.name,
+        paciente_email=paciente.email,
+        data_vinculo=vinculo.data_vinculo,
+        ativo=vinculo.ativo,
     )
