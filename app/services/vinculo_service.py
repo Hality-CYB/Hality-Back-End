@@ -4,6 +4,9 @@ DEC-01: o paciente se cadastra sozinho na plataforma (sem intervenção do
 profissional). O profissional seleciona/"puxa" um paciente já cadastrado
 pelo e-mail — não há convite, credencial de profissional ou consentimento
 por vínculo (fora de escopo desta decisão).
+
+O profissional também pode cadastrar um paciente novo, que já nasce vinculado
+a ele (``POST /pacientes``, ver ``paciente_service.criar_paciente``).
 """
 
 import uuid

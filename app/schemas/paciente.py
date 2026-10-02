@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO
 from app.schemas.diagnostico import DiagnosticoListResponse
+
+SENHA_PADRAO_PACIENTE = "hality1234"
 
 
 class PacienteListItem(BaseModel):
@@ -37,3 +40,19 @@ class PacienteVinculo(BaseModel):
 class PacienteDetail(PacienteListItem):
     vinculos: list[PacienteVinculo]
     diagnosticos: DiagnosticoListResponse
+
+
+class PacienteCreate(BaseModel):
+    """Cadastro de um paciente novo pelo profissional, já vinculado a ele.
+
+    A ``senha`` é provisória: se o profissional não informar, vale
+    ``SENHA_PADRAO_PACIENTE``. Papel e ativo não vêm do cliente — sempre
+    ``paciente`` e ativo.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    nome: str = Field(..., min_length=2, max_length=255)
+    email: EmailStr
+    telefone: str | None = Field(None, max_length=20)
+    senha: str = Field(SENHA_PADRAO_PACIENTE, min_length=SENHA_TAMANHO_MINIMO)

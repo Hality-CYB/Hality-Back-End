@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from app.api.deps import CurrentProfessional, DbSession
 from app.api.v1.endpoints.anamnese import AnamneseRepoDep
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated
-from app.schemas.paciente import PacienteDetail, PacienteListResponse
+from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteListResponse
+from app.schemas.paciente_profissional import VinculoDetail
 from app.services import anamnese_service, paciente_service
 
 # Só profissional, e só pacientes com vínculo ativo. Admin não herda acesso
@@ -38,6 +39,23 @@ async def listar_pacientes(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=exc.motivo,
+        ) from exc
+
+
+@router.post("", response_model=VinculoDetail, status_code=status.HTTP_201_CREATED)
+async def criar_paciente(
+    dados: PacienteCreate,
+    usuario: CurrentProfessional,
+    db: DbSession,
+) -> VinculoDetail:
+    """Profissional cadastra um paciente novo, que já sai vinculado a ele."""
+    try:
+        return await paciente_service.criar_paciente(db=db, usuario=usuario, dados=dados)
+
+    except paciente_service.EmailJaCadastradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="e-mail já cadastrado",
         ) from exc
 
 
