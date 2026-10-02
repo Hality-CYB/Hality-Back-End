@@ -638,10 +638,7 @@ def _para_revisao_profissional_listagem(
         profissional_nome=detalhe.profissional_nome,
         data_revisao=detalhe.revisao.criado_em,
         observacoes=detalhe.revisao.observacao,
-        nivel_corrigido=(
-            diagnostico.classificacao_id
-            != detalhe.classificacao.id
-        ),
+        nivel_corrigido=(diagnostico.classificacao_id != detalhe.classificacao.id),
         classificacao=ClassificacaoDiagnosticoResumo(
             codigo=detalhe.classificacao.codigo,
             nome_exibicao=detalhe.classificacao.nome_exibicao,
