@@ -18,11 +18,18 @@ async def _montar_ultimo_diagnostico(
     db: AsyncSession, diagnostico: Diagnostico
 ) -> HomeUltimoDiagnostico:
     classificacao = None
+    classificacao_model = None
 
-    if diagnostico.status in STATUS_COM_RESULTADO and diagnostico.classificacao_id is not None:
-        classificacao_model = await diagnostico_queries.buscar_classificacao(
-            db, diagnostico.classificacao_id
-        )
+    if diagnostico.status in STATUS_COM_RESULTADO:
+        revisao = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico.id)
+
+        if revisao is not None:
+            classificacao_model = revisao.classificacao
+        elif diagnostico.classificacao_id is not None:
+            classificacao_model = await diagnostico_queries.buscar_classificacao(
+                db, diagnostico.classificacao_id
+            )
+
         if classificacao_model is not None:
             classificacao = HomeClassificacao(
                 codigo=classificacao_model.codigo,
