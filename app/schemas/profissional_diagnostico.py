@@ -16,6 +16,11 @@ class PacienteDiagnosticoResumo(BaseModel):
 
 class RevisaoProfissionalListagem(BaseModel):
     version: int
+    revisado: bool
+    profissional_nome: str | None
+    data_revisao: datetime | None
+    observacoes: str | None
+    nivel_corrigido: bool
     classificacao: ClassificacaoDiagnosticoResumo
 
 

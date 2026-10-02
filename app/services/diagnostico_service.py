@@ -629,10 +629,19 @@ def _para_revisao_profissional(
 
 
 def _para_revisao_profissional_listagem(
+    diagnostico: Diagnostico,
     detalhe: diagnostico_queries.DiagnosticoRevisaoDetalhada,
 ) -> RevisaoProfissionalListagem:
     return RevisaoProfissionalListagem(
         version=detalhe.revisao.versao,
+        revisado=True,
+        profissional_nome=detalhe.profissional_nome,
+        data_revisao=detalhe.revisao.criado_em,
+        observacoes=detalhe.revisao.observacao,
+        nivel_corrigido=(
+            diagnostico.classificacao_id
+            != detalhe.classificacao.id
+        ),
         classificacao=ClassificacaoDiagnosticoResumo(
             codigo=detalhe.classificacao.codigo,
             nome_exibicao=detalhe.classificacao.nome_exibicao,
@@ -698,7 +707,10 @@ async def listar_diagnosticos_profissional(
         ultima_revisao = ultimas_revisoes.get(diagnostico.id)
 
         revisao = (
-            _para_revisao_profissional_listagem(ultima_revisao)
+            _para_revisao_profissional_listagem(
+                diagnostico,
+                ultima_revisao,
+            )
             if ultima_revisao is not None
             else None
         )
