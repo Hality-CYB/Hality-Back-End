@@ -49,9 +49,18 @@ jobs:
           fi
 
   test:
-    name: Unit Tests
+    name: Tests with PostgreSQL
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: hality
+      POSTGRES_PASSWORD: hality
+      POSTGRES_DB: hality
+      SECRET_KEY: ci-only-secret-with-at-least-32-bytes
+      DEBUG: "false"
+      DB_ECHO: "false"
     services:
       postgres:
         image: postgres:17-alpine
@@ -62,7 +71,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U hality"
+          --health-cmd "pg_isready -U hality -d hality"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -80,9 +89,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync
-
-      - name: Set up env vars
-        run: cp .env.example .env
 
       - name: Run migrations
         run: uv run alembic upgrade head
