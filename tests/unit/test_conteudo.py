@@ -150,9 +150,7 @@ def test_listagem_paginada_normaliza_busca_vazia_e_calcula_has_next(monkeypatch)
 
     monkeypatch.setattr(conteudo_service.conteudo_queries, "listar", listar)
 
-    resposta = asyncio.run(
-        conteudo_service.listar(SimpleNamespace(), page=2, limit=10, q="  ")
-    )
+    resposta = asyncio.run(conteudo_service.listar(SimpleNamespace(), page=2, limit=10, q="  "))
 
     assert isinstance(resposta, ConteudoListResponse)
     assert resposta.model_dump(mode="json")["items"][0]["conteudo"]["itens"]

@@ -10,7 +10,6 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.auth.users import current_active_user
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
@@ -39,7 +38,9 @@ PAYLOAD = {
 
 
 @pytest_asyncio.fixture
-async def db_factory(cenario_admin: CenarioAdmin) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
+async def db_factory(
+    cenario_admin: CenarioAdmin,
+) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -69,16 +70,12 @@ async def limpar_conteudos_da_task(db_factory, cenario_admin: CenarioAdmin) -> A
 
 
 @pytest_asyncio.fixture
-async def conteudos(
-    db_factory, cenario_admin: CenarioAdmin
-) -> AsyncGenerator[list[Conteudo]]:
+async def conteudos(db_factory, cenario_admin: CenarioAdmin) -> AsyncGenerator[list[Conteudo]]:
     async with db_factory() as db:
         classificacoes = list(
             (
                 await db.scalars(
-                    select(ClassificacaoDiagnostico)
-                    .order_by(ClassificacaoDiagnostico.id)
-                    .limit(2)
+                    select(ClassificacaoDiagnostico).order_by(ClassificacaoDiagnostico.id).limit(2)
                 )
             ).all()
         )
@@ -140,7 +137,14 @@ def _autenticar(http: AsyncClient, usuario) -> None:
 
 @pytest.mark.parametrize(
     ("method", "usa_detalhe"),
-    [("post", False), ("get", False), ("get", True), ("put", True), ("patch", True), ("delete", True)],
+    [
+        ("post", False),
+        ("get", False),
+        ("get", True),
+        ("put", True),
+        ("patch", True),
+        ("delete", True),
+    ],
 )
 async def test_todas_rotas_exigem_autenticacao(http, method, usa_detalhe, conteudos):
     path = f"{BASE}/{conteudos[0].id}" if usa_detalhe else BASE
@@ -151,7 +155,14 @@ async def test_todas_rotas_exigem_autenticacao(http, method, usa_detalhe, conteu
 
 @pytest.mark.parametrize(
     ("method", "usa_detalhe"),
-    [("post", False), ("get", False), ("get", True), ("put", True), ("patch", True), ("delete", True)],
+    [
+        ("post", False),
+        ("get", False),
+        ("get", True),
+        ("put", True),
+        ("patch", True),
+        ("delete", True),
+    ],
 )
 async def test_todas_rotas_rejeitam_usuario_nao_admin(
     http, method, usa_detalhe, conteudos, cenario_admin
@@ -309,13 +320,19 @@ async def test_escrita_preserva_json_e_publicacao(http, cenario_admin):
     atualizado = {"conteudo": {"itens": [{"tipo": "card", "titulo": "Extra", "ativo": True}]}}
     assert (await http.patch(f"{BASE}/{conteudo_id}", json=atualizado)).status_code == 200
     assert (await http.get(f"{BASE}/{conteudo_id}")).json()["conteudo"] == atualizado["conteudo"]
-    assert (await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})).status_code == 200
+    assert (
+        await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})
+    ).status_code == 200
     publicado = (await http.get(f"{BASE}/{conteudo_id}")).json()
     assert publicado["publicado_por_id"] == str(cenario_admin.admin.id)
     publicado_em = publicado["publicado_em"]
-    assert (await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})).status_code == 200
+    assert (
+        await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})
+    ).status_code == 200
     assert (await http.get(f"{BASE}/{conteudo_id}")).json()["publicado_em"] == publicado_em
-    assert (await http.patch(f"{BASE}/{conteudo_id}", json={"status": "rascunho"})).status_code == 200
+    assert (
+        await http.patch(f"{BASE}/{conteudo_id}", json={"status": "rascunho"})
+    ).status_code == 200
     rascunho = (await http.get(f"{BASE}/{conteudo_id}")).json()
     assert rascunho["publicado_por_id"] is None and rascunho["publicado_em"] is None
 
