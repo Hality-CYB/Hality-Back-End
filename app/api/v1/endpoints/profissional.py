@@ -1,7 +1,6 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Annotated
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -14,15 +13,12 @@ from app.schemas.profissional_diagnostico import (
     RevisaoProfissionalResponse,
 )
 from app.services import diagnostico_service, profissional_service
+from app.services.periodo import TimezoneInvalidoError, resolver_periodo
 
 router = APIRouter(
     prefix="/profissional",
     tags=["profissional"],
 )
-
-# falei com o Thiago e ele falou que 30 dias ta bom por enquanto, dps o time
-# ainda vai decidir o melhor espacamento de dias (DEC-05 na issue)
-PERIODO_PADRAO_DIAS = 30
 
 
 @router.get(
@@ -37,24 +33,12 @@ async def obter_resumo(
     timezone: Annotated[str, Query()] = "UTC",
 ) -> ResumoProfissionalResponse:
     try:
-        fuso = ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
+        inicio_efetivo, fim_efetivo = resolver_periodo(inicio, fim, timezone)
+    except TimezoneInvalidoError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="timezone invalido",
         ) from exc
-
-    # Data sem fuso é interpretada no `timezone` informado; sem isso, comparar
-    # com o `fim` padrão (com fuso) levanta TypeError e a rota responde 500.
-    if inicio is not None and inicio.tzinfo is None:
-        inicio = inicio.replace(tzinfo=fuso)
-
-    if fim is not None and fim.tzinfo is None:
-        fim = fim.replace(tzinfo=fuso)
-
-    fim_efetivo = fim or datetime.now(UTC)
-
-    inicio_efetivo = inicio or (fim_efetivo - timedelta(days=PERIODO_PADRAO_DIAS))
 
     try:
         return await profissional_service.montar_resumo(
