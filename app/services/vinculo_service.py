@@ -206,6 +206,14 @@ async def criar_vinculo_admin(
 ) -> AdminVinculoDetail:
     paciente, profissional = await _validar_par(db, paciente_id, profissional_id)
     paciente_nome, profissional_nome = paciente.name, profissional.name
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="vinculo.criar",
+        resource="vinculo",
+        resource_id="novo",
+        operation_key=operation_key,
+    )
 
     try:
         vinculo = await queries.criar_vinculo(db, paciente_id, profissional_id)
@@ -250,14 +258,21 @@ async def atualizar_vinculo_admin(
     if encontrado is None:
         raise VinculoNaoEncontradoError
     vinculo, paciente_nome, profissional_nome = encontrado
+    acao = "vinculo.reativar" if ativo and not vinculo.ativo else "vinculo.desativar"
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action=acao,
+        resource="vinculo",
+        resource_id=vinculo.id,
+        operation_key=operation_key,
+    )
 
     if ativo and not vinculo.ativo:
         await _validar_par(db, vinculo.paciente_id, vinculo.profissional_id)
         queries.reativar_vinculo(vinculo)
-        acao = "vinculo.reativar"
     elif not ativo and vinculo.ativo:
         queries.encerrar_vinculo(vinculo)
-        acao = "vinculo.desativar"
     else:
         return _para_detalhe_admin(vinculo, paciente_nome, profissional_nome)
 
@@ -288,6 +303,14 @@ async def encerrar_vinculo_admin(
     if vinculo is None or not vinculo.ativo:
         raise VinculoNaoEncontradoError
 
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="vinculo.remover",
+        resource="vinculo",
+        resource_id=vinculo.id,
+        operation_key=operation_key,
+    )
     queries.encerrar_vinculo(vinculo)
     await auditoria_queries.registrar_mutacao(
         db,

@@ -23,6 +23,10 @@ _CHAVES_SENSIVEIS = {
 }
 
 
+class ChaveOperacaoReutilizadaError(Exception):
+    """A chave já representa uma operação concluída ou incompatível."""
+
+
 def _metadados_minimos(valor: Mapping[str, Any]) -> dict[str, Any]:
     """Mantém somente metadados pequenos e não sensíveis da operação."""
     resultado: dict[str, Any] = {}
@@ -32,6 +36,8 @@ def _metadados_minimos(valor: Mapping[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(item, Mapping):
             resultado[chave] = _metadados_minimos(item)
+        elif isinstance(item, list) and all(isinstance(elemento, str) for elemento in item):
+            resultado[chave] = [elemento[:100] for elemento in item[:50]]
         elif isinstance(item, (str, int, float, bool)) or item is None:
             resultado[chave] = item
     return resultado
@@ -53,7 +59,8 @@ async def _registrar(
             select(AuditoriaAcesso).where(AuditoriaAcesso.chave_operacao == operation_key)
         )
         if existente is not None:
-            return existente
+            _validar_reutilizacao(existente, actor, action, resource, resource_id)
+            raise ChaveOperacaoReutilizadaError(operation_key)
 
     registro = AuditoriaAcesso(
         ator_id=getattr(actor, "id", actor),
@@ -68,6 +75,42 @@ async def _registrar(
     session.add(registro)
     await session.flush()
     return registro
+
+
+async def validar_chave_operacao(
+    session: AsyncSession,
+    *,
+    actor: Any,
+    action: str,
+    resource: str,
+    resource_id: str | int,
+    operation_key: str | None,
+) -> None:
+    """Valida a chave antes da mutação para impedir alterações sem novo evento."""
+    if operation_key is None:
+        return
+    existente = await session.scalar(
+        select(AuditoriaAcesso).where(AuditoriaAcesso.chave_operacao == operation_key)
+    )
+    if existente is not None:
+        _validar_reutilizacao(existente, actor, action, resource, resource_id)
+        raise ChaveOperacaoReutilizadaError(operation_key)
+
+
+def _validar_reutilizacao(
+    existente: AuditoriaAcesso,
+    actor: Any,
+    action: str,
+    resource: str,
+    resource_id: str | int,
+) -> None:
+    if (
+        existente.ator_id != getattr(actor, "id", actor)
+        or existente.acao != action
+        or existente.recurso_tipo != resource
+        or (resource_id != "novo" and existente.recurso_id != str(resource_id))
+    ):
+        raise ChaveOperacaoReutilizadaError("chave incompatível")
 
 
 async def registrar_acesso(

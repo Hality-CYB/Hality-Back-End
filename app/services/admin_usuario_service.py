@@ -114,6 +114,14 @@ async def criar_usuario(
 ) -> AdminUsuarioDetail:
     if await user_queries.email_em_uso(db, dados.email):
         raise EmailJaCadastradoError
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.criar",
+        resource="usuario",
+        resource_id="novo",
+        operation_key=operation_key,
+    )
 
     try:
         usuario = await user_queries.criar_usuario(
@@ -217,6 +225,14 @@ async def atualizar_usuario(
     usuario, profissional = encontrado
 
     campos = dados.model_dump(exclude_unset=True)
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.desativar" if campos.get("ativo") is False else "usuario.editar",
+        resource="usuario",
+        resource_id=usuario.id,
+        operation_key=operation_key,
+    )
     await _garantir_outro_admin_se_perder_acesso(db, usuario, campos)
 
     nova_role = campos.get("role")
@@ -250,6 +266,14 @@ async def atualizar_profissional(
     if encontrado is None or encontrado[1] is None:
         raise ProfissionalNaoEncontradoError
     usuario, profissional = encontrado
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.profissional.editar",
+        resource="profissional",
+        resource_id=usuario.id,
+        operation_key=operation_key,
+    )
 
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(profissional, campo, valor)

@@ -56,6 +56,14 @@ async def criar(
     operation_key: str | None = None,
 ) -> ConteudoDetail:
     await _validar_classificacoes(db, payload.classificacao_ids)
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor or admin_id,
+        action="conteudo.criar",
+        resource="conteudo",
+        resource_id="novo",
+        operation_key=operation_key,
+    )
     valores = payload.model_dump(mode="json")
     valores["criado_por_id"] = admin_id
     valores["atualizado_por_id"] = admin_id
@@ -131,6 +139,17 @@ async def atualizar(
         raise ConteudoNaoEncontradoError
 
     alteracoes = payload.model_dump(mode="json", exclude_unset=True)
+    acao = "conteudo.publicar" if payload.status == StatusConteudo.PUBLICADO else "conteudo.editar"
+    if payload.status == StatusConteudo.RASCUNHO and conteudo.status != StatusConteudo.RASCUNHO:
+        acao = "conteudo.despublicar"
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor or admin_id,
+        action=acao,
+        resource="conteudo",
+        resource_id=conteudo.id,
+        operation_key=operation_key,
+    )
     if "classificacao_ids" in alteracoes:
         await _validar_classificacoes(db, alteracoes["classificacao_ids"])
 
@@ -165,6 +184,15 @@ async def deletar(
     conteudo = await conteudo_queries.buscar_por_id(db, conteudo_id)
     if conteudo is None:
         raise ConteudoNaoEncontradoError
+    if actor is not None:
+        await auditoria_queries.validar_chave_operacao(
+            db,
+            actor=actor,
+            action="conteudo.remover",
+            resource="conteudo",
+            resource_id=conteudo.id,
+            operation_key=operation_key,
+        )
     await conteudo_queries.deletar(db, conteudo)
     if actor is not None:
         await auditoria_queries.registrar_mutacao(
