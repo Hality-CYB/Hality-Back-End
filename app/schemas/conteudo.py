@@ -21,6 +21,13 @@ class StatusConteudo(StrEnum):
     PUBLICADO = "publicado"
 
 
+class OrdemConteudo(StrEnum):
+    ORDEM_ASC = "ordem_asc"
+    ORDEM_DESC = "ordem_desc"
+    CRIADO_ASC = "created_at_asc"
+    CRIADO_DESC = "created_at_desc"
+
+
 class BlocoConteudo(BaseModel):
     model_config = ConfigDict(extra="allow")
     tipo: str
@@ -41,6 +48,11 @@ class ConteudoCreate(BaseModel):
     status: StatusConteudo = StatusConteudo.RASCUNHO
     ordem: int = Field(default=0, ge=0)
 
+    @field_validator("classificacao_ids")
+    @classmethod
+    def _deduplicar_classificacoes(cls, valor: list[int]) -> list[int]:
+        return list(dict.fromkeys(valor))
+
 
 class ConteudoUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -51,6 +63,11 @@ class ConteudoUpdate(BaseModel):
     aparece_na_home: bool | None = None
     status: StatusConteudo | None = None
     ordem: int | None = Field(default=None, ge=0)
+
+    @field_validator("classificacao_ids")
+    @classmethod
+    def _deduplicar_classificacoes(cls, valor: list[int]) -> list[int]:
+        return list(dict.fromkeys(valor))
 
     @field_validator("*", mode="before")
     @classmethod
@@ -73,3 +90,11 @@ class ConteudoDetail(ConteudoCreate):
     atualizado_por_id: uuid.UUID | None
     publicado_por_id: uuid.UUID | None
     publicado_em: datetime | None
+
+
+class ConteudoListResponse(BaseModel):
+    items: list[ConteudoDetail]
+    total: int
+    page: int
+    limit: int
+    has_next: bool

@@ -7,11 +7,18 @@ from app.db import auditoria_queries, conteudo_queries
 from app.models.conteudo import Conteudo
 from app.models.user import User
 from app.schemas.conteudo import (
+    CategoriaConteudo,
     ConteudoCreate,
     ConteudoDetail,
+    ConteudoListResponse,
     ConteudoUpdate,
+    OrdemConteudo,
     StatusConteudo,
 )
+
+LIMITE_MAXIMO = 50
+TAMANHO_MAXIMO_BUSCA = 100
+ORDENS_LISTAGEM = set(OrdemConteudo)
 
 
 class ConteudoNaoEncontradoError(Exception):
@@ -63,8 +70,45 @@ async def criar(
     return _para_detalhe(conteudo)
 
 
-async def listar(db: AsyncSession) -> list[ConteudoDetail]:
-    return [_para_detalhe(item) for item in await conteudo_queries.listar(db)]
+async def listar(
+    db: AsyncSession,
+    *,
+    page: int = 1,
+    limit: int = 20,
+    status: StatusConteudo | None = None,
+    categoria: CategoriaConteudo | None = None,
+    classificacao_id: int | None = None,
+    aparece_na_home: bool | None = None,
+    q: str | None = None,
+    order: OrdemConteudo = OrdemConteudo.ORDEM_ASC,
+) -> ConteudoListResponse:
+    if page < 1:
+        raise ValueError("page deve ser maior ou igual a 1")
+    if limit < 1 or limit > LIMITE_MAXIMO:
+        raise ValueError(f"limit deve estar entre 1 e {LIMITE_MAXIMO}")
+    if order not in ORDENS_LISTAGEM:
+        raise ValueError("order inválido")
+    busca = q.strip() if q else None
+    if busca and len(busca) > TAMANHO_MAXIMO_BUSCA:
+        raise ValueError(f"q deve ter no máximo {TAMANHO_MAXIMO_BUSCA} caracteres")
+    itens, total = await conteudo_queries.listar(
+        db,
+        busca=busca or None,
+        status=status,
+        categoria=categoria,
+        classificacao_id=classificacao_id,
+        aparece_na_home=aparece_na_home,
+        page=page,
+        limit=limit,
+        order=order,
+    )
+    return ConteudoListResponse(
+        items=[_para_detalhe(item) for item in itens],
+        total=total,
+        page=page,
+        limit=limit,
+        has_next=page * limit < total,
+    )
 
 
 async def obter(db: AsyncSession, conteudo_id: int) -> ConteudoDetail:

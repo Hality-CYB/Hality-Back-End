@@ -594,11 +594,10 @@ async def seed() -> None:
         }
 
     print(
-        "Seed concluído: 7 usuarios, 2 profissionais, 4 classificacoes, "
+        "Seed concluído: 7 usuarios, 2 profissionais, 3 classificacoes, "
         "6 conteudos, 6 anamneses, 6 diagnosticos, sem imagens externas, "
         "1 questionario (11 perguntas).\n"
     )
-    print(f"Senha de todos os usuarios: {SEED_PASSWORD}\n")
     print("Credenciais:")
     for email, role in (
         ("carla.mendes@example.com", "paciente  <- use este no Swagger"),
