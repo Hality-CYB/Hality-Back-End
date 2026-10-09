@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.db import diagnostico_queries, home_queries
-from app.schemas.conteudo import ConteudoCreate, ConteudoUpdate
+from app.schemas.conteudo import ConteudoCreate, ConteudoListResponse, ConteudoUpdate
 from app.services import conteudo_service
 
 
@@ -44,6 +44,21 @@ def test_novo_conteudo_nasce_rascunho() -> None:
     )
 
     assert payload.status == "rascunho"
+
+
+def test_classificacoes_sao_deduplicadas_preservando_ordem() -> None:
+    payload = ConteudoCreate.model_validate(
+        {
+            "titulo": "Higiene",
+            "categoria": "higiene",
+            "conteudo": {"itens": [{"tipo": "texto"}]},
+            "classificacao_ids": [2, 1, 2, 3, 1],
+        }
+    )
+    atualizacao = ConteudoUpdate.model_validate({"classificacao_ids": [3, 3, 2]})
+
+    assert payload.classificacao_ids == [2, 1, 3]
+    assert atualizacao.classificacao_ids == [3, 2]
 
 
 def test_conteudo_exige_ao_menos_um_bloco() -> None:
@@ -123,3 +138,32 @@ def test_update_rejeita_null_explicito(campo):
 
 def test_update_parcial_continua_aceitando_campos_omitidos():
     assert ConteudoUpdate.model_validate({}).model_dump(exclude_unset=True) == {}
+
+
+def test_listagem_paginada_normaliza_busca_vazia_e_calcula_has_next(monkeypatch):
+    conteudo = _conteudo()
+    chamada = {}
+
+    async def listar(db, **filtros):
+        chamada.update(filtros)
+        return [conteudo], 21
+
+    monkeypatch.setattr(conteudo_service.conteudo_queries, "listar", listar)
+
+    resposta = asyncio.run(conteudo_service.listar(SimpleNamespace(), page=2, limit=10, q="  "))
+
+    assert isinstance(resposta, ConteudoListResponse)
+    assert resposta.model_dump(mode="json")["items"][0]["conteudo"]["itens"]
+    assert resposta.total == 21
+    assert resposta.page == 2
+    assert resposta.limit == 10
+    assert resposta.has_next is True
+    assert chamada["busca"] is None
+    assert chamada["page"] == 2
+    assert chamada["limit"] == 10
+
+
+@pytest.mark.parametrize("limit", [0, 51])
+def test_listagem_rejeita_limite_fora_da_faixa(limit):
+    with pytest.raises(ValueError):
+        asyncio.run(conteudo_service.listar(SimpleNamespace(), limit=limit))
