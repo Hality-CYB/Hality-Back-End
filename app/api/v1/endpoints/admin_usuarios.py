@@ -63,7 +63,7 @@ async def criar_usuario(
     dados: AdminUsuarioCreate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminUsuarioDetail:
     try:
         return await service.criar_usuario(db, dados, admin, idempotency_key)
@@ -80,7 +80,7 @@ async def atualizar_usuario(
     dados: AdminUsuarioUpdate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminUsuarioDetail:
     try:
         return await service.atualizar_usuario(db, usuario_id, dados, admin, idempotency_key)
@@ -104,7 +104,7 @@ async def atualizar_profissional(
     dados: AdminProfissionalUpdate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminUsuarioDetail:
     try:
         return await service.atualizar_profissional(db, usuario_id, dados, admin, idempotency_key)

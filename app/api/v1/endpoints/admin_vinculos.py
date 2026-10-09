@@ -65,7 +65,7 @@ async def criar_vinculo(
     dados: AdminVinculoCreate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminVinculoDetail:
     try:
         return await vinculo_service.criar_vinculo_admin(
@@ -88,7 +88,7 @@ async def atualizar_vinculo(
     dados: AdminVinculoUpdate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminVinculoDetail:
     try:
         return await vinculo_service.atualizar_vinculo_admin(
@@ -113,7 +113,7 @@ async def encerrar_vinculo(
     vinculo_id: int,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> None:
     try:
         await vinculo_service.encerrar_vinculo_admin(db, vinculo_id, admin, idempotency_key)

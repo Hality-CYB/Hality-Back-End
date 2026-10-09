@@ -42,7 +42,7 @@ async def criar_conteudo(
     payload: ConteudoCreate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> ConteudoDetail:
     try:
         return await conteudo_service.criar(db, admin.id, payload, admin, idempotency_key)
@@ -96,7 +96,7 @@ async def atualizar_conteudo(
     payload: ConteudoUpdate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> ConteudoDetail:
     try:
         return await conteudo_service.atualizar(
@@ -114,7 +114,7 @@ async def deletar_conteudo(
     conteudo_id: int,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> Response:
     try:
         await conteudo_service.deletar(db, conteudo_id, admin, idempotency_key)

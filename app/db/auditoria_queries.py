@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auditoria_acesso import AuditoriaAcesso
@@ -73,7 +74,13 @@ async def _registrar(
         chave_operacao=operation_key,
     )
     session.add(registro)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if operation_key is None or not _eh_colisao_chave_operacao(exc):
+            raise
+        await session.rollback()
+        raise ChaveOperacaoReutilizadaError(operation_key) from exc
     return registro
 
 
@@ -111,6 +118,11 @@ def _validar_reutilizacao(
         or (resource_id != "novo" and existente.recurso_id != str(resource_id))
     ):
         raise ChaveOperacaoReutilizadaError("chave incompatível")
+
+
+def _eh_colisao_chave_operacao(exc: IntegrityError) -> bool:
+    detalhe = str(exc).lower()
+    return "chave_operacao" in detalhe and "auditoria" in detalhe
 
 
 async def registrar_acesso(
