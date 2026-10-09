@@ -1,8 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
-from app.api.deps import CurrentAdminDep, DbSession, LimiteQuery, PaginaQuery
+from app.api.deps import (
+    CurrentAdminDep,
+    CurrentAdminMutationDep,
+    DbSession,
+    LimiteQuery,
+    PaginaQuery,
+)
 from app.schemas.conteudo import (
     CategoriaConteudo,
     ConteudoCreate,
