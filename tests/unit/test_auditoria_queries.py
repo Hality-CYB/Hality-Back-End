@@ -7,10 +7,17 @@ from sqlalchemy.exc import IntegrityError
 from app.db import auditoria_queries
 
 
+class _ErroIntegridade:
+    def __init__(self, sqlstate: str, constraint_name: str) -> None:
+        self.sqlstate = sqlstate
+        self.constraint_name = constraint_name
+
+
 class _SessaoComColisao:
-    def __init__(self) -> None:
+    def __init__(self, erro=None) -> None:
         self.adicionado = None
         self.rollback_count = 0
+        self.erro = erro or _ErroIntegridade("23505", "uq_auditoria_acessos_chave_operacao")
 
     async def scalar(self, statement):
         return None
@@ -22,7 +29,7 @@ class _SessaoComColisao:
         raise IntegrityError(
             "insert",
             {},
-            Exception("uq_auditoria_acessos_chave_operacao chave_operacao"),
+            self.erro,
         )
 
     async def rollback(self) -> None:
@@ -56,7 +63,7 @@ class _SessaoConcorrente:
             raise IntegrityError(
                 "insert",
                 {},
-                Exception("uq_auditoria_acessos_chave_operacao chave_operacao"),
+                _ErroIntegridade("23505", "uq_auditoria_acessos_chave_operacao"),
             )
         self.corrida.vencedor_definido = True
 
@@ -87,6 +94,23 @@ async def test_colisao_de_chave_faz_rollback_e_vira_reutilizacao() -> None:
         )
 
     assert session.rollback_count == 1
+
+
+@pytest.mark.asyncio
+async def test_outra_constraint_no_mesmo_insert_nao_vira_chave_reutilizada() -> None:
+    session = _SessaoComColisao(_ErroIntegridade("23505", "uq_users_email"))
+
+    with pytest.raises(IntegrityError):
+        await auditoria_queries.registrar_mutacao(
+            session,
+            SimpleNamespace(id="ator", role="admin"),
+            "conteudo.criar",
+            "conteudo",
+            1,
+            operation_key="chave-1",
+        )
+
+    assert session.rollback_count == 0
 
 
 @pytest.mark.asyncio

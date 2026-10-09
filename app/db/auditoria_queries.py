@@ -121,8 +121,13 @@ def _validar_reutilizacao(
 
 
 def _eh_colisao_chave_operacao(exc: IntegrityError) -> bool:
-    detalhe = str(exc).lower()
-    return "chave_operacao" in detalhe and "auditoria" in detalhe
+    original = exc.orig
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    diagnostico = getattr(original, "diag", None)
+    constraint_name = getattr(original, "constraint_name", None) or getattr(
+        diagnostico, "constraint_name", None
+    )
+    return sqlstate == "23505" and constraint_name == "uq_auditoria_acessos_chave_operacao"
 
 
 async def registrar_acesso(
