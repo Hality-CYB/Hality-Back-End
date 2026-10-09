@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,41 @@ class _SessaoComColisao:
         self.rollback_count += 1
 
 
+class _Corrida:
+    def __init__(self) -> None:
+        self.flush_count = 0
+        self.flushes_prontos = asyncio.Event()
+        self.vencedor_definido = False
+
+
+class _SessaoConcorrente:
+    def __init__(self, corrida: _Corrida) -> None:
+        self.corrida = corrida
+        self.rollback_count = 0
+
+    async def scalar(self, statement):
+        return None
+
+    def add(self, registro) -> None:
+        pass
+
+    async def flush(self) -> None:
+        self.corrida.flush_count += 1
+        if self.corrida.flush_count == 2:
+            self.corrida.flushes_prontos.set()
+        await self.corrida.flushes_prontos.wait()
+        if self.corrida.vencedor_definido:
+            raise IntegrityError(
+                "insert",
+                {},
+                Exception("uq_auditoria_acessos_chave_operacao chave_operacao"),
+            )
+        self.corrida.vencedor_definido = True
+
+    async def rollback(self) -> None:
+        self.rollback_count += 1
+
+
 def test_metadados_preservam_lista_de_campos() -> None:
     resultado = auditoria_queries._metadados_minimos(
         {"campos": ["name", "role"], "senha": "nao-gravar"}
@@ -51,3 +87,34 @@ async def test_colisao_de_chave_faz_rollback_e_vira_reutilizacao() -> None:
         )
 
     assert session.rollback_count == 1
+
+
+@pytest.mark.asyncio
+async def test_requisicoes_concorrentes_com_mesma_chave_tem_uma_vencedora() -> None:
+    corrida = _Corrida()
+    sessoes = [_SessaoConcorrente(corrida), _SessaoConcorrente(corrida)]
+
+    resultados = await asyncio.gather(
+        *(
+            auditoria_queries.registrar_mutacao(
+                session,
+                SimpleNamespace(id="ator", role="admin"),
+                "conteudo.criar",
+                "conteudo",
+                1,
+                operation_key="chave-concorrente",
+            )
+            for session in sessoes
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(resultado, Exception) for resultado in resultados) == 1
+    assert (
+        sum(
+            isinstance(resultado, auditoria_queries.ChaveOperacaoReutilizadaError)
+            for resultado in resultados
+        )
+        == 1
+    )
+    assert sum(session.rollback_count for session in sessoes) == 1
