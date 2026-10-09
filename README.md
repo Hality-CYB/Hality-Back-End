@@ -70,15 +70,20 @@ uv sync
 ### Outros comandos úteis
 
 ```bash
-# rodar os testes
+# a suíte usa PostgreSQL real: suba o banco e aplique as migrations primeiro
+docker compose up -d db
+uv run alembic upgrade head
+
+# validar migrations, testes e estilo (mesma sequência da CI)
+uv run alembic check
 uv run pytest
-
-# lint
 uv run ruff check .
-
-# formatar o código
-uv run ruff check . --fix
+uv run ruff format --check .
 ```
+
+A suíte cria somente fixtures mínimas e isoladas; não use um banco com dados reais. A CI inicia
+um Postgres 17 descartável e define explicitamente as mesmas variáveis de conexão antes de aplicar
+as migrations e executar os testes.
 
 > No VS Code, instale a extensão recomendada em `.vscode/extensions.json` (Ruff) — o `.vscode/settings.json` já está configurado para formatar e organizar imports automaticamente ao salvar.
 
@@ -158,12 +163,14 @@ A URL de conexão não é escrita à mão: ela é **montada** em `app/core/confi
 
 | Variável | Padrão | Descrição |
 |---|---|---|
+| `ENVIRONMENT` | `development` | Identifica o ambiente da aplicação. |
+| `DEBUG` | `true` | Ativa o modo de debug do FastAPI. Aceita `true/false`, `1/0`, `yes/no` ou `on/off`, sem diferenciar maiúsculas. Qualquer outro valor interrompe a inicialização com uma mensagem clara. |
 | `POSTGRES_HOST` | `localhost` | Host do banco. Com a API rodando local aponta pro `localhost`; no `docker-compose.yml` o serviço `api` já sobrescreve para `db` (nome do serviço do Postgres na mesma rede do compose). |
 | `POSTGRES_PORT` | `5432` | Porta do banco. |
 | `POSTGRES_USER` | `hality` | Usuário. |
 | `POSTGRES_PASSWORD` | `hality` | Senha. Só serve para desenvolvimento — em produção deve vir de um segredo, nunca do `.env` versionado. |
 | `POSTGRES_DB` | `hality` | Nome do banco. |
-| `DB_ECHO` | `false` | Se `true`, loga no console todo SQL executado. Útil pra debugar, barulhento demais pro dia a dia. |
+| `DB_ECHO` | `false` | Se `true`, loga no console todo SQL executado. Aceita os mesmos valores booleanos de `DEBUG`. Mantenha `false` fora do desenvolvimento para não expor parâmetros nos logs. |
 
 O resultado é uma URL no formato:
 
@@ -280,14 +287,9 @@ Se a API estiver rodando em container, use `docker exec <container> python -m sc
 | `users` | 1 admin, 2 profissionais, 4 pacientes |
 | `profissionais` | 2 (vinculados aos usuários profissionais) |
 | `pacientes_profissionais` | 3 vínculos paciente↔profissional |
-<<<<<<< HEAD
-| `classificacoes_diagnostico` | 4 (`saudavel`, `halitose_leve`, `halitose_social`, `halitose_severa`) |
-| `conteudos` | 6 (conteúdos genéricos; 4 marcados para exibição na Home) |
-=======
 | `classificacoes_diagnostico` | 3 (`halito_normal`, `halitose_intima`, `mau_halito_social` — ordem 1 a 3) |
 | `conteudos` | 6: 2 vinculados a classificações (orientação de higiene em `halito_normal`, exibida na home; protocolo periodontal em `mau_halito_social`) e 4 dicas genéricas, sem classificação |
 | `questionarios` | 1 (versão `2026-09-v1`, 11 perguntas) |
->>>>>>> origin/develop
 | `anamneses` | 6 (uma por diagnóstico) |
 | `diagnosticos` | 6 (Carla com 4, Diego e Elisa com 1 cada), em status diferentes: `processando`, `concluido`, `falha` |
 | `imagens` | 7 (vinculadas aos diagnósticos — um deles com 2 imagens) |

@@ -64,7 +64,9 @@ async def get_questionario_ativo(db: AsyncSession) -> Questionario:
         )
         orm = resultado.scalar_one_or_none()
     except Exception:
-        logger.exception("Falha ao buscar questionário vigente no banco, usando fallback estático.")
+        # Não registre a exceção: mensagens do driver podem conter SQL, parâmetros
+        # ou credenciais. A falha operacional continua visível sem expor dados.
+        logger.warning("Falha ao buscar questionário vigente no banco; usando fallback estático.")
         await db.rollback()
         return _QUESTIONARIO_FALLBACK
 
