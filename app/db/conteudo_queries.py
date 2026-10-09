@@ -26,7 +26,7 @@ async def listar(
     if categoria is not None:
         filtros.append(Conteudo.categoria == categoria)
     if classificacao_id is not None:
-        filtros.append(Conteudo.classificacao_ids.any(classificacao_id))
+        filtros.append(Conteudo.classificacao_ids.contains([classificacao_id]))
     if aparece_na_home is not None:
         filtros.append(Conteudo.aparece_na_home.is_(aparece_na_home))
 
