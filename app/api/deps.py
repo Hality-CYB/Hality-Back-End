@@ -15,6 +15,7 @@ from app.auth.policies import (
 )
 from app.auth.users import current_active_user, current_active_user_opcional
 from app.core.config import Settings, get_settings
+from app.db import auditoria_queries
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.usuario import TipoUsuario
@@ -115,6 +116,29 @@ def require_admin(user: CurrentUser) -> User:
 
 
 CurrentAdminDep = Annotated[User, Depends(require_admin)]
+
+
+async def require_admin_mutation(user: CurrentUser, db: DbSession, request: Request) -> User:
+    """Autoriza escrita admin e registra recusas sem conteúdo do request."""
+    if user.role != TipoUsuario.ADMIN:
+        await auditoria_queries.registrar_acesso(
+            db,
+            actor=user,
+            action="autorizacao.negada",
+            resource="admin_mutacao",
+            resource_id=request.method,
+            result="negado",
+            metadata={"metodo": request.method, "rota": request.url.path},
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="acesso restrito a administradores",
+        )
+    return user
+
+
+CurrentAdminMutationDep = Annotated[User, Depends(require_admin_mutation)]
 
 
 def get_current_professional(user: CurrentUser) -> User:

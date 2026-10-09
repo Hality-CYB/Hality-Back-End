@@ -3,8 +3,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import conteudo_queries
+from app.db import auditoria_queries, conteudo_queries
 from app.models.conteudo import Conteudo
+from app.models.user import User
 from app.schemas.conteudo import (
     ConteudoCreate,
     ConteudoDetail,
@@ -40,14 +41,26 @@ def _registrar_publicacao(valores: dict, admin_id: uuid.UUID) -> None:
     valores["publicado_em"] = datetime.now(UTC)
 
 
-async def criar(db: AsyncSession, admin_id: uuid.UUID, payload: ConteudoCreate) -> ConteudoDetail:
+async def criar(
+    db: AsyncSession,
+    admin_id: uuid.UUID,
+    payload: ConteudoCreate,
+    actor: User | None = None,
+    operation_key: str | None = None,
+) -> ConteudoDetail:
     await _validar_classificacoes(db, payload.classificacao_ids)
     valores = payload.model_dump(mode="json")
     valores["criado_por_id"] = admin_id
     valores["atualizado_por_id"] = admin_id
     if payload.status == StatusConteudo.PUBLICADO:
         _registrar_publicacao(valores, admin_id)
-    return _para_detalhe(await conteudo_queries.inserir(db, valores))
+    conteudo = await conteudo_queries.inserir(db, valores)
+    if actor is not None:
+        await auditoria_queries.registrar_mutacao(
+            db, actor, "conteudo.criar", "conteudo", conteudo.id, operation_key=operation_key
+        )
+        await db.commit()
+    return _para_detalhe(conteudo)
 
 
 async def listar(db: AsyncSession) -> list[ConteudoDetail]:
@@ -66,6 +79,8 @@ async def atualizar(
     admin_id: uuid.UUID,
     conteudo_id: int,
     payload: ConteudoUpdate,
+    actor: User | None = None,
+    operation_key: str | None = None,
 ) -> ConteudoDetail:
     conteudo = await conteudo_queries.buscar_por_id(db, conteudo_id)
     if conteudo is None:
@@ -75,6 +90,7 @@ async def atualizar(
     if "classificacao_ids" in alteracoes:
         await _validar_classificacoes(db, alteracoes["classificacao_ids"])
 
+    status_anterior = conteudo.status
     alteracoes["atualizado_por_id"] = admin_id
     alteracoes["updated_at"] = datetime.now(UTC)
     if payload.status == StatusConteudo.PUBLICADO and conteudo.status != StatusConteudo.PUBLICADO:
@@ -83,11 +99,31 @@ async def atualizar(
         alteracoes["publicado_por_id"] = None
         alteracoes["publicado_em"] = None
 
-    return _para_detalhe(await conteudo_queries.atualizar(db, conteudo, alteracoes))
+    atualizado = await conteudo_queries.atualizar(db, conteudo, alteracoes)
+    if actor is not None:
+        publicado = payload.status == StatusConteudo.PUBLICADO
+        acao = "conteudo.publicar" if publicado else "conteudo.editar"
+        if payload.status == StatusConteudo.RASCUNHO and status_anterior != StatusConteudo.RASCUNHO:
+            acao = "conteudo.despublicar"
+        await auditoria_queries.registrar_mutacao(
+            db, actor, acao, "conteudo", conteudo.id, operation_key=operation_key
+        )
+        await db.commit()
+    return _para_detalhe(atualizado)
 
 
-async def deletar(db: AsyncSession, conteudo_id: int) -> None:
+async def deletar(
+    db: AsyncSession,
+    conteudo_id: int,
+    actor: User | None = None,
+    operation_key: str | None = None,
+) -> None:
     conteudo = await conteudo_queries.buscar_por_id(db, conteudo_id)
     if conteudo is None:
         raise ConteudoNaoEncontradoError
     await conteudo_queries.deletar(db, conteudo)
+    if actor is not None:
+        await auditoria_queries.registrar_mutacao(
+            db, actor, "conteudo.remover", "conteudo", conteudo.id, operation_key=operation_key
+        )
+        await db.commit()

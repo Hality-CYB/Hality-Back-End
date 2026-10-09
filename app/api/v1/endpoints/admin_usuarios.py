@@ -3,9 +3,15 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 
-from app.api.deps import DbSession, LimiteQuery, PaginaQuery, require_admin
+from app.api.deps import (
+    CurrentAdminDep,
+    CurrentAdminMutationDep,
+    DbSession,
+    LimiteQuery,
+    PaginaQuery,
+)
 from app.schemas.admin_usuario import (
     AdminProfissionalUpdate,
     AdminUsuarioCreate,
@@ -19,7 +25,6 @@ from app.services import admin_usuario_service as service
 router = APIRouter(
     prefix="/admin",
     tags=["admin-usuarios"],
-    dependencies=[Depends(require_admin)],
 )
 
 
@@ -29,6 +34,7 @@ def _usuario_nao_encontrado() -> HTTPException:
 
 @router.get("/usuarios", response_model=AdminUsuarioListResponse)
 async def listar_usuarios(
+    admin: CurrentAdminDep,
     db: DbSession,
     pagina: PaginaQuery = 1,
     limite: LimiteQuery = 20,
@@ -42,7 +48,9 @@ async def listar_usuarios(
 
 
 @router.get("/usuarios/{usuario_id}", response_model=AdminUsuarioDetail)
-async def obter_usuario(usuario_id: uuid.UUID, db: DbSession) -> AdminUsuarioDetail:
+async def obter_usuario(
+    usuario_id: uuid.UUID, admin: CurrentAdminDep, db: DbSession
+) -> AdminUsuarioDetail:
     try:
         return await service.obter_usuario(db, usuario_id)
 
@@ -51,9 +59,14 @@ async def obter_usuario(usuario_id: uuid.UUID, db: DbSession) -> AdminUsuarioDet
 
 
 @router.post("/usuarios", response_model=AdminUsuarioDetail, status_code=status.HTTP_201_CREATED)
-async def criar_usuario(dados: AdminUsuarioCreate, db: DbSession) -> AdminUsuarioDetail:
+async def criar_usuario(
+    dados: AdminUsuarioCreate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> AdminUsuarioDetail:
     try:
-        return await service.criar_usuario(db, dados)
+        return await service.criar_usuario(db, dados, admin, idempotency_key)
 
     except service.EmailJaCadastradoError as exc:
         raise HTTPException(
@@ -63,10 +76,14 @@ async def criar_usuario(dados: AdminUsuarioCreate, db: DbSession) -> AdminUsuari
 
 @router.patch("/usuarios/{usuario_id}", response_model=AdminUsuarioDetail)
 async def atualizar_usuario(
-    usuario_id: uuid.UUID, dados: AdminUsuarioUpdate, db: DbSession
+    usuario_id: uuid.UUID,
+    dados: AdminUsuarioUpdate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> AdminUsuarioDetail:
     try:
-        return await service.atualizar_usuario(db, usuario_id, dados)
+        return await service.atualizar_usuario(db, usuario_id, dados, admin, idempotency_key)
 
     except service.UsuarioNaoEncontradoError as exc:
         raise _usuario_nao_encontrado() from exc
@@ -83,10 +100,14 @@ async def atualizar_usuario(
 
 @router.patch("/profissionais/{usuario_id}", response_model=AdminUsuarioDetail)
 async def atualizar_profissional(
-    usuario_id: uuid.UUID, dados: AdminProfissionalUpdate, db: DbSession
+    usuario_id: uuid.UUID,
+    dados: AdminProfissionalUpdate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> AdminUsuarioDetail:
     try:
-        return await service.atualizar_profissional(db, usuario_id, dados)
+        return await service.atualizar_profissional(db, usuario_id, dados, admin, idempotency_key)
 
     except service.ProfissionalNaoEncontradoError as exc:
         raise HTTPException(

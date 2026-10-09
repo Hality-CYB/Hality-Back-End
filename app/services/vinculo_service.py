@@ -14,8 +14,8 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import auditoria_queries, user_queries
 from app.db import paciente_profissional_queries as queries
-from app.db import user_queries
 from app.models.paciente_profissional import PacienteProfissional
 from app.models.user import User
 from app.schemas.paciente_profissional import (
@@ -201,11 +201,29 @@ async def criar_vinculo_admin(
     db: AsyncSession,
     paciente_id: uuid.UUID,
     profissional_id: uuid.UUID,
+    actor: User,
+    operation_key: str | None = None,
 ) -> AdminVinculoDetail:
     paciente, profissional = await _validar_par(db, paciente_id, profissional_id)
     paciente_nome, profissional_nome = paciente.name, profissional.name
 
-    vinculo = await _persistir_vinculo(db, paciente_id, profissional_id)
+    try:
+        vinculo = await queries.criar_vinculo(db, paciente_id, profissional_id)
+    except IntegrityError as exc:
+        await db.rollback()
+        if await queries.buscar_vinculo_ativo(db, paciente_id, profissional_id) is not None:
+            raise VinculoJaExisteError from exc
+        raise
+    await auditoria_queries.registrar_mutacao(
+        db,
+        actor,
+        "vinculo.criar",
+        "vinculo",
+        vinculo.id,
+        metadata={"paciente_id": str(paciente_id), "profissional_id": str(profissional_id)},
+        operation_key=operation_key,
+    )
+    await db.commit()
     return _para_detalhe_admin(vinculo, paciente_nome, profissional_nome)
 
 
@@ -225,6 +243,8 @@ async def atualizar_vinculo_admin(
     db: AsyncSession,
     vinculo_id: int,
     ativo: bool,
+    actor: User,
+    operation_key: str | None = None,
 ) -> AdminVinculoDetail:
     encontrado = await queries.buscar_vinculo_detalhado(db, vinculo_id)
     if encontrado is None:
@@ -232,18 +252,50 @@ async def atualizar_vinculo_admin(
     vinculo, paciente_nome, profissional_nome = encontrado
 
     if ativo and not vinculo.ativo:
-        await _reativar(db, vinculo)
+        await _validar_par(db, vinculo.paciente_id, vinculo.profissional_id)
+        queries.reativar_vinculo(vinculo)
+        acao = "vinculo.reativar"
     elif not ativo and vinculo.ativo:
         queries.encerrar_vinculo(vinculo)
+        acao = "vinculo.desativar"
+    else:
+        return _para_detalhe_admin(vinculo, paciente_nome, profissional_nome)
+
+    try:
+        await auditoria_queries.registrar_mutacao(
+            db,
+            actor,
+            acao,
+            "vinculo",
+            vinculo.id,
+            operation_key=operation_key,
+        )
         await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise VinculoJaExisteError from exc
 
     return _para_detalhe_admin(vinculo, paciente_nome, profissional_nome)
 
 
-async def encerrar_vinculo_admin(db: AsyncSession, vinculo_id: int) -> None:
+async def encerrar_vinculo_admin(
+    db: AsyncSession,
+    vinculo_id: int,
+    actor: User,
+    operation_key: str | None = None,
+) -> None:
     vinculo = await queries.buscar_vinculo(db, vinculo_id)
     if vinculo is None or not vinculo.ativo:
         raise VinculoNaoEncontradoError
 
     queries.encerrar_vinculo(vinculo)
+    await auditoria_queries.registrar_mutacao(
+        db,
+        actor,
+        "vinculo.remover",
+        "vinculo",
+        vinculo.id,
+        metadata={"motivo": "correcao_administrativa"},
+        operation_key=operation_key,
+    )
     await db.commit()

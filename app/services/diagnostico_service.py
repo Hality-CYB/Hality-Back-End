@@ -1104,10 +1104,11 @@ async def obter_diagnostico_admin(
 
     await auditoria_queries.registrar_acesso(
         db,
-        ator_id=admin_id,
-        acao=ACAO_ADMIN_DETALHE_ABERTO,
-        recurso_tipo=RECURSO_DIAGNOSTICO,
-        recurso_id=diagnostico.id,
+        actor=admin_id,
+        action=ACAO_ADMIN_DETALHE_ABERTO,
+        resource=RECURSO_DIAGNOSTICO,
+        resource_id=diagnostico.id,
     )
+    await db.commit()
 
     return detalhe
