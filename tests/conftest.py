@@ -59,6 +59,8 @@ from app.models import (
     Anamnese,
     AuditoriaAcesso,
     ConsentimentoEvento,
+    EmailOutbox,
+    IdentityAction,
     Profissional,
     Questionario,
     RefreshToken,
@@ -91,6 +93,10 @@ if "users" not in TestBase.metadata.tables:
     User.__table__.to_metadata(TestBase.metadata)
 if "refresh_tokens" not in TestBase.metadata.tables:
     RefreshToken.__table__.to_metadata(TestBase.metadata)
+if "identity_actions" not in TestBase.metadata.tables:
+    IdentityAction.__table__.to_metadata(TestBase.metadata)
+if "email_outbox" not in TestBase.metadata.tables:
+    EmailOutbox.__table__.to_metadata(TestBase.metadata)
 if "profissionais" not in TestBase.metadata.tables:
     Profissional.__table__.to_metadata(TestBase.metadata)
 if "auditoria_acessos" not in TestBase.metadata.tables:
