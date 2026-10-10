@@ -28,6 +28,7 @@ from app.schemas.admin_usuario import (
     ProfissionalDados,
 )
 from app.schemas.usuario import TipoUsuario
+from app.services.identity_token_service import create_invitation
 
 _COLUNAS_USUARIO = {"nome": "name", "telefone": "phone", "ativo": "is_active", "role": "role"}
 
@@ -147,6 +148,8 @@ async def criar_usuario(
             metadata={"role": str(dados.role)},
             operation_key=operation_key,
         )
+        if dados.enviar_convite:
+            await create_invitation(db, usuario, commit=False)
         await db.commit()
 
     except IntegrityError as exc:

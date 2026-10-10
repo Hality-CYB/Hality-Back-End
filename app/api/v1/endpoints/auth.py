@@ -13,8 +13,6 @@ credenciais e as duas strategies (`get_jwt_strategy`, `get_refresh_strategy`)
 para emitir/validar os tokens.
 """
 
-import time
-from collections import defaultdict, deque
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -37,6 +35,7 @@ from app.services.identity_token_service import (
     InvalidIdentityTokenError,
     consume_invitation,
     consume_password_reset,
+    consume_recovery_rate_limit,
     request_password_recovery,
 )
 
@@ -47,19 +46,6 @@ REFRESH_COOKIE_NAME = "refresh_token"
 # /anamneses, /diagnosticos, /users/me etc.
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 PASSWORD_RECOVERY_MESSAGE = "Se o endereço estiver cadastrado, enviaremos instruções."
-_recovery_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
-
-
-def _rate_limited(key: str) -> bool:
-    settings = get_settings()
-    now = time.monotonic()
-    attempts = _recovery_attempts[key]
-    while attempts and now - attempts[0] >= settings.identity_recovery_rate_window_seconds:
-        attempts.popleft()
-    if len(attempts) >= settings.identity_recovery_rate_limit:
-        return True
-    attempts.append(now)
-    return False
 
 
 class AccessTokenResponse(BaseModel):
@@ -173,7 +159,7 @@ async def password_recovery(
 ) -> PasswordRecoveryResponse:
     """Solicita recuperação sem revelar a existência do endereço."""
     client_host = request.client.host if request.client else "unknown"
-    if not _rate_limited(f"{client_host}:{payload.email}"):
+    if not await consume_recovery_rate_limit(db, f"{client_host}:{payload.email}"):
         await request_password_recovery(db, str(payload.email))
     return PasswordRecoveryResponse(message=PASSWORD_RECOVERY_MESSAGE)
 

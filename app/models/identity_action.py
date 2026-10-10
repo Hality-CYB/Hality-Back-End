@@ -60,3 +60,13 @@ class EmailOutbox(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
+
+
+class IdentityRateLimit(Base):
+    """Janela persistida para limitar solicitações de recuperação entre workers."""
+
+    __tablename__ = "identity_rate_limits"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)

@@ -11,11 +11,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import password_helper
 from app.core.config import get_settings
-from app.models.identity_action import EmailOutbox, IdentityAction
+from app.models.identity_action import EmailOutbox, IdentityAction, IdentityRateLimit
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -80,10 +81,53 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
+    """Registra a tentativa em banco e retorna se a janela foi excedida."""
+    settings = get_settings()
+    key_hash = _hash_token(key)
+    now = _now()
+    for _ in range(2):
+        try:
+            row = await db.scalar(
+                select(IdentityRateLimit)
+                .where(IdentityRateLimit.key_hash == key_hash)
+                .with_for_update()
+            )
+            if row is None:
+                db.add(
+                    IdentityRateLimit(
+                        key_hash=key_hash,
+                        window_started_at=now,
+                        attempts=1,
+                    )
+                )
+                await db.commit()
+                return False
+            if (
+                _utc(row.window_started_at)
+                + timedelta(seconds=settings.identity_recovery_rate_window_seconds)
+                <= now
+            ):
+                row.window_started_at = now
+                row.attempts = 1
+                await db.commit()
+                return False
+            if row.attempts >= settings.identity_recovery_rate_limit:
+                return True
+            row.attempts += 1
+            await db.commit()
+            return False
+        except IntegrityError:
+            await db.rollback()
+    return True
+
+
 async def _create_action(
     db: AsyncSession,
     user: User,
     purpose: str,
+    *,
+    commit: bool = True,
 ) -> str:
     now = _now()
     correlation_id = uuid.uuid4().hex
@@ -109,6 +153,7 @@ async def _create_action(
         correlation_id=correlation_id,
     )
     db.add(action)
+    await db.flush()
     db.add(
         EmailOutbox(
             action_id=action_id,
@@ -118,7 +163,8 @@ async def _create_action(
             correlation_id=correlation_id,
         )
     )
-    await db.commit()
+    if commit:
+        await db.commit()
     return correlation_id
 
 
@@ -129,9 +175,9 @@ async def request_password_recovery(db: AsyncSession, email: str) -> None:
         await _create_action(db, user, PASSWORD_RESET)
 
 
-async def create_invitation(db: AsyncSession, user: User) -> None:
+async def create_invitation(db: AsyncSession, user: User, *, commit: bool = True) -> None:
     """Cria uma ação de convite para um usuário já persistido."""
-    await _create_action(db, user, INVITATION)
+    await _create_action(db, user, INVITATION, commit=commit)
 
 
 async def consume_identity_action(
@@ -155,7 +201,7 @@ async def consume_identity_action(
     if _utc(action.expires_at) <= now:
         await db.execute(
             update(EmailOutbox)
-            .where(EmailOutbox.action_id == action.id, EmailOutbox.status == QUEUED)
+            .where(EmailOutbox.action_id == action.id, EmailOutbox.status != CONSUMED)
             .values(status=EXPIRED)
         )
         await db.commit()
@@ -170,7 +216,7 @@ async def consume_identity_action(
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.execute(
         update(EmailOutbox)
-        .where(EmailOutbox.action_id == action.id, EmailOutbox.status == QUEUED)
+        .where(EmailOutbox.action_id == action.id, EmailOutbox.status != EXPIRED)
         .values(status=CONSUMED)
     )
     await db.commit()

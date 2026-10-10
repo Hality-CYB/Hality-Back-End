@@ -59,6 +59,7 @@ from app.models import (
     Anamnese,
     EmailOutbox,
     IdentityAction,
+    IdentityRateLimit,
     Profissional,
     Questionario,
     RefreshToken,
@@ -92,6 +93,8 @@ if "identity_actions" not in TestBase.metadata.tables:
     IdentityAction.__table__.to_metadata(TestBase.metadata)
 if "email_outbox" not in TestBase.metadata.tables:
     EmailOutbox.__table__.to_metadata(TestBase.metadata)
+if "identity_rate_limits" not in TestBase.metadata.tables:
+    IdentityRateLimit.__table__.to_metadata(TestBase.metadata)
 if "profissionais" not in TestBase.metadata.tables:
     Profissional.__table__.to_metadata(TestBase.metadata)
 
