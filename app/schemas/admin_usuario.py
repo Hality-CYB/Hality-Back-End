@@ -27,6 +27,7 @@ class AdminUsuarioCreate(_PayloadAdmin):
     telefone: str | None = Field(None, max_length=20)
     role: TipoUsuario
     senha: str = Field(..., min_length=SENHA_TAMANHO_MINIMO)
+    enviar_convite: bool = True
     profissional: ProfissionalDados | None = None
 
     @model_validator(mode="after")

@@ -55,7 +55,16 @@ from app.auth.users import current_active_user, get_refresh_token_db, get_user_d
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
-from app.models import Anamnese, Profissional, Questionario, RefreshToken, User
+from app.models import (
+    Anamnese,
+    EmailOutbox,
+    IdentityAction,
+    IdentityRateLimit,
+    Profissional,
+    Questionario,
+    RefreshToken,
+    User,
+)
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -80,6 +89,12 @@ if "users" not in TestBase.metadata.tables:
     User.__table__.to_metadata(TestBase.metadata)
 if "refresh_tokens" not in TestBase.metadata.tables:
     RefreshToken.__table__.to_metadata(TestBase.metadata)
+if "identity_actions" not in TestBase.metadata.tables:
+    IdentityAction.__table__.to_metadata(TestBase.metadata)
+if "email_outbox" not in TestBase.metadata.tables:
+    EmailOutbox.__table__.to_metadata(TestBase.metadata)
+if "identity_rate_limits" not in TestBase.metadata.tables:
+    IdentityRateLimit.__table__.to_metadata(TestBase.metadata)
 if "profissionais" not in TestBase.metadata.tables:
     Profissional.__table__.to_metadata(TestBase.metadata)
 

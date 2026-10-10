@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     secret_key: SecretStr
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    identity_token_expire_minutes: int = 60
+    identity_token_base_url: str = "http://localhost:3000"
+    email_provider: str = "noop"
+    identity_recovery_rate_limit: int = 5
+    identity_recovery_rate_window_seconds: int = 60
+    identity_worker_poll_seconds: int = 5
 
 
 @lru_cache
