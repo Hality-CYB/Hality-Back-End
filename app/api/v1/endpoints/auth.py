@@ -13,6 +13,8 @@ credenciais e as duas strategies (`get_jwt_strategy`, `get_refresh_strategy`)
 para emitir/validar os tokens.
 """
 
+import time
+from collections import defaultdict, deque
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -20,10 +22,23 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users.authentication.strategy import DatabaseStrategy, JWTStrategy
 from fastapi_users.router.common import ErrorCode
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import UserManager, get_jwt_strategy, get_refresh_strategy, get_user_manager
 from app.core.config import get_settings
+from app.db.session import get_db
 from app.models.user import User
+from app.schemas.identity import (
+    PasswordRecoveryConfirm,
+    PasswordRecoveryRequest,
+    PasswordRecoveryResponse,
+)
+from app.services.identity_token_service import (
+    InvalidIdentityTokenError,
+    consume_invitation,
+    consume_password_reset,
+    request_password_recovery,
+)
 
 router = APIRouter()
 
@@ -31,6 +46,20 @@ REFRESH_COOKIE_NAME = "refresh_token"
 # Só é enviado pelo navegador em chamadas dentro deste path — nunca em
 # /anamneses, /diagnosticos, /users/me etc.
 REFRESH_COOKIE_PATH = "/api/v1/auth"
+PASSWORD_RECOVERY_MESSAGE = "Se o endereço estiver cadastrado, enviaremos instruções."
+_recovery_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
+
+
+def _rate_limited(key: str) -> bool:
+    settings = get_settings()
+    now = time.monotonic()
+    attempts = _recovery_attempts[key]
+    while attempts and now - attempts[0] >= settings.identity_recovery_rate_window_seconds:
+        attempts.popleft()
+    if len(attempts) >= settings.identity_recovery_rate_limit:
+        return True
+    attempts.append(now)
+    return False
 
 
 class AccessTokenResponse(BaseModel):
@@ -129,3 +158,49 @@ async def logout(
         if user is not None:
             await refresh_strategy.destroy_token(refresh_token, user)
     _limpar_cookie_refresh(response)
+
+
+@router.post(
+    "/password-recovery",
+    response_model=PasswordRecoveryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    name="auth:password-recovery",
+)
+async def password_recovery(
+    payload: PasswordRecoveryRequest,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PasswordRecoveryResponse:
+    """Solicita recuperação sem revelar a existência do endereço."""
+    client_host = request.client.host if request.client else "unknown"
+    if not _rate_limited(f"{client_host}:{payload.email}"):
+        await request_password_recovery(db, str(payload.email))
+    return PasswordRecoveryResponse(message=PASSWORD_RECOVERY_MESSAGE)
+
+
+@router.post("/password-recovery/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def password_recovery_confirm(
+    payload: PasswordRecoveryConfirm,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    try:
+        await consume_password_reset(db, payload.token, payload.senha)
+    except InvalidIdentityTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TOKEN_DE_RECUPERACAO_INVALIDO",
+        ) from exc
+
+
+@router.post("/invitation/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def invitation_confirm(
+    payload: PasswordRecoveryConfirm,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    try:
+        await consume_invitation(db, payload.token, payload.senha)
+    except InvalidIdentityTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TOKEN_DE_CONVITE_INVALIDO",
+        ) from exc
