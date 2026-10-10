@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     email_provider: str = "noop"
     identity_recovery_rate_limit: int = 5
     identity_recovery_rate_window_seconds: int = 60
+    identity_worker_poll_seconds: int = 5
 
 
 @lru_cache
