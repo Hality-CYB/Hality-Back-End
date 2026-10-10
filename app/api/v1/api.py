@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     admin_diagnosticos,
+    admin_resumo,
     admin_usuarios,
     admin_vinculos,
     anamnese,
@@ -28,6 +29,8 @@ api_router.include_router(conteudo_admin.router)
 api_router.include_router(diagnostico.router)
 
 api_router.include_router(admin_diagnosticos.router)
+
+api_router.include_router(admin_resumo.router)
 
 api_router.include_router(home.router)
 
