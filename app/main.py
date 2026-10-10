@@ -1,12 +1,29 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.api import api_router
 from app.core.config import get_settings
+from app.db.auditoria_queries import ChaveOperacaoReutilizadaError
 
 settings = get_settings()
 
 app = FastAPI(title=settings.project_name, debug=settings.debug)
+
+
+@app.exception_handler(ChaveOperacaoReutilizadaError)
+async def chave_operacao_reutilizada_handler(
+    request: Request, exc: ChaveOperacaoReutilizadaError
+) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": "Idempotency-Key já utilizada"})
+
+
+@app.exception_handler(IntegrityError)
+async def integridade_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """Converte conflitos de integridade em resposta pública sem detalhes do banco."""
+    return JSONResponse(status_code=409, content={"detail": "conflito com o estado atual"})
+
 
 app.add_middleware(
     CORSMiddleware,

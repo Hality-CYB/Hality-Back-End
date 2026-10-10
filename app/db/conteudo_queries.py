@@ -70,19 +70,16 @@ async def listar_classificacao_ids_existentes(
 async def inserir(db: AsyncSession, valores: dict) -> Conteudo:
     conteudo = Conteudo(**valores)
     db.add(conteudo)
-    await db.commit()
-    await db.refresh(conteudo)
+    await db.flush()
     return conteudo
 
 
 async def atualizar(db: AsyncSession, conteudo: Conteudo, valores: dict) -> Conteudo:
     for campo, valor in valores.items():
         setattr(conteudo, campo, valor)
-    await db.commit()
-    await db.refresh(conteudo)
+    await db.flush()
     return conteudo
 
 
 async def deletar(db: AsyncSession, conteudo: Conteudo) -> None:
     await db.delete(conteudo)
-    await db.commit()

@@ -14,8 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import password_helper
+from app.db import auditoria_queries, user_queries
 from app.db import paciente_profissional_queries as vinculo_queries
-from app.db import user_queries
 from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.admin_usuario import (
@@ -106,9 +106,22 @@ async def obter_usuario(db: AsyncSession, usuario_id: uuid.UUID) -> AdminUsuario
     return _para_detalhe(*encontrado)
 
 
-async def criar_usuario(db: AsyncSession, dados: AdminUsuarioCreate) -> AdminUsuarioDetail:
+async def criar_usuario(
+    db: AsyncSession,
+    dados: AdminUsuarioCreate,
+    actor: User,
+    operation_key: str | None = None,
+) -> AdminUsuarioDetail:
     if await user_queries.email_em_uso(db, dados.email):
         raise EmailJaCadastradoError
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.criar",
+        resource="usuario",
+        resource_id="novo",
+        operation_key=operation_key,
+    )
 
     try:
         usuario = await user_queries.criar_usuario(
@@ -125,6 +138,15 @@ async def criar_usuario(db: AsyncSession, dados: AdminUsuarioCreate) -> AdminUsu
             profissional = await user_queries.criar_profissional(
                 db, usuario.id, **dados_profissional.model_dump()
             )
+        await auditoria_queries.registrar_mutacao(
+            db,
+            actor,
+            "usuario.criar",
+            "usuario",
+            usuario.id,
+            metadata={"role": str(dados.role)},
+            operation_key=operation_key,
+        )
         await db.commit()
 
     except IntegrityError as exc:
@@ -191,7 +213,11 @@ async def _aplicar_troca_de_role(
 
 
 async def atualizar_usuario(
-    db: AsyncSession, usuario_id: uuid.UUID, dados: AdminUsuarioUpdate
+    db: AsyncSession,
+    usuario_id: uuid.UUID,
+    dados: AdminUsuarioUpdate,
+    actor: User,
+    operation_key: str | None = None,
 ) -> AdminUsuarioDetail:
     encontrado = await user_queries.buscar_usuario_com_profissional(db, usuario_id)
     if encontrado is None:
@@ -199,6 +225,14 @@ async def atualizar_usuario(
     usuario, profissional = encontrado
 
     campos = dados.model_dump(exclude_unset=True)
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.desativar" if campos.get("ativo") is False else "usuario.editar",
+        resource="usuario",
+        resource_id=usuario.id,
+        operation_key=operation_key,
+    )
     await _garantir_outro_admin_se_perder_acesso(db, usuario, campos)
 
     nova_role = campos.get("role")
@@ -208,20 +242,50 @@ async def atualizar_usuario(
     for campo, valor in campos.items():
         setattr(usuario, _COLUNAS_USUARIO[campo], valor)
 
+    await auditoria_queries.registrar_mutacao(
+        db,
+        actor,
+        "usuario.desativar" if campos.get("ativo") is False else "usuario.editar",
+        "usuario",
+        usuario.id,
+        metadata={"campos": sorted(campos)},
+        operation_key=operation_key,
+    )
     await db.commit()
     return _para_detalhe(usuario, profissional)
 
 
 async def atualizar_profissional(
-    db: AsyncSession, usuario_id: uuid.UUID, dados: AdminProfissionalUpdate
+    db: AsyncSession,
+    usuario_id: uuid.UUID,
+    dados: AdminProfissionalUpdate,
+    actor: User,
+    operation_key: str | None = None,
 ) -> AdminUsuarioDetail:
     encontrado = await user_queries.buscar_usuario_com_profissional(db, usuario_id)
     if encontrado is None or encontrado[1] is None:
         raise ProfissionalNaoEncontradoError
     usuario, profissional = encontrado
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.profissional.editar",
+        resource="profissional",
+        resource_id=usuario.id,
+        operation_key=operation_key,
+    )
 
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(profissional, campo, valor)
 
+    await auditoria_queries.registrar_mutacao(
+        db,
+        actor,
+        "usuario.profissional.editar",
+        "profissional",
+        usuario.id,
+        metadata={"campos": sorted(dados.model_dump(exclude_unset=True))},
+        operation_key=operation_key,
+    )
     await db.commit()
     return _para_detalhe(usuario, profissional)

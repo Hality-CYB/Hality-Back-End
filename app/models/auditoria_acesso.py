@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -31,8 +31,12 @@ class AuditoriaAcesso(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     acao: Mapped[str] = mapped_column(String(50))
+    papel: Mapped[str | None] = mapped_column(String(20), nullable=True)
     recurso_tipo: Mapped[str] = mapped_column(String(50))
     recurso_id: Mapped[str] = mapped_column(String(50))
+    resultado: Mapped[str] = mapped_column(String(20), default="sucesso", nullable=False)
+    metadados: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    chave_operacao: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

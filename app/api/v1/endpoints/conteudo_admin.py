@@ -1,8 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 
-from app.api.deps import CurrentAdminDep, DbSession, LimiteQuery, PaginaQuery
+from app.api.deps import (
+    CurrentAdminDep,
+    CurrentAdminMutationDep,
+    DbSession,
+    LimiteQuery,
+    PaginaQuery,
+)
 from app.schemas.conteudo import (
     CategoriaConteudo,
     ConteudoCreate,
@@ -33,10 +39,13 @@ def _traduzir_erro(
 
 @router.post("", response_model=ConteudoDetail, status_code=status.HTTP_201_CREATED)
 async def criar_conteudo(
-    payload: ConteudoCreate, admin: CurrentAdminDep, db: DbSession
+    payload: ConteudoCreate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> ConteudoDetail:
     try:
-        return await conteudo_service.criar(db, admin.id, payload)
+        return await conteudo_service.criar(db, admin.id, payload, admin, idempotency_key)
     except conteudo_service.ClassificacaoNaoEncontradaError as exc:
         raise _traduzir_erro(exc) from exc
 
@@ -85,11 +94,14 @@ async def obter_conteudo(conteudo_id: int, admin: CurrentAdminDep, db: DbSession
 async def atualizar_conteudo(
     conteudo_id: int,
     payload: ConteudoUpdate,
-    admin: CurrentAdminDep,
+    admin: CurrentAdminMutationDep,
     db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> ConteudoDetail:
     try:
-        return await conteudo_service.atualizar(db, admin.id, conteudo_id, payload)
+        return await conteudo_service.atualizar(
+            db, admin.id, conteudo_id, payload, admin, idempotency_key
+        )
     except (
         conteudo_service.ConteudoNaoEncontradoError,
         conteudo_service.ClassificacaoNaoEncontradaError,
@@ -98,9 +110,14 @@ async def atualizar_conteudo(
 
 
 @router.delete("/{conteudo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def deletar_conteudo(conteudo_id: int, admin: CurrentAdminDep, db: DbSession) -> Response:
+async def deletar_conteudo(
+    conteudo_id: int,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+) -> Response:
     try:
-        await conteudo_service.deletar(db, conteudo_id)
+        await conteudo_service.deletar(db, conteudo_id, admin, idempotency_key)
     except conteudo_service.ConteudoNaoEncontradoError as exc:
         raise _traduzir_erro(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

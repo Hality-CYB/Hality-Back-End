@@ -3,9 +3,15 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 
-from app.api.deps import DbSession, LimiteQuery, PaginaQuery, require_admin
+from app.api.deps import (
+    CurrentAdminDep,
+    CurrentAdminMutationDep,
+    DbSession,
+    LimiteQuery,
+    PaginaQuery,
+)
 from app.schemas.paciente_profissional import (
     AdminVinculoCreate,
     AdminVinculoDetail,
@@ -17,7 +23,6 @@ from app.services import vinculo_service
 router = APIRouter(
     prefix="/admin/vinculos",
     tags=["admin-vinculos"],
-    dependencies=[Depends(require_admin)],
 )
 
 
@@ -37,6 +42,7 @@ def _entidade_invalida(motivo: str) -> HTTPException:
 
 @router.get("", response_model=AdminVinculoListResponse)
 async def listar_vinculos(
+    admin: CurrentAdminDep,
     db: DbSession,
     pagina: PaginaQuery = 1,
     limite: LimiteQuery = 20,
@@ -55,10 +61,15 @@ async def listar_vinculos(
 
 
 @router.post("", response_model=AdminVinculoDetail, status_code=status.HTTP_201_CREATED)
-async def criar_vinculo(dados: AdminVinculoCreate, db: DbSession) -> AdminVinculoDetail:
+async def criar_vinculo(
+    dados: AdminVinculoCreate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+) -> AdminVinculoDetail:
     try:
         return await vinculo_service.criar_vinculo_admin(
-            db, dados.paciente_id, dados.profissional_id
+            db, dados.paciente_id, dados.profissional_id, admin, idempotency_key
         )
 
     except (
@@ -73,10 +84,16 @@ async def criar_vinculo(dados: AdminVinculoCreate, db: DbSession) -> AdminVincul
 
 @router.patch("/{vinculo_id}", response_model=AdminVinculoDetail)
 async def atualizar_vinculo(
-    vinculo_id: int, dados: AdminVinculoUpdate, db: DbSession
+    vinculo_id: int,
+    dados: AdminVinculoUpdate,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
 ) -> AdminVinculoDetail:
     try:
-        return await vinculo_service.atualizar_vinculo_admin(db, vinculo_id, dados.ativo)
+        return await vinculo_service.atualizar_vinculo_admin(
+            db, vinculo_id, dados.ativo, admin, idempotency_key
+        )
 
     except vinculo_service.VinculoNaoEncontradoError as exc:
         raise _vinculo_nao_encontrado() from exc
@@ -92,9 +109,14 @@ async def atualizar_vinculo(
 
 
 @router.delete("/{vinculo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def encerrar_vinculo(vinculo_id: int, db: DbSession) -> None:
+async def encerrar_vinculo(
+    vinculo_id: int,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+) -> None:
     try:
-        await vinculo_service.encerrar_vinculo_admin(db, vinculo_id)
+        await vinculo_service.encerrar_vinculo_admin(db, vinculo_id, admin, idempotency_key)
 
     except vinculo_service.VinculoNaoEncontradoError as exc:
         raise _vinculo_nao_encontrado() from exc
