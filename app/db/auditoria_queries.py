@@ -121,13 +121,19 @@ def _validar_reutilizacao(
 
 
 def _eh_colisao_chave_operacao(exc: IntegrityError) -> bool:
-    original = exc.orig
-    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
-    diagnostico = getattr(original, "diag", None)
-    constraint_name = getattr(original, "constraint_name", None) or getattr(
-        diagnostico, "constraint_name", None
-    )
-    return sqlstate == "23505" and constraint_name == "uq_auditoria_acessos_chave_operacao"
+    atual: BaseException | None = exc.orig
+    visitadas: set[int] = set()
+    while atual is not None and id(atual) not in visitadas:
+        visitadas.add(id(atual))
+        sqlstate = getattr(atual, "sqlstate", None) or getattr(atual, "pgcode", None)
+        diagnostico = getattr(atual, "diag", None)
+        constraint_name = getattr(atual, "constraint_name", None) or getattr(
+            diagnostico, "constraint_name", None
+        )
+        if sqlstate == "23505" and constraint_name == "uq_auditoria_acessos_chave_operacao":
+            return True
+        atual = getattr(atual, "__cause__", None) or getattr(atual, "__context__", None)
+    return False
 
 
 async def registrar_acesso(

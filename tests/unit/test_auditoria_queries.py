@@ -8,16 +8,23 @@ from app.db import auditoria_queries
 
 
 class _ErroIntegridade:
-    def __init__(self, sqlstate: str, constraint_name: str) -> None:
+    def __init__(
+        self, sqlstate: str, constraint_name: str | None, cause: BaseException | None = None
+    ) -> None:
         self.sqlstate = sqlstate
         self.constraint_name = constraint_name
+        self.__cause__ = cause
 
 
 class _SessaoComColisao:
     def __init__(self, erro=None) -> None:
         self.adicionado = None
         self.rollback_count = 0
-        self.erro = erro or _ErroIntegridade("23505", "uq_auditoria_acessos_chave_operacao")
+        self.erro = erro or _ErroIntegridade(
+            "23505",
+            None,
+            _ErroIntegridade("23505", "uq_auditoria_acessos_chave_operacao"),
+        )
 
     async def scalar(self, statement):
         return None
@@ -27,7 +34,7 @@ class _SessaoComColisao:
 
     async def flush(self) -> None:
         raise IntegrityError(
-            "insert",
+            "INSERT INTO auditoria_acessos (chave_operacao) VALUES (...) ",
             {},
             self.erro,
         )
@@ -61,7 +68,7 @@ class _SessaoConcorrente:
         await self.corrida.flushes_prontos.wait()
         if self.corrida.vencedor_definido:
             raise IntegrityError(
-                "insert",
+                "INSERT INTO auditoria_acessos (chave_operacao) VALUES (...) ",
                 {},
                 _ErroIntegridade("23505", "uq_auditoria_acessos_chave_operacao"),
             )
