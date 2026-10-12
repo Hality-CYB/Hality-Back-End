@@ -23,6 +23,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from app.auth.users import current_active_user
+from app.db import diagnostico_queries
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -30,6 +31,7 @@ from app.models import (
     AuditoriaAcesso,
     ClassificacaoDiagnostico,
     Diagnostico,
+    DiagnosticoRevisao,
     Imagem,
     User,
 )
@@ -56,6 +58,7 @@ TABELAS = [
     ClassificacaoDiagnostico.__table__,
     Diagnostico.__table__,
     Imagem.__table__,
+    DiagnosticoRevisao.__table__,
     AuditoriaAcesso.__table__,
 ]
 
@@ -161,6 +164,16 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
                 parametros_captura={"iso": 100},
             )
         )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d1.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=normal.id,
+                observacao="ok",
+                versao=1,
+                criado_em=DATA_BASE + timedelta(days=1),
+            )
+        )
         await db.commit()
 
         return {"d": {"d1": d1, "d2": d2, "d3": d3, "d4": d4, "d5": d5}}
@@ -239,15 +252,22 @@ async def test_lista_admin_sem_filtros_traz_todos_e_minimiza_dados(http, dados, 
         assert set(item) == {
             "id",
             "paciente_id",
-            "data_diagnostico",
+            "paciente",
+            "data",
             "status",
-            "classificacao",
-            "tem_revisao",
+            "automatica",
+            "revisao",
+            "qtd_imagens",
         }
 
     bruto = r.text
-    for proibido in ("imagens", "url_arquivo", "anamnese", "respostas", "segredo.jpg", "email"):
+    for proibido in ("url_arquivo", "anamnese", "respostas", "segredo.jpg", "email"):
         assert proibido not in bruto
+    por_id = {item["id"]: item for item in corpo["itens"]}
+    assert por_id[dados["d"]["d1"].id]["qtd_imagens"] == 1
+    assert all(
+        item["qtd_imagens"] == 0 for item in corpo["itens"] if item["id"] != dados["d"]["d1"].id
+    )
 
 
 async def test_filtra_por_status(http, dados, como) -> None:
@@ -258,13 +278,30 @@ async def test_filtra_por_status(http, dados, como) -> None:
     assert {i["status"] for i in r.json()["itens"]} == {"concluido"}
 
 
+async def test_lista_usa_uma_consulta_agregada_de_imagens(http, dados, como, monkeypatch) -> None:
+    como("admin")
+    chamadas = 0
+
+    async def contar_em_lote(db, diagnostico_ids):
+        nonlocal chamadas
+        chamadas += 1
+        return {dados["d"]["d1"].id: 1}
+
+    monkeypatch.setattr(diagnostico_queries, "contar_imagens_por_diagnosticos", contar_em_lote)
+
+    resposta = await http.get(BASE)
+
+    assert resposta.status_code == 200
+    assert chamadas == 1
+
+
 async def test_filtra_por_classificacao_codigo(http, dados, como) -> None:
     como("admin")
     r = await http.get(BASE, params={"classificacao": "halitose_intima"})
 
     corpo = r.json()
     assert corpo["total"] == 1
-    assert corpo["itens"][0]["classificacao"]["codigo"] == "halitose_intima"
+    assert corpo["itens"][0]["automatica"]["classificacao"]["codigo"] == "halitose_intima"
 
 
 async def test_filtra_por_paciente(http, dados, como) -> None:
@@ -304,7 +341,7 @@ async def test_sem_classificacao_traz_processando_e_falha(http, dados, como) -> 
     corpo = r.json()
     assert corpo["total"] == 2
     assert {i["status"] for i in corpo["itens"]} == {"processando", "falha"}
-    assert all(i["classificacao"] is None for i in corpo["itens"])
+    assert all(i["automatica"]["classificacao"] is None for i in corpo["itens"])
 
 
 async def test_total_reflete_filtro_e_nao_a_pagina(http, dados, como) -> None:
@@ -395,11 +432,17 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
 
     assert corpo["dataset"] == {
         "disponivel": False,
-        "motivo": "pendente de decisão DEC-04/DEC-07",
+        "motivo": "exportacao_fora_do_escopo",
+    }
+    assert corpo["imagem"] == {
+        "disponivel": False,
+        "motivo": "politica_de_acesso_pendente",
     }
 
     assert corpo["qtd_imagens"] == 1
     assert corpo["anamnese_id"] == 1
+    assert [item["observacoes"] for item in corpo["historico_revisoes"]] == ["ok"]
+    assert corpo["historico_revisoes"][0]["classificacao"]["codigo"] == "halito_normal"
 
 
 async def test_detalhe_minimiza_dados_sensiveis(http, dados, como) -> None:
@@ -430,8 +473,158 @@ async def test_detalhe_sem_classificacao_e_sem_revisao(http, dados, como) -> Non
         "escala_saburra": None,
         "confianca_ia": None,
     }
-    assert corpo["revisao"] is None
+    assert corpo["revisao"]["status"] == "pendente"
     assert corpo["erro"] == "timeout do modelo"
+
+
+async def test_detalhe_revisao_legada_sem_historico(http, dados, como) -> None:
+    como("admin")
+    d2 = dados["d"]["d2"]
+
+    response = await http.get(f"{BASE}/{d2.id}")
+
+    assert response.status_code == 200
+    corpo = response.json()
+    assert corpo["revisao"]["status"] == "pendente"
+    assert corpo["historico_revisoes"] == []
+
+
+async def test_detalhe_separa_classificacao_ia_da_revisada(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    d2 = dados["d"]["d2"]
+
+    async with session_factory() as db:
+        social = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "mau_halito_social"
+            )
+        )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d2.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=social.id,
+                observacao="classificação revisada",
+                versao=1,
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d2.id}")).json()
+
+    assert corpo["automatica"]["classificacao"]["codigo"] == "halitose_intima"
+    assert corpo["historico_revisoes"][0]["classificacao"]["codigo"] == "mau_halito_social"
+    assert corpo["revisao"]["status"] == "concluida"
+
+
+async def test_detalhe_multiplas_revisoes_ordena_e_reflete_a_ultima(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    d2 = dados["d"]["d2"]
+
+    async with session_factory() as db:
+        normal = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halito_normal"
+            )
+        )
+        social = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "mau_halito_social"
+            )
+        )
+        db.add_all(
+            [
+                DiagnosticoRevisao(
+                    diagnostico_id=d2.id,
+                    profissional_id=PROFISSIONAL_ID,
+                    classificacao_id=normal.id,
+                    observacao="primeira",
+                    versao=1,
+                ),
+                DiagnosticoRevisao(
+                    diagnostico_id=d2.id,
+                    profissional_id=PROFISSIONAL_ID,
+                    classificacao_id=social.id,
+                    observacao="segunda",
+                    versao=2,
+                ),
+            ]
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d2.id}")).json()
+
+    assert [item["observacoes"] for item in corpo["historico_revisoes"]] == [
+        "primeira",
+        "segunda",
+    ]
+    assert corpo["revisao"]["observacoes"] == "segunda"
+
+
+async def test_lista_nula_resultado_mesmo_com_valores_legados(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    async with session_factory() as db:
+        for chave in ("d4", "d5"):
+            diagnostico = dados["d"][chave]
+            diagnostico.escala_saburra = 4
+            diagnostico.confianca_ia = 0.42
+        await db.commit()
+
+    itens = (await http.get(BASE)).json()["itens"]
+    por_id = {item["id"]: item for item in itens}
+
+    for chave in ("d4", "d5"):
+        automatica = por_id[dados["d"][chave].id]["automatica"]
+        assert automatica["classificacao"] is None
+        assert automatica["escala_saburra"] is None
+        assert automatica["confianca_ia"] is None
+
+
+async def test_historico_preserva_revisor_removido(http, dados, como, session_factory) -> None:
+    como("admin")
+    d2 = dados["d"]["d2"]
+    revisor_id = uuid.UUID("00000000-0000-0000-0000-0000000000d1")
+
+    async with session_factory() as db:
+        normal = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halito_normal"
+            )
+        )
+        db.add(
+            User(
+                id=revisor_id,
+                name="Revisor removível",
+                email="revisor.removivel@hality.local",
+                hashed_password="x",
+                role="profissional",
+            )
+        )
+        await db.flush()
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d2.id,
+                profissional_id=revisor_id,
+                classificacao_id=normal.id,
+                observacao="mantida",
+                versao=1,
+            )
+        )
+        await db.commit()
+        await db.delete(await db.get(User, revisor_id))
+        await db.commit()
+
+    response = await http.get(f"{BASE}/{d2.id}")
+
+    assert response.status_code == 200
+    historico = response.json()["historico_revisoes"]
+    assert historico[0]["profissional_revisor_id"] == str(revisor_id)
 
 
 async def test_detalhe_inexistente_retorna_404_sem_auditoria(
@@ -477,6 +670,20 @@ async def test_abrir_detalhe_registra_auditoria(http, dados, como, session_facto
     assert registros[0].recurso_tipo == "diagnostico"
     assert registros[0].recurso_id == str(d2.id)
     assert registros[0].criado_em is not None
+    serializado = {
+        coluna.name: getattr(registros[0], coluna.name)
+        for coluna in AuditoriaAcesso.__table__.columns
+    }
+    texto_auditoria = str(serializado).lower()
+    for proibido in (
+        "halitose",
+        "observacoes",
+        "paciente a",
+        "escala_saburra",
+        "confianca_ia",
+        "timeout",
+    ):
+        assert proibido not in texto_auditoria
 
     # cada abertura gera um registro
     await http.get(f"{BASE}/{d2.id}")
