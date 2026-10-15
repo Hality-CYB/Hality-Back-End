@@ -27,16 +27,61 @@ router = APIRouter(
 @router.get("", response_model=AdminDiagnosticoListResponse)
 async def listar_diagnosticos_admin(
     db: DbSession,
-    paciente_id: Annotated[uuid.UUID | None, Query()] = None,
-    classificacao: Annotated[str | None, Query(description="código da classificação")] = None,
-    sem_classificacao: Annotated[bool, Query()] = False,
-    status_diagnostico: Annotated[str | None, Query(alias="status")] = None,
-    data_inicio: Annotated[str | None, Query()] = None,
-    data_fim: Annotated[str | None, Query()] = None,
-    pagina: Annotated[int, Query()] = 1,
-    limite: Annotated[int, Query()] = 20,
-    ordem: Annotated[str, Query()] = "data_desc",
+    paciente_id: Annotated[
+        uuid.UUID | None, Query(description="filtra pelo paciente; UUID")
+    ] = None,
+    classificacao: Annotated[
+        str | None, Query(description="código da classificação automática")
+    ] = None,
+    sem_classificacao: Annotated[
+        bool, Query(description="somente diagnósticos sem classificação automática")
+    ] = False,
+    status_diagnostico: Annotated[
+        str | None,
+        Query(
+            alias="status",
+            description=("status: processando, falha, aguardando_revisao ou concluido"),
+        ),
+    ] = None,
+    data_inicio: Annotated[
+        str | None,
+        Query(
+            description=(
+                "data inicial inclusiva; YYYY-MM-DD ou ISO 8601 completo (com timezone opcional)"
+            )
+        ),
+    ] = None,
+    data_fim: Annotated[
+        str | None,
+        Query(
+            description=(
+                "data final inclusiva; YYYY-MM-DD ou ISO 8601 completo (com timezone opcional)"
+            )
+        ),
+    ] = None,
+    pagina: Annotated[
+        int,
+        Query(description="página iniciando em 1; valores menores retornam 400"),
+    ] = 1,
+    limite: Annotated[
+        int,
+        Query(description="itens por página; de 1 a 50; fora da faixa retorna 400"),
+    ] = 20,
+    ordem: Annotated[
+        str, Query(description="ordenação: data_desc ou data_asc; desempate por id")
+    ] = "data_desc",
 ) -> AdminDiagnosticoListResponse:
+    """Lista a fila admin com filtros combináveis e paginação estável.
+
+    ``paciente_id``, ``classificacao`` e ``sem_classificacao`` filtram o
+    conteúdo; ``status`` e ``data_inicio``/``data_fim`` filtram processamento
+    e período inclusivo. ``pagina`` começa em 1, ``limite`` vai de 1 a 50 e
+    ``ordem`` aceita ``data_asc`` ou ``data_desc`` (com desempate por id).
+    ``classificacao`` e ``sem_classificacao`` são mutuamente exclusivos.
+    Erros semânticos de filtro retornam 400, pois são validados pelo service
+    para preservar o contrato existente; somente tipos malformados no parsing
+    do FastAPI, como um UUID inválido, retornam 422.
+    """
     try:
         return await diagnostico_service.listar_diagnosticos_admin(
             db=db,

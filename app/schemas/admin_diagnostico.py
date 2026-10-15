@@ -1,38 +1,27 @@
-"""Contratos da consulta administrativa de diagnósticos (US-120).
+"""Contratos de leitura administrativa de diagnósticos.
 
-Princípios (DELTA-08):
-- Lista SEM imagem e SEM anamnese.
-- Detalhe expõe só o contexto necessário à curadoria.
-- Classificação automática, revisão profissional e dataset são blocos
-  DISTINTOS — nunca um campo único que misture os três.
-- Nada aqui representa rótulo de treino: sem DEC-04/DEC-07 ele não existe.
+As respostas não expõem respostas de anamnese, URLs de imagens ou dados de
+exportação. A revisão histórica é somente leitura e preserva a ordem das
+versões gravadas.
 """
+
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo, StatusDiagnostico
 
-MOTIVO_DATASET_INDISPONIVEL = "pendente de decisão DEC-04/DEC-07"
+MOTIVO_IMAGEM_INDISPONIVEL = "politica_de_acesso_pendente"
+MOTIVO_DATASET_INDISPONIVEL = "exportacao_fora_do_escopo"
 
 
-class AdminDiagnosticoItem(BaseModel):
-    id: int
-    paciente_id: uuid.UUID
-    data_diagnostico: datetime
-    status: StatusDiagnostico
-    classificacao: ClassificacaoDiagnosticoResumo | None  # automática (IA)
-    tem_revisao: bool
-
-
-class AdminDiagnosticoListResponse(BaseModel):
-    itens: list[AdminDiagnosticoItem]
-    pagina: int
-    limite: int
-    total: int
-    total_paginas: int
+class PacienteAdminResumo(BaseModel):
+    id: uuid.UUID
+    nome: str
 
 
 class ClassificacaoAutomatica(BaseModel):
@@ -43,11 +32,50 @@ class ClassificacaoAutomatica(BaseModel):
     confianca_ia: float | None
 
 
+class RevisaoResumo(BaseModel):
+    status: Literal["pendente", "concluida"]
+    profissional_revisor_id: uuid.UUID | None
+    profissional_revisor_nome: str | None
+    data_revisao: datetime | None
+    classificacao: ClassificacaoDiagnosticoResumo | None
+    observacoes: str | None
+
+
+class RevisaoHistorica(BaseModel):
+    profissional_revisor_id: uuid.UUID
+    profissional_revisor_nome: str | None
+    data_revisao: datetime
+    classificacao: ClassificacaoDiagnosticoResumo
+    observacoes: str | None
+
+
+class AdminDiagnosticoItem(BaseModel):
+    id: int
+    paciente_id: uuid.UUID
+    paciente: PacienteAdminResumo
+    data: datetime
+    status: StatusDiagnostico
+    automatica: ClassificacaoAutomatica
+    revisao: RevisaoResumo
+    qtd_imagens: int
+
+
+class AdminDiagnosticoListResponse(BaseModel):
+    itens: list[AdminDiagnosticoItem]
+    pagina: int
+    limite: int
+    total: int
+    total_paginas: int
+
+
 class RevisaoProfissional(BaseModel):
     """Validação clínica feita por um profissional. Não é rótulo de treino."""
 
-    profissional_revisor_id: uuid.UUID
-    data_revisao: datetime
+    status: Literal["pendente", "concluida"]
+    profissional_revisor_id: uuid.UUID | None
+    profissional_revisor_nome: str | None
+    data_revisao: datetime | None
+    classificacao: ClassificacaoDiagnosticoResumo | None
     observacoes: str | None
 
 
@@ -62,14 +90,22 @@ class DatasetInfo(BaseModel):
     motivo: str = MOTIVO_DATASET_INDISPONIVEL
 
 
+class ImagemInfo(BaseModel):
+    disponivel: bool = False
+    motivo: str = MOTIVO_IMAGEM_INDISPONIVEL
+
+
 class AdminDiagnosticoDetalhe(BaseModel):
     id: int
     paciente_id: uuid.UUID
-    data_diagnostico: datetime
+    paciente: PacienteAdminResumo
+    data: datetime
     status: StatusDiagnostico
     erro: str | None
     automatica: ClassificacaoAutomatica
-    revisao: RevisaoProfissional | None
+    revisao: RevisaoProfissional
+    historico_revisoes: list[RevisaoHistorica]
     dataset: DatasetInfo
-    anamnese_id: int  # só a referência; respostas NÃO são expostas
-    qtd_imagens: int  # só a contagem; URLs NÃO são expostas
+    anamnese_id: int | None
+    qtd_imagens: int
+    imagem: ImagemInfo

@@ -15,13 +15,18 @@ from app.auth.policies import (
 from app.core.config import get_settings
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
 from app.models.diagnostico import Diagnostico
+from app.models.user import User
 from app.schemas.admin_diagnostico import (
     AdminDiagnosticoDetalhe,
     AdminDiagnosticoItem,
     AdminDiagnosticoListResponse,
     ClassificacaoAutomatica,
     DatasetInfo,
+    ImagemInfo,
+    PacienteAdminResumo,
+    RevisaoHistorica,
     RevisaoProfissional,
+    RevisaoResumo,
 )
 from app.schemas.anamnese import ItemRespostaRegistrada
 from app.schemas.diagnostico import (
@@ -649,6 +654,30 @@ def _foi_revisado(
     return diagnostico.profissional_revisor_id is not None and diagnostico.data_revisao is not None
 
 
+def _valores_revisao_admin(
+    diagnostico: Diagnostico,
+    ultima_revisao: diagnostico_queries.DiagnosticoRevisaoDetalhada | None,
+) -> dict[str, Any]:
+    if ultima_revisao is not None:
+        return {
+            "status": "concluida",
+            "profissional_revisor_id": ultima_revisao.revisao.profissional_id,
+            "profissional_revisor_nome": ultima_revisao.profissional_nome,
+            "data_revisao": ultima_revisao.revisao.criado_em,
+            "classificacao": _resumo_classificacao(ultima_revisao.classificacao),
+            "observacoes": ultima_revisao.revisao.observacao,
+        }
+
+    return {
+        "status": "concluida" if _foi_revisado(diagnostico) else "pendente",
+        "profissional_revisor_id": diagnostico.profissional_revisor_id,
+        "profissional_revisor_nome": None,
+        "data_revisao": diagnostico.data_revisao,
+        "classificacao": None,
+        "observacoes": diagnostico.observacoes_revisao,
+    }
+
+
 def _para_revisao_profissional(
     detalhe: diagnostico_queries.DiagnosticoRevisaoDetalhada,
 ) -> RevisaoProfissionalResumo:
@@ -1025,16 +1054,51 @@ async def listar_diagnosticos_admin(
         limite=limite,
         ordem=ordem_normalizada,
     )
+    diagnostico_ids = [item.diagnostico.id for item in resultado.itens]
+    quantidades_imagens = await diagnostico_queries.contar_imagens_por_diagnosticos(
+        db,
+        diagnostico_ids,
+    )
+    ultimas_revisoes = await diagnostico_queries.buscar_ultimas_revisoes(
+        db,
+        diagnostico_ids,
+    )
 
     return AdminDiagnosticoListResponse(
         itens=[
             AdminDiagnosticoItem(
                 id=item.diagnostico.id,
                 paciente_id=(item.diagnostico.paciente_id),
-                data_diagnostico=(item.diagnostico.data_diagnostico),
+                paciente=PacienteAdminResumo(
+                    id=item.diagnostico.paciente_id,
+                    nome=item.paciente_nome or "",
+                ),
+                data=(item.diagnostico.data_diagnostico),
                 status=item.diagnostico.status,
-                classificacao=(_resumo_classificacao(item.classificacao)),
-                tem_revisao=_foi_revisado(item.diagnostico),
+                automatica=ClassificacaoAutomatica(
+                    classificacao=(
+                        _resumo_classificacao(item.classificacao)
+                        if item.diagnostico.status in STATUS_COM_RESULTADO
+                        else None
+                    ),
+                    escala_saburra=(
+                        item.diagnostico.escala_saburra
+                        if item.diagnostico.status in STATUS_COM_RESULTADO
+                        else None
+                    ),
+                    confianca_ia=(
+                        item.diagnostico.confianca_ia
+                        if item.diagnostico.status in STATUS_COM_RESULTADO
+                        else None
+                    ),
+                ),
+                revisao=RevisaoResumo(
+                    **_valores_revisao_admin(
+                        item.diagnostico,
+                        ultimas_revisoes.get(item.diagnostico.id),
+                    )
+                ),
+                qtd_imagens=quantidades_imagens.get(item.diagnostico.id, 0),
             )
             for item in resultado.itens
         ],
@@ -1064,6 +1128,10 @@ async def obter_diagnostico_admin(
     if diagnostico is None:
         raise DiagnosticoNaoEncontradoError
 
+    paciente = await db.get(User, diagnostico.paciente_id)
+    if paciente is None:
+        raise DiagnosticoNaoEncontradoError
+
     classificacao = None
 
     if diagnostico.classificacao_id is not None:
@@ -1076,30 +1144,40 @@ async def obter_diagnostico_admin(
         db,
         diagnostico.id,
     )
+    historico = await diagnostico_queries.listar_revisoes(db, diagnostico.id)
+    ultima_revisao = historico[-1] if historico else None
+    tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
+    classificacao_automatica = _resumo_classificacao(classificacao) if tem_resultado else None
+
+    revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
 
     detalhe = AdminDiagnosticoDetalhe(
         id=diagnostico.id,
         paciente_id=diagnostico.paciente_id,
-        data_diagnostico=(diagnostico.data_diagnostico),
+        paciente=PacienteAdminResumo(id=paciente.id, nome=paciente.name),
+        data=diagnostico.data_diagnostico,
         status=diagnostico.status,
         erro=(diagnostico.erro if diagnostico.status == "falha" else None),
         automatica=ClassificacaoAutomatica(
-            classificacao=(_resumo_classificacao(classificacao)),
-            escala_saburra=(diagnostico.escala_saburra),
-            confianca_ia=(diagnostico.confianca_ia),
+            classificacao=classificacao_automatica,
+            escala_saburra=diagnostico.escala_saburra if tem_resultado else None,
+            confianca_ia=diagnostico.confianca_ia if tem_resultado else None,
         ),
-        revisao=(
-            RevisaoProfissional(
-                profissional_revisor_id=(diagnostico.profissional_revisor_id),
-                data_revisao=(diagnostico.data_revisao),
-                observacoes=(diagnostico.observacoes_revisao),
+        revisao=revisao,
+        historico_revisoes=[
+            RevisaoHistorica(
+                profissional_revisor_id=registro.revisao.profissional_id,
+                profissional_revisor_nome=registro.profissional_nome,
+                data_revisao=registro.revisao.criado_em,
+                classificacao=_resumo_classificacao(registro.classificacao),
+                observacoes=registro.revisao.observacao,
             )
-            if _foi_revisado(diagnostico)
-            else None
-        ),
+            for registro in historico
+        ],
         dataset=DatasetInfo(),
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
+        imagem=ImagemInfo(),
     )
 
     await auditoria_queries.registrar_acesso(

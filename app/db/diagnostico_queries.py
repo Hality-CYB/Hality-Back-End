@@ -30,6 +30,7 @@ class DadosDetalheDiagnostico:
 class DiagnosticoListado:
     diagnostico: Diagnostico
     classificacao: ClassificacaoDiagnostico | None
+    paciente_nome: str | None = None
 
 
 @dataclass
@@ -228,11 +229,13 @@ async def listar_admin(
         select(
             Diagnostico,
             ClassificacaoDiagnostico,
+            User.name,
         )
         .outerjoin(
             ClassificacaoDiagnostico,
             Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
         )
+        .join(User, User.id == Diagnostico.paciente_id)
         .where(*filtros)
         .order_by(*_ordenacao(ordem))
         .offset((pagina - 1) * limite)
@@ -244,8 +247,9 @@ async def listar_admin(
             DiagnosticoListado(
                 diagnostico=diagnostico,
                 classificacao=classificacao,
+                paciente_nome=paciente_nome,
             )
-            for diagnostico, classificacao in result.all()
+            for diagnostico, classificacao, paciente_nome in result.all()
         ],
         total=total,
     )
@@ -359,6 +363,22 @@ async def contar_imagens(
     )
 
     return result.scalar_one()
+
+
+async def contar_imagens_por_diagnosticos(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, int]:
+    """Conta imagens de uma página em uma única consulta agregada."""
+    if not diagnostico_ids:
+        return {}
+
+    result = await db.execute(
+        select(Imagem.diagnostico_id, func.count())
+        .where(Imagem.diagnostico_id.in_(diagnostico_ids))
+        .group_by(Imagem.diagnostico_id)
+    )
+    return {diagnostico_id: quantidade for diagnostico_id, quantidade in result.all()}
 
 
 async def buscar_por_anamnese(
@@ -565,7 +585,9 @@ async def buscar_ultima_revisao(
             ClassificacaoDiagnostico,
             ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
         )
-        .join(
+        # A FK é NOT NULL, mas o usuário pode ser removido; preserve a
+        # revisão histórica mesmo sem o nome do profissional.
+        .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
         )
@@ -612,7 +634,7 @@ async def buscar_ultimas_revisoes(
             ClassificacaoDiagnostico,
             ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
         )
-        .join(
+        .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
         )
@@ -655,7 +677,7 @@ async def listar_revisoes(
             ClassificacaoDiagnostico,
             ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
         )
-        .join(
+        .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
         )
