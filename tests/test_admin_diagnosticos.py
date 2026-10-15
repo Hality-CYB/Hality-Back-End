@@ -428,6 +428,8 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["automatica"]["confianca_ia"] == pytest.approx(0.91)
 
     assert corpo["revisao"]["profissional_revisor_id"] == str(PROFISSIONAL_ID)
+    assert corpo["revisao"]["profissional_revisor_nome"] == "Prof"
+    assert corpo["revisao"]["classificacao"]["codigo"] == "halito_normal"
     assert corpo["revisao"]["observacoes"] == "ok"
 
     assert corpo["dataset"] == {
@@ -443,6 +445,7 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["anamnese_id"] == 1
     assert [item["observacoes"] for item in corpo["historico_revisoes"]] == ["ok"]
     assert corpo["historico_revisoes"][0]["classificacao"]["codigo"] == "halito_normal"
+    assert corpo["historico_revisoes"][0]["profissional_revisor_nome"] == "Prof"
 
 
 async def test_detalhe_minimiza_dados_sensiveis(http, dados, como) -> None:
@@ -474,6 +477,8 @@ async def test_detalhe_sem_classificacao_e_sem_revisao(http, dados, como) -> Non
         "confianca_ia": None,
     }
     assert corpo["revisao"]["status"] == "pendente"
+    assert corpo["revisao"]["profissional_revisor_nome"] is None
+    assert corpo["revisao"]["classificacao"] is None
     assert corpo["erro"] == "timeout do modelo"
 
 

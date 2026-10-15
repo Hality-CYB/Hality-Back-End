@@ -35,12 +35,15 @@ class ClassificacaoAutomatica(BaseModel):
 class RevisaoResumo(BaseModel):
     status: Literal["pendente", "concluida"]
     profissional_revisor_id: uuid.UUID | None
+    profissional_revisor_nome: str | None
     data_revisao: datetime | None
+    classificacao: ClassificacaoDiagnosticoResumo | None
     observacoes: str | None
 
 
 class RevisaoHistorica(BaseModel):
     profissional_revisor_id: uuid.UUID
+    profissional_revisor_nome: str | None
     data_revisao: datetime
     classificacao: ClassificacaoDiagnosticoResumo
     observacoes: str | None
@@ -70,7 +73,9 @@ class RevisaoProfissional(BaseModel):
 
     status: Literal["pendente", "concluida"]
     profissional_revisor_id: uuid.UUID | None
+    profissional_revisor_nome: str | None
     data_revisao: datetime | None
+    classificacao: ClassificacaoDiagnosticoResumo | None
     observacoes: str | None
 
 

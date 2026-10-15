@@ -662,14 +662,18 @@ def _valores_revisao_admin(
         return {
             "status": "concluida",
             "profissional_revisor_id": ultima_revisao.revisao.profissional_id,
+            "profissional_revisor_nome": ultima_revisao.profissional_nome,
             "data_revisao": ultima_revisao.revisao.criado_em,
+            "classificacao": _resumo_classificacao(ultima_revisao.classificacao),
             "observacoes": ultima_revisao.revisao.observacao,
         }
 
     return {
         "status": "concluida" if _foi_revisado(diagnostico) else "pendente",
         "profissional_revisor_id": diagnostico.profissional_revisor_id,
+        "profissional_revisor_nome": None,
         "data_revisao": diagnostico.data_revisao,
+        "classificacao": None,
         "observacoes": diagnostico.observacoes_revisao,
     }
 
@@ -1163,6 +1167,7 @@ async def obter_diagnostico_admin(
         historico_revisoes=[
             RevisaoHistorica(
                 profissional_revisor_id=registro.revisao.profissional_id,
+                profissional_revisor_nome=registro.profissional_nome,
                 data_revisao=registro.revisao.criado_em,
                 classificacao=_resumo_classificacao(registro.classificacao),
                 observacoes=registro.revisao.observacao,
