@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from urllib.parse import quote
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -40,6 +41,7 @@ class EmailMessage:
     recipient: str
     purpose: str
     token: str
+    token_url: str
     correlation_id: str
 
 
@@ -237,6 +239,14 @@ async def dispatch_pending_emails(
 ) -> int:
     """Entrega itens da outbox; falhas ficam disponíveis para retry."""
     now = _now()
+    settings = get_settings()
+    await db.execute(
+        delete(IdentityRateLimit).where(
+            IdentityRateLimit.window_started_at
+            < now - timedelta(seconds=settings.identity_recovery_rate_window_seconds)
+        )
+    )
+    await db.commit()
     rows: Sequence[EmailOutbox] = (
         await db.scalars(
             select(EmailOutbox)
@@ -261,11 +271,16 @@ async def dispatch_pending_emails(
             continue
         outbox.attempts += 1
         try:
+            token = _token_for(action.id, action.purpose)
             await provider.send(
                 EmailMessage(
                     recipient=outbox.recipient_email,
                     purpose=outbox.purpose,
-                    token=_token_for(action.id, action.purpose),
+                    token=token,
+                    token_url=(
+                        f"{settings.identity_token_base_url.rstrip('/')}"
+                        f"?purpose={quote(action.purpose)}&token={quote(token)}"
+                    ),
                     correlation_id=outbox.correlation_id,
                 )
             )

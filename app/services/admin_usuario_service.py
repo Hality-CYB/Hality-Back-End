@@ -8,6 +8,7 @@ Não usa `UserManager.create/update`: o adaptador SQLAlchemy do fastapi-users
 faz commit internamente, o que quebraria a atomicidade de User + Profissional.
 """
 
+import secrets
 import uuid
 
 from sqlalchemy.exc import IntegrityError
@@ -131,7 +132,7 @@ async def criar_usuario(
             email=dados.email,
             phone=dados.telefone,
             role=dados.role,
-            hashed_password=password_helper.hash(dados.senha),
+            hashed_password=password_helper.hash(dados.senha or secrets.token_urlsafe(32)),
         )
         profissional = None
         if dados.role == TipoUsuario.PROFISSIONAL:

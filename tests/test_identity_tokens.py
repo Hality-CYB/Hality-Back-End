@@ -7,7 +7,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import EmailOutbox, IdentityAction, User
+from app.core.config import get_settings
+from app.models import EmailOutbox, IdentityAction, IdentityRateLimit, User
 from app.services.identity_token_service import (
     CONSUMED,
     EXPIRED,
@@ -158,10 +159,36 @@ async def test_outbox_sucesso_e_consumo_de_convite(db_session: AsyncSession) -> 
     assert outbox.status == SENT
     assert action.purpose == INVITATION
     assert messages[0].token != action.token_hash
+    assert messages[0].token in messages[0].token_url
+    assert messages[0].purpose in messages[0].token_url
 
     await consume_invitation(db_session, messages[0].token, "SenhaConvite123!")
     await db_session.refresh(outbox)
     assert outbox.status == CONSUMED
+
+
+@pytest.mark.asyncio
+async def test_outbox_limpa_janelas_de_rate_limit_expiradas(db_session: AsyncSession) -> None:
+    settings = get_settings()
+    agora = datetime.now(UTC)
+    antigo = IdentityRateLimit(
+        key_hash="a" * 64,
+        window_started_at=agora
+        - timedelta(seconds=settings.identity_recovery_rate_window_seconds + 1),
+        attempts=1,
+    )
+    atual = IdentityRateLimit(key_hash="b" * 64, window_started_at=agora, attempts=1)
+    db_session.add_all([antigo, atual])
+    await db_session.commit()
+
+    class Provider:
+        async def send(self, message) -> None:
+            return None
+
+    await dispatch_pending_emails(db_session, Provider())
+
+    assert await db_session.get(IdentityRateLimit, antigo.key_hash) is None
+    assert await db_session.get(IdentityRateLimit, atual.key_hash) is not None
 
 
 @pytest.mark.asyncio

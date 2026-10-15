@@ -26,7 +26,7 @@ class AdminUsuarioCreate(_PayloadAdmin):
     email: EmailStr
     telefone: str | None = Field(None, max_length=20)
     role: TipoUsuario
-    senha: str = Field(..., min_length=SENHA_TAMANHO_MINIMO)
+    senha: str | None = Field(None, min_length=SENHA_TAMANHO_MINIMO)
     enviar_convite: bool = True
     profissional: ProfissionalDados | None = None
 
@@ -34,6 +34,8 @@ class AdminUsuarioCreate(_PayloadAdmin):
     def _profissional_so_para_role_profissional(self) -> Self:
         if self.profissional is not None and self.role != TipoUsuario.PROFISSIONAL:
             raise ValueError("dados de profissional só são aceitos com role profissional")
+        if not self.enviar_convite and self.senha is None:
+            raise ValueError("senha é obrigatória quando o convite não é enviado")
         return self
 
 

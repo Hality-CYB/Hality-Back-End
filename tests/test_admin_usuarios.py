@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.users import current_active_user, password_helper
 from app.db import user_queries
 from app.main import app
-from app.models import PacienteProfissional, Profissional, User
+from app.models import EmailOutbox, PacienteProfissional, Profissional, User
 from tests.conftest import CenarioAdmin, autenticar_como, executar_no_banco
 
 client = TestClient(app)
@@ -220,6 +220,31 @@ def test_criar_usuario_sem_dados_de_profissional(cenario_admin: CenarioAdmin, ro
     assert usuario.hashed_password != payload["senha"]
     assert password_helper.verify_and_update(payload["senha"], usuario.hashed_password)[0]
     assert usuario.is_superuser is False
+
+
+def test_criar_usuario_com_convite_permite_omitir_senha(cenario_admin: CenarioAdmin) -> None:
+    payload = _payload(cenario_admin, "sem-senha", "paciente")
+    payload.pop("senha")
+
+    resposta = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+
+    assert resposta.status_code == 201
+
+    async def _buscar(db: AsyncSession) -> EmailOutbox | None:
+        return await db.scalar(
+            select(EmailOutbox).where(EmailOutbox.recipient_email == payload["email"])
+        )
+
+    assert executar_no_banco(_buscar) is not None
+
+
+def test_criar_usuario_sem_convite_exige_senha(cenario_admin: CenarioAdmin) -> None:
+    payload = _payload(cenario_admin, "sem-convite", "paciente", enviar_convite=False)
+    payload.pop("senha")
+
+    resposta = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+
+    assert resposta.status_code == 422
 
 
 def test_usuario_criado_pelo_admin_consegue_logar(cenario_admin: CenarioAdmin) -> None:
