@@ -21,9 +21,13 @@ from fastapi_users.authentication.strategy import DatabaseStrategy, JWTStrategy
 from fastapi_users.router.common import ErrorCode
 from pydantic import BaseModel
 
+from app.api.deps import DbSession
+from app.auth.policies import CORRELATION_HEADER, definir_correlation_id
 from app.auth.users import UserManager, get_jwt_strategy, get_refresh_strategy, get_user_manager
 from app.core.config import get_settings
 from app.models.user import User
+from app.schemas.user import RegistroCreate, UserRead
+from app.services import consentimento_service, registro_service
 
 router = APIRouter()
 
@@ -67,6 +71,54 @@ async def _emitir_access_e_setar_cookie(
     refresh_token = await refresh_strategy.write_token(user)
     _definir_cookie_refresh(response, refresh_token)
     return AccessTokenResponse(access_token=access_token)
+
+
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    name="register:register",
+)
+async def register(
+    dados: RegistroCreate,
+    request: Request,
+    db: DbSession,
+    user_manager: Annotated[UserManager, Depends(get_user_manager)],
+) -> UserRead:
+    """Cadastro de paciente. Exige o aceite do tratamento de dados de saúde (AC-021)."""
+    try:
+        usuario = await registro_service.registrar_paciente(
+            db,
+            dados,
+            referencia_coleta=definir_correlation_id(request.headers.get(CORRELATION_HEADER)),
+        )
+
+    except consentimento_service.TratamentoObrigatorioError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="o consentimento para tratamento de dados de saúde é obrigatório",
+        ) from exc
+
+    except consentimento_service.DecisaoDuplicadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="finalidade de consentimento repetida",
+        ) from exc
+
+    except consentimento_service.VersaoDesatualizadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"versão do termo desatualizada; versão vigente: {exc.versao_vigente}",
+        ) from exc
+
+    except registro_service.EmailJaCadastradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorCode.REGISTER_USER_ALREADY_EXISTS,
+        ) from exc
+
+    await user_manager.on_after_register(usuario, request)
+    return UserRead.model_validate(usuario)
 
 
 @router.post("/login", response_model=AccessTokenResponse, name="auth:login")

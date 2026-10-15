@@ -19,8 +19,10 @@ from app.schemas.admin_usuario import (
     AdminUsuarioListResponse,
     AdminUsuarioUpdate,
 )
+from app.schemas.consentimento import ConsentimentosResponse
 from app.schemas.usuario import TipoUsuario
 from app.services import admin_usuario_service as service
+from app.services import consentimento_service
 
 router = APIRouter(
     prefix="/admin",
@@ -56,6 +58,17 @@ async def obter_usuario(
 
     except service.UsuarioNaoEncontradoError as exc:
         raise _usuario_nao_encontrado() from exc
+
+
+@router.get("/usuarios/{usuario_id}/consentimentos", response_model=ConsentimentosResponse)
+async def obter_consentimentos_do_usuario(
+    usuario_id: uuid.UUID, admin: CurrentAdminDep, db: DbSession
+) -> ConsentimentosResponse:
+    """Leitura (auditada) do estado de consentimento; o admin nunca decide pelo titular."""
+    estado = await consentimento_service.consultar_estado_como_admin(db, admin, usuario_id)
+    if estado is None:
+        raise _usuario_nao_encontrado()
+    return estado
 
 
 @router.post("/usuarios", response_model=AdminUsuarioDetail, status_code=status.HTTP_201_CREATED)

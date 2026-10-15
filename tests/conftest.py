@@ -55,7 +55,18 @@ from app.auth.users import current_active_user, get_refresh_token_db, get_user_d
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.main import app
-from app.models import Anamnese, Profissional, Questionario, RefreshToken, User
+from app.models import (
+    Anamnese,
+    AuditoriaAcesso,
+    ConsentimentoEvento,
+    Profissional,
+    Questionario,
+    RefreshToken,
+    User,
+)
+
+# Decisões mínimas para um cadastro público válido (só o tratamento é obrigatório).
+CONSENTIMENTOS_CADASTRO = [{"finalidade": "health_data", "versao": "v1", "aceito": True}]
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -82,6 +93,10 @@ if "refresh_tokens" not in TestBase.metadata.tables:
     RefreshToken.__table__.to_metadata(TestBase.metadata)
 if "profissionais" not in TestBase.metadata.tables:
     Profissional.__table__.to_metadata(TestBase.metadata)
+if "auditoria_acessos" not in TestBase.metadata.tables:
+    AuditoriaAcesso.__table__.to_metadata(TestBase.metadata)
+if "consentimento_eventos" not in TestBase.metadata.tables:
+    ConsentimentoEvento.__table__.to_metadata(TestBase.metadata)
 
 
 @pytest_asyncio.fixture
@@ -311,6 +326,8 @@ async def _criar_cenario_admin(db: AsyncSession) -> CenarioAdmin:
 
 def _limpar_cenario_admin(token: str) -> None:
     async def _limpar(db: AsyncSession) -> None:
+        ids = select(User.id).where(User.email.ilike(f"%{token}%"))
+        await db.execute(delete(ConsentimentoEvento).where(ConsentimentoEvento.titular_id.in_(ids)))
         await db.execute(delete(User).where(User.email.ilike(f"%{token}%")))
         await db.commit()
 

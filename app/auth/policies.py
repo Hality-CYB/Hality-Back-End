@@ -93,6 +93,12 @@ def normalizar_papel(role: str | None) -> TipoUsuario | None:
     return _ALIASES_PAPEL.get(role.strip().lower())
 
 
+def papel_canonico(usuario: UsuarioAutenticado) -> str | None:
+    """Papel canônico do ``usuario`` como texto, para gravar em trilhas (ou ``None``)."""
+    papel = normalizar_papel(usuario.role)
+    return papel.value if papel else None
+
+
 def tem_papel(usuario: UsuarioAutenticado, papel: TipoUsuario) -> bool:
     """True se o papel persistido do ``usuario`` corresponde a ``papel`` (aceita aliases)."""
     return normalizar_papel(usuario.role) is papel

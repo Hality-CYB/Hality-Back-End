@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     admin_vinculos,
     anamnese,
     auth,
+    consentimentos,
     conteudo_admin,
     diagnostico,
     health,
@@ -16,8 +17,6 @@ from app.api.v1.endpoints import (
     users,
     vinculo,
 )
-from app.auth.users import fastapi_users
-from app.schemas.user import UserCreate, UserRead
 
 api_router = APIRouter()
 
@@ -49,12 +48,10 @@ api_router.include_router(admin_vinculos.router)
 # uma única strategy.
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# Registro de novos usuários
-api_router.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
-    prefix="/auth",
-    tags=["auth"],
-)
+# Registro de novos usuários: POST /auth/register está em auth.py (rota própria,
+# porque o cadastro e os consentimentos precisam sair na mesma transação).
+
+api_router.include_router(consentimentos.router)
 
 # Perfil do próprio usuário (GET/PATCH /users/me) — rotas próprias, com bloco
 # profissional agregado e payload restrito aos campos permitidos. As rotas

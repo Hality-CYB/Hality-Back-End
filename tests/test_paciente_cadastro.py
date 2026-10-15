@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import password_helper
 from app.main import app
-from app.models import PacienteProfissional, User
+from app.models import ConsentimentoEvento, PacienteProfissional, User
 from app.schemas.paciente import SENHA_PADRAO_PACIENTE
 from tests.conftest import CenarioAdmin, autenticar_como, executar_no_banco
 
@@ -141,3 +141,43 @@ def test_payload_invalido_retorna_422(cenario_admin: CenarioAdmin, extras: dict)
     )
 
     assert resposta.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def _eventos_de_consentimento(email: str) -> list[ConsentimentoEvento]:
+    async def _buscar(db: AsyncSession) -> list[ConsentimentoEvento]:
+        eventos = await db.scalars(
+            select(ConsentimentoEvento)
+            .join(User, User.id == ConsentimentoEvento.titular_id)
+            .where(User.email == email)
+        )
+        return list(eventos)
+
+    return executar_no_banco(_buscar)
+
+
+def test_cadastro_pelo_profissional_nao_registra_consentimento_pelo_paciente(
+    cenario_admin: CenarioAdmin,
+) -> None:
+    autenticar_como(cenario_admin.profissional)
+    payload = _payload(cenario_admin)
+
+    resposta = client.post(PACIENTES_URL, json=payload, headers=AUTH_HEADERS)
+
+    assert resposta.status_code == status.HTTP_201_CREATED
+    assert _eventos_de_consentimento(payload["email"]) == []
+
+
+def test_profissional_nao_consegue_enviar_consentimento_em_nome_do_paciente(
+    cenario_admin: CenarioAdmin,
+) -> None:
+    autenticar_como(cenario_admin.profissional)
+    payload = _payload(
+        cenario_admin,
+        consentimentos=[{"finalidade": "health_data", "versao": "v1", "aceito": True}],
+    )
+
+    resposta = client.post(PACIENTES_URL, json=payload, headers=AUTH_HEADERS)
+
+    assert resposta.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    paciente, _ = _buscar_por_email(payload["email"])
+    assert paciente is None
