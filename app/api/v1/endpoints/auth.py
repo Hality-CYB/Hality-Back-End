@@ -28,13 +28,13 @@ from app.auth.users import UserManager, get_jwt_strategy, get_refresh_strategy, 
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import RegistroCreate, UserRead
-from app.services import consentimento_service, registro_service
 from app.schemas.identity import (
     PasswordRecoveryConfirm,
     PasswordRecoveryRequest,
     PasswordRecoveryResponse,
 )
+from app.schemas.user import RegistroCreate, UserRead
+from app.services import consentimento_service, registro_service
 from app.services.identity_token_service import (
     InvalidIdentityTokenError,
     consume_invitation,

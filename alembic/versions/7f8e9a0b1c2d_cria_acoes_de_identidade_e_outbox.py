@@ -1,7 +1,7 @@
 """cria ações de identidade e outbox de e-mail
 
 Revision ID: 7f8e9a0b1c2d
-Revises: c4d5e6f7a8b9
+Revises: d6d3ff40f0bc
 """
 
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "7f8e9a0b1c2d"
-down_revision: str | None = "c4d5e6f7a8b9"
+down_revision: str | None = "d6d3ff40f0bc"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

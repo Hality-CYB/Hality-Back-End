@@ -259,7 +259,7 @@ async def dispatch_pending_emails(
         await db.scalars(
             select(EmailOutbox)
             .where(
-                EmailOutbox.status.in_((QUEUED, FAILED)),
+                EmailOutbox.status.in_((QUEUED, FAILED, PROCESSING)),
                 EmailOutbox.available_at <= now,
             )
             .order_by(EmailOutbox.created_at)
@@ -269,6 +269,7 @@ async def dispatch_pending_emails(
     ).all()
     for outbox in rows:
         outbox.status = PROCESSING
+        outbox.available_at = now + timedelta(minutes=5)
     await db.commit()
     delivered = 0
     for outbox in rows:

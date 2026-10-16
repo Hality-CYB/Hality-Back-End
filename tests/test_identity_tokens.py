@@ -21,6 +21,7 @@ from app.services.identity_token_service import (
     create_invitation,
     dispatch_pending_emails,
 )
+from tests.conftest import CONSENTIMENTOS_CADASTRO
 
 RECOVERY_URL = "/api/v1/auth/password-recovery"
 CONFIRM_URL = "/api/v1/auth/password-recovery/confirm"
@@ -31,7 +32,12 @@ async def test_recovery_has_resposta_uniforme_e_enfileira_apenas_hash(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    payload = {"email": "recuperacao@hality.com", "password": "SenhaSegura123!", "name": "Pessoa"}
+    payload = {
+        "email": "recuperacao@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Pessoa",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await client.post("/api/v1/auth/register", json=payload)
 
     existente = await client.post(RECOVERY_URL, json={"email": payload["email"]})
@@ -53,7 +59,12 @@ async def test_recovery_rate_limit_mantem_resposta_publica(client: AsyncClient) 
     email = "limite@hality.com"
     await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "SenhaSegura123!", "name": "Pessoa"},
+        json={
+            "email": email,
+            "password": "SenhaSegura123!",
+            "name": "Pessoa",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
 
     respostas = [await client.post(RECOVERY_URL, json={"email": email}) for _ in range(6)]
@@ -66,7 +77,12 @@ async def test_confirmacao_consume_uma_vez_e_invalida_refresh(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    payload = {"email": "reset@hality.com", "password": "SenhaSegura123!", "name": "Pessoa"}
+    payload = {
+        "email": "reset@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Pessoa",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await client.post("/api/v1/auth/register", json=payload)
     await client.post(
         "/api/v1/auth/login", data={"username": payload["email"], "password": payload["password"]}
@@ -97,7 +113,12 @@ async def test_confirmacao_de_convite_publica(
     email = "confirmar-convite@hality.com"
     await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "SenhaSegura123!", "name": "Pessoa"},
+        json={
+            "email": email,
+            "password": "SenhaSegura123!",
+            "name": "Pessoa",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
     user = await db_session.scalar(select(User).where(User.email == email))
     assert user is not None
@@ -124,7 +145,12 @@ async def test_convite_bloqueia_login_e_recuperacao_ate_confirmacao(
     email = "convite-inativo@hality.com"
     await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "SenhaSegura123!", "name": "Pessoa"},
+        json={
+            "email": email,
+            "password": "SenhaSegura123!",
+            "name": "Pessoa",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
     user = await db_session.scalar(select(User).where(User.email == email))
     assert user is not None
@@ -208,6 +234,7 @@ async def test_outbox_nao_seleciona_item_reservado(db_session: AsyncSession) -> 
     outbox = await db_session.scalar(select(EmailOutbox))
     assert outbox is not None
     outbox.status = PROCESSING
+    outbox.available_at = datetime.now(UTC) + timedelta(minutes=5)
     await db_session.commit()
 
     class Provider:
@@ -215,6 +242,27 @@ async def test_outbox_nao_seleciona_item_reservado(db_session: AsyncSession) -> 
             raise AssertionError("item reservado não deve ser enviado")
 
     assert await dispatch_pending_emails(db_session, Provider()) == 0
+
+
+@pytest.mark.asyncio
+async def test_outbox_reprocessa_reserva_expirada(db_session: AsyncSession) -> None:
+    user = User(email="reserva-expirada@hality.com", hashed_password="hash", name="Pessoa")
+    db_session.add(user)
+    await db_session.flush()
+    await create_invitation(db_session, user)
+    outbox = await db_session.scalar(select(EmailOutbox))
+    assert outbox is not None
+    outbox.status = PROCESSING
+    outbox.available_at = datetime.now(UTC) - timedelta(minutes=1)
+    await db_session.commit()
+
+    class Provider:
+        async def send(self, message) -> None:
+            return None
+
+    assert await dispatch_pending_emails(db_session, Provider()) == 1
+    await db_session.refresh(outbox)
+    assert outbox.status == SENT
 
 
 @pytest.mark.asyncio

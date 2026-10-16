@@ -79,6 +79,7 @@ class AdminUsuarioDetail(BaseModel):
     telefone: str | None
     role: str
     ativo: bool
+    convite_pendente: bool
     created_at: datetime
     profissional: AdminProfissionalDetail | None
 

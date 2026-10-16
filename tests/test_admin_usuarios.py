@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.users import current_active_user, password_helper
 from app.db import user_queries
 from app.main import app
-from app.models import EmailOutbox, PacienteProfissional, Profissional, User
+from app.models import EmailOutbox, IdentityAction, PacienteProfissional, Profissional, User
+from app.services.identity_token_service import INVITATION, _token_for
 from tests.conftest import CenarioAdmin, autenticar_como, executar_no_banco
 
 client = TestClient(app)
@@ -236,6 +237,37 @@ def test_criar_usuario_com_convite_permite_omitir_senha(cenario_admin: CenarioAd
         )
 
     assert executar_no_banco(_buscar) is not None
+
+
+def test_desativar_usuario_revoga_convite_pendente(cenario_admin: CenarioAdmin) -> None:
+    payload = _payload(cenario_admin, "convite-bloqueado", "paciente")
+    criada = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+    assert criada.status_code == 201
+    assert criada.json()["convite_pendente"] is True
+
+    usuario, _ = _buscar_usuario_e_profissional(payload["email"])
+    assert usuario is not None
+
+    async def _buscar_acao(db: AsyncSession) -> IdentityAction | None:
+        return await db.scalar(
+            select(IdentityAction).where(
+                IdentityAction.user_id == usuario.id,
+                IdentityAction.purpose == INVITATION,
+            )
+        )
+
+    acao = executar_no_banco(_buscar_acao)
+    assert acao is not None
+
+    bloqueada = client.patch(f"{USUARIOS_URL}/{usuario.id}", json={"ativo": False}, headers=AUTH)
+    assert bloqueada.status_code == 200
+    assert bloqueada.json()["convite_pendente"] is False
+
+    confirmacao = client.post(
+        "/api/v1/auth/invitation/confirm",
+        json={"token": _token_for(acao.id, acao.purpose), "senha": "SenhaConvite123!"},
+    )
+    assert confirmacao.status_code == 400
 
 
 def test_criar_usuario_sem_convite_exige_senha(cenario_admin: CenarioAdmin) -> None:
