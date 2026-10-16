@@ -212,7 +212,7 @@ def test_criar_usuario_sem_dados_de_profissional(cenario_admin: CenarioAdmin, ro
 
     assert resposta.status_code == 201
     corpo = resposta.json()
-    assert (corpo["role"], corpo["ativo"], corpo["profissional"]) == (role, True, None)
+    assert (corpo["role"], corpo["ativo"], corpo["profissional"]) == (role, False, None)
     _assert_sem_segredos(corpo)
 
     usuario, profissional = _buscar_usuario_e_profissional(payload["email"])
@@ -248,7 +248,7 @@ def test_criar_usuario_sem_convite_exige_senha(cenario_admin: CenarioAdmin) -> N
 
 
 def test_usuario_criado_pelo_admin_consegue_logar(cenario_admin: CenarioAdmin) -> None:
-    payload = _payload(cenario_admin, "login", "paciente")
+    payload = _payload(cenario_admin, "login", "paciente", enviar_convite=False)
     client.post(USUARIOS_URL, json=payload, headers=AUTH)
 
     resposta = client.post(

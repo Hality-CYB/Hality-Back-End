@@ -28,6 +28,7 @@ INVITATION = "invitation"
 QUEUED = "queued"
 SENT = "sent"
 FAILED = "failed"
+PROCESSING = "processing"
 EXPIRED = "expired"
 CONSUMED = "consumed"
 
@@ -132,6 +133,10 @@ async def _create_action(
     commit: bool = True,
 ) -> str:
     now = _now()
+    locked_user = await db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if locked_user is None:
+        raise ValueError("usuário não encontrado")
+    user = locked_user
     correlation_id = uuid.uuid4().hex
     action_id = uuid.uuid4()
     token = _token_for(action_id, purpose)
@@ -179,6 +184,7 @@ async def request_password_recovery(db: AsyncSession, email: str) -> None:
 
 async def create_invitation(db: AsyncSession, user: User, *, commit: bool = True) -> None:
     """Cria uma ação de convite para um usuário já persistido."""
+    user.is_active = False
     await _create_action(db, user, INVITATION, commit=commit)
 
 
@@ -210,11 +216,13 @@ async def consume_identity_action(
         raise InvalidIdentityTokenError
 
     user = await db.get(User, action.user_id)
-    if user is None or not user.is_active:
+    if user is None or (not user.is_active and purpose != INVITATION):
         raise InvalidIdentityTokenError
 
     action.used_at = now
     user.hashed_password = password_helper.hash(new_password)
+    if purpose == INVITATION:
+        user.is_active = True
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.execute(
         update(EmailOutbox)
@@ -256,8 +264,12 @@ async def dispatch_pending_emails(
             )
             .order_by(EmailOutbox.created_at)
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
     ).all()
+    for outbox in rows:
+        outbox.status = PROCESSING
+    await db.commit()
     delivered = 0
     for outbox in rows:
         action = await db.get(IdentityAction, outbox.action_id)

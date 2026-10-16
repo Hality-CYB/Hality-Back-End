@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,6 +16,14 @@ class IdentityAction(Base):
     __table_args__ = (
         Index("ix_identity_actions_user_purpose", "user_id", "purpose"),
         Index("ix_identity_actions_expires_at", "expires_at"),
+        Index(
+            "uq_identity_actions_active_user_purpose",
+            "user_id",
+            "purpose",
+            unique=True,
+            postgresql_where=text("used_at IS NULL AND revoked_at IS NULL"),
+            sqlite_where=text("used_at IS NULL AND revoked_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

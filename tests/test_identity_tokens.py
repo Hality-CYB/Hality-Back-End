@@ -14,6 +14,7 @@ from app.services.identity_token_service import (
     EXPIRED,
     INVITATION,
     PASSWORD_RESET,
+    PROCESSING,
     SENT,
     _token_for,
     consume_invitation,
@@ -112,6 +113,37 @@ async def test_confirmacao_de_convite_publica(
     )
 
     assert response.status_code == 204
+    await db_session.refresh(user)
+    assert user.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_convite_bloqueia_login_e_recuperacao_ate_confirmacao(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    email = "convite-inativo@hality.com"
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "SenhaSegura123!", "name": "Pessoa"},
+    )
+    user = await db_session.scalar(select(User).where(User.email == email))
+    assert user is not None
+    await create_invitation(db_session, user)
+
+    login = await client.post(
+        "/api/v1/auth/login",
+        data={"username": email, "password": "SenhaSegura123!"},
+    )
+    recovery = await client.post(RECOVERY_URL, json={"email": email})
+
+    assert login.status_code == 400
+    assert recovery.status_code == 202
+    assert (
+        await db_session.scalar(
+            select(IdentityAction).where(IdentityAction.purpose == PASSWORD_RESET)
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -165,6 +197,24 @@ async def test_outbox_sucesso_e_consumo_de_convite(db_session: AsyncSession) -> 
     await consume_invitation(db_session, messages[0].token, "SenhaConvite123!")
     await db_session.refresh(outbox)
     assert outbox.status == CONSUMED
+
+
+@pytest.mark.asyncio
+async def test_outbox_nao_seleciona_item_reservado(db_session: AsyncSession) -> None:
+    user = User(email="reservado@hality.com", hashed_password="hash", name="Pessoa")
+    db_session.add(user)
+    await db_session.flush()
+    await create_invitation(db_session, user)
+    outbox = await db_session.scalar(select(EmailOutbox))
+    assert outbox is not None
+    outbox.status = PROCESSING
+    await db_session.commit()
+
+    class Provider:
+        async def send(self, message) -> None:
+            raise AssertionError("item reservado não deve ser enviado")
+
+    assert await dispatch_pending_emails(db_session, Provider()) == 0
 
 
 @pytest.mark.asyncio
