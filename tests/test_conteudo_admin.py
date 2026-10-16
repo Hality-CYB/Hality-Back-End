@@ -86,6 +86,7 @@ async def conteudos(db_factory, cenario_admin: CenarioAdmin) -> AsyncGenerator[l
                 categoria="tratamento",
                 conteudo={"itens": [{"tipo": "texto", "texto": "higiene", "extra": 1}]},
                 classificacao_ids=[classificacoes[0].id],
+                destinos=["home_autenticada", "orientacoes_diagnostico"],
                 aparece_na_home=True,
                 status="publicado",
                 ordem=1,
@@ -101,6 +102,7 @@ async def conteudos(db_factory, cenario_admin: CenarioAdmin) -> AsyncGenerator[l
                 categoria="higiene",
                 conteudo={"itens": [{"tipo": "imagem", "url": "/rotina.png"}]},
                 classificacao_ids=[classificacoes[1].id],
+                destinos=["orientacoes_diagnostico"],
                 aparece_na_home=False,
                 status="rascunho",
                 ordem=1,
@@ -114,6 +116,7 @@ async def conteudos(db_factory, cenario_admin: CenarioAdmin) -> AsyncGenerator[l
                 categoria="tratamento",
                 conteudo={"itens": [{"tipo": "checklist", "itens": ["escovacao"]}]},
                 classificacao_ids=[classificacoes[0].id, classificacoes[1].id],
+                destinos=["home_autenticada", "orientacoes_diagnostico"],
                 aparece_na_home=True,
                 status="publicado",
                 ordem=2,
@@ -198,7 +201,12 @@ async def test_filtros_combinados_e_id_inexistente(http, conteudos, cenario_admi
         ({"classificacao_id": classificacao_id}, {conteudos[0].id, conteudos[2].id}),
         ({"q": "escovacao"}, {conteudos[2].id}),
         ({"aparece_na_home": True}, {conteudos[0].id, conteudos[2].id}),
+        (
+            {"destino": "orientacoes_diagnostico"},
+            {conteudos[0].id, conteudos[1].id, conteudos[2].id},
+        ),
     ]
+
     for params, ids_esperados in filtros_isolados:
         resposta_isolada = await http.get(BASE, params=params)
         assert resposta_isolada.status_code == 200
@@ -212,8 +220,10 @@ async def test_filtros_combinados_e_id_inexistente(http, conteudos, cenario_admi
             "classificacao_id": classificacao_id,
             "q": "escovacao",
             "aparece_na_home": True,
+            "destino": "orientacoes_diagnostico",
         },
     )
+
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["items"]] == [conteudos[2].id]
     assert (await http.get(BASE, params={"classificacao_id": 999999})).json()["items"] == []
@@ -228,6 +238,7 @@ async def test_paginacao_ordenacao_estavel_e_pagina_alem_do_total(http, conteudo
         "created_at_asc": ids,
         "created_at_desc": ids,
     }
+
     for order, esperado in ordens_esperadas.items():
         paginas = [
             (await http.get(BASE, params={"order": order, "page": pagina, "limit": 1})).json()
@@ -240,8 +251,10 @@ async def test_paginacao_ordenacao_estavel_e_pagina_alem_do_total(http, conteudo
         assert paginas[0]["has_next"] is True
         assert paginas[-1]["has_next"] is False
         assert {item["id"] for pagina in paginas for item in pagina["items"]} == set(ids)
+
     ultima = (await http.get(BASE, params={"page": 2, "limit": 2})).json()
     alem = (await http.get(BASE, params={"page": 3, "limit": 2})).json()
+
     assert len(ultima["items"]) == 1 and ultima["has_next"] is False
     assert alem["items"] == [] and alem["total"] == 3 and alem["has_next"] is False
 
@@ -255,6 +268,7 @@ async def test_busca_por_titulo_acento_case_e_wildcards(http, conteudos, cenario
         ("_", set()),
         ("tipo", set()),
     ]
+
     for busca, ids_esperados in casos:
         resposta = await http.get(BASE, params={"q": busca})
         assert resposta.status_code == 200
@@ -266,6 +280,7 @@ async def test_busca_por_titulo_acento_case_e_wildcards(http, conteudos, cenario
     [
         {"status": "inexistente"},
         {"categoria": "inexistente"},
+        {"destino": "inexistente"},
         {"limit": 0},
         {"limit": 51},
         {"page": 0},
@@ -280,7 +295,9 @@ async def test_filtros_invalidos_retornam_422(http, params, cenario_admin):
 async def test_busca_vazia_e_contrato_da_resposta_real(http, conteudos, cenario_admin):
     _autenticar(http, cenario_admin.admin)
     resposta = await http.get(BASE, params={"q": "   "})
+
     assert resposta.status_code == 200
+
     contrato = ConteudoListResponse.model_validate(resposta.json())
     assert contrato.items[0].conteudo.itens
 
@@ -304,6 +321,12 @@ async def test_openapi_documenta_filtros_e_limites():
         "created_at_desc",
     ]
     assert resolver(parametros["status"]["schema"])["enum"] == ["rascunho", "publicado"]
+    assert resolver(parametros["destino"]["schema"])["enum"] == [
+        "home_autenticada",
+        "orientacoes_diagnostico",
+        "captura",
+        "landing_publica",
+    ]
     assert parametros["page"]["schema"]["minimum"] == 1
     assert parametros["limit"]["schema"]["minimum"] == 1
     assert parametros["limit"]["schema"]["maximum"] == 50
@@ -313,19 +336,28 @@ async def test_openapi_documenta_filtros_e_limites():
 async def test_escrita_preserva_json_e_publicacao(http, cenario_admin):
     _autenticar(http, cenario_admin.admin)
     criado = await http.post(BASE, json=PAYLOAD)
+
     assert criado.status_code == 201
+
     conteudo_id = criado.json()["id"]
     esperado = PAYLOAD["conteudo"]
+
     assert (await http.get(f"{BASE}/{conteudo_id}")).json()["conteudo"] == esperado
+
     atualizado = {"conteudo": {"itens": [{"tipo": "card", "titulo": "Extra", "ativo": True}]}}
+
     assert (await http.patch(f"{BASE}/{conteudo_id}", json=atualizado)).status_code == 200
     assert (await http.get(f"{BASE}/{conteudo_id}")).json()["conteudo"] == atualizado["conteudo"]
     assert (
         await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})
     ).status_code == 200
+
     publicado = (await http.get(f"{BASE}/{conteudo_id}")).json()
+
     assert publicado["publicado_por_id"] == str(cenario_admin.admin.id)
+
     publicado_em = publicado["publicado_em"]
+
     assert (
         await http.patch(f"{BASE}/{conteudo_id}", json={"status": "publicado"})
     ).status_code == 200
@@ -333,24 +365,101 @@ async def test_escrita_preserva_json_e_publicacao(http, cenario_admin):
     assert (
         await http.patch(f"{BASE}/{conteudo_id}", json={"status": "rascunho"})
     ).status_code == 200
+
     rascunho = (await http.get(f"{BASE}/{conteudo_id}")).json()
+
     assert rascunho["publicado_por_id"] is None and rascunho["publicado_em"] is None
+
+
+async def test_aparece_na_home_mantem_destino_legado_sincronizado(http, cenario_admin):
+    _autenticar(http, cenario_admin.admin)
+
+    criado = await http.post(BASE, json=PAYLOAD)
+
+    assert criado.status_code == 201
+    assert "home_autenticada" in criado.json()["destinos"]
+
+    conteudo_id = criado.json()["id"]
+    atualizado = await http.patch(
+        f"{BASE}/{conteudo_id}",
+        json={"destinos": []},
+    )
+
+    assert atualizado.status_code == 200
+    assert atualizado.json()["aparece_na_home"] is False
+    assert atualizado.json()["destinos"] == []
+
+
+async def test_rejeita_combinacoes_invalidas_de_destino(http, conteudos, cenario_admin):
+    _autenticar(http, cenario_admin.admin)
+    classificacao_id = conteudos[0].classificacao_ids[0]
+
+    captura = {
+        **PAYLOAD,
+        "aparece_na_home": False,
+        "destinos": ["captura"],
+        "classificacao_ids": [classificacao_id],
+    }
+    assert (await http.post(BASE, json=captura)).status_code == 422
+
+    orientacao = {
+        **PAYLOAD,
+        "aparece_na_home": False,
+        "destinos": ["orientacoes_diagnostico"],
+        "classificacao_ids": [],
+    }
+    assert (await http.post(BASE, json=orientacao)).status_code == 422
+
+    landing = {
+        **PAYLOAD,
+        "aparece_na_home": False,
+        "destinos": ["landing_publica"],
+        "classificacao_ids": [classificacao_id],
+    }
+    assert (await http.post(BASE, json=landing)).status_code == 422
+
+
+async def test_patch_valida_estado_final_do_conteudo(http, conteudos, cenario_admin):
+    _autenticar(http, cenario_admin.admin)
+
+    response = await http.patch(
+        f"{BASE}/{conteudos[0].id}",
+        json={"destinos": ["captura"]},
+    )
+
+    assert response.status_code == 422
 
 
 async def test_erros_de_escrita_e_null_explicito(http, cenario_admin):
     _autenticar(http, cenario_admin.admin)
-    payload = {**PAYLOAD, "classificacao_ids": [999999]}
+
+    payload = {
+        **PAYLOAD,
+        "classificacao_ids": [999999],
+    }
+
     assert (await http.post(BASE, json=payload)).status_code == 400
     assert (await http.post(BASE, json=PAYLOAD)).status_code == 201
+
     conteudo_id = (await http.post(BASE, json=PAYLOAD)).json()["id"]
-    assert (await http.patch(f"{BASE}/{conteudo_id}", json={"conteudo": None})).status_code == 422
+
+    assert (
+        await http.patch(
+            f"{BASE}/{conteudo_id}",
+            json={"conteudo": None},
+        )
+    ).status_code == 422
 
 
 async def test_fluxo_nao_depende_de_dicas(http, cenario_admin):
     _autenticar(http, cenario_admin.admin)
+
     criado = await http.post(BASE, json=PAYLOAD)
+
     assert criado.status_code == 201
+
     conteudo_id = criado.json()["id"]
+
     assert (await http.get(BASE)).status_code == 200
     assert (await http.get(BASE, params={"status": "rascunho"})).status_code == 200
     assert (await http.patch(f"{BASE}/{conteudo_id}", json={"ordem": 9})).status_code == 200

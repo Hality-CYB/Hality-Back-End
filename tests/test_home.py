@@ -12,7 +12,6 @@ from app.db import home_queries
 from app.services import home_service
 
 PACIENTE_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
 HOME_URL = "/api/v1/home"
 
 
@@ -69,14 +68,12 @@ def _mockar_home_queries(monkeypatch, diagnostico=None, dicas=()):
 @pytest.mark.asyncio
 async def test_home_sem_token_retorna_401(client: AsyncClient) -> None:
     response = await client.get(HOME_URL)
-
     assert response.status_code == 401
 
 
 def test_home_sem_historico_retorna_preview_nulo_e_dicas(monkeypatch):
     dicas = [_dica(1, "Higiene da Língua")]
     _mockar_home_queries(monkeypatch, dicas=dicas)
-
     resultado = asyncio.run(home_service.montar_home(AsyncMock(), _usuario()))
 
     assert resultado.model_dump() == {
@@ -160,7 +157,11 @@ def test_home_prioriza_classificacao_da_ultima_revisao(monkeypatch):
 
 
 def test_home_diagnostico_sem_resultado_nao_expoe_classificacao(monkeypatch):
-    diagnostico = _diagnostico(diagnostico_id=5, classificacao_id=None, status="processando")
+    diagnostico = _diagnostico(
+        diagnostico_id=5,
+        classificacao_id=None,
+        status="processando",
+    )
     _mockar_home_queries(monkeypatch, diagnostico=diagnostico)
 
     resultado = asyncio.run(home_service.montar_home(AsyncMock(), _usuario()))
@@ -170,7 +171,11 @@ def test_home_diagnostico_sem_resultado_nao_expoe_classificacao(monkeypatch):
 
 
 def test_home_diagnostico_concluido_sem_classificacao_nao_quebra(monkeypatch):
-    diagnostico = _diagnostico(diagnostico_id=6, classificacao_id=None, status="concluido")
+    diagnostico = _diagnostico(
+        diagnostico_id=6,
+        classificacao_id=None,
+        status="concluido",
+    )
     _mockar_home_queries(monkeypatch, diagnostico=diagnostico)
     monkeypatch.setattr(
         home_service.diagnostico_queries,
@@ -192,8 +197,8 @@ def test_home_repassa_conteudos_na_ordem_do_catalogo(monkeypatch):
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(home_service.home_queries, "listar_dicas_home", listar_dicas)
-    db = AsyncMock()
 
+    db = AsyncMock()
     resultado = asyncio.run(home_service.montar_home(db, _usuario()))
 
     listar_dicas.assert_awaited_once_with(db)
@@ -205,6 +210,7 @@ async def test_query_de_dicas_filtra_e_ordena_conteudos_da_home():
     dicas = [_dica(1, "Higiene da Língua")]
     resultado = SimpleNamespace()
     resultado.scalars = lambda: SimpleNamespace(all=lambda: dicas)
+
     db = AsyncMock()
     db.execute.return_value = resultado
 
@@ -212,5 +218,7 @@ async def test_query_de_dicas_filtra_e_ordena_conteudos_da_home():
 
     statement = db.execute.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "ANY (conteudos.destinos)" in sql
     assert "conteudos.aparece_na_home IS true" in sql
     assert "ORDER BY conteudos.ordem ASC, conteudos.id ASC" in sql

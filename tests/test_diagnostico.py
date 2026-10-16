@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+from sqlalchemy.dialects import postgresql
 
 from app.core.config import get_settings
 from app.core.consentimentos import TERMOS, Finalidade
+from app.db import diagnostico_queries
 from app.main import app
 from app.models import (
     Anamnese,
@@ -711,3 +713,21 @@ def test_listar_diagnosticos_limite_maior_que_50_retorna_400() -> None:
     )
 
     assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_query_conteudos_diagnostico_filtra_destino_orientacoes():
+    resultado = SimpleNamespace()
+    resultado.scalars = lambda: SimpleNamespace(all=lambda: [])
+
+    db = AsyncMock()
+    db.execute.return_value = resultado
+
+    assert await diagnostico_queries.listar_conteudos_por_classificacao(db, 3) == []
+
+    statement = db.execute.await_args.args[0]
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "ANY (conteudos.classificacao_ids)" in sql
+    assert "ANY (conteudos.destinos)" in sql
+    assert "conteudos.status" in sql
+    assert "ORDER BY conteudos.ordem ASC, conteudos.id ASC" in sql
