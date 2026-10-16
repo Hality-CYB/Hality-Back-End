@@ -8,7 +8,9 @@ from app.api.v1.endpoints import (
     anamnese,
     auth,
     consentimentos,
+    conteudo,
     conteudo_admin,
+    conteudo_publico,
     diagnostico,
     health,
     home,
@@ -22,35 +24,32 @@ api_router = APIRouter()
 
 # Rotas de saúde, anamnese e diagnóstico (existentes)
 api_router.include_router(health.router)
-
 api_router.include_router(anamnese.router)
 api_router.include_router(conteudo_admin.router)
+api_router.include_router(conteudo.router)
+api_router.include_router(conteudo_publico.router)
 api_router.include_router(diagnostico.router)
-
 api_router.include_router(admin_diagnosticos.router)
-
 api_router.include_router(admin_resumo.router)
-
 api_router.include_router(home.router)
-
 api_router.include_router(profissional.router)
 api_router.include_router(vinculo.router)
-
 api_router.include_router(paciente.router)
-
 api_router.include_router(admin_usuarios.router)
-
 api_router.include_router(admin_vinculos.router)
 
 # Autenticação — login/refresh/logout customizados (access JWT curto +
 # refresh opaco em banco, ver app/api/v1/endpoints/auth.py). Não usa o
 # get_auth_router() pronto do fastapi-users porque ele só emite o token de
 # uma única strategy.
-api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["auth"],
+)
 
 # Registro de novos usuários: POST /auth/register está em auth.py (rota própria,
 # porque o cadastro e os consentimentos precisam sair na mesma transação).
-
 api_router.include_router(consentimentos.router)
 
 # Perfil do próprio usuário (GET/PATCH /users/me) — rotas próprias, com bloco
