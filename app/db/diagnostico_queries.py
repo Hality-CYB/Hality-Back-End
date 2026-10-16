@@ -9,7 +9,7 @@ from app.db import paciente_profissional_queries
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
 )
-from app.models.conteudo import Conteudo, StatusConteudo
+from app.models.conteudo import Conteudo, DestinoConteudo, StatusConteudo
 from app.models.diagnostico import Diagnostico
 from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.imagem import Imagem
@@ -499,6 +499,9 @@ async def listar_conteudos_por_classificacao(
         select(Conteudo)
         .where(
             Conteudo.classificacao_ids.any(classificacao_id),
+            Conteudo.destinos.any(
+                DestinoConteudo.ORIENTACOES_DIAGNOSTICO.value
+            ),
             Conteudo.status == StatusConteudo.PUBLICADO,
             Conteudo.criado_por_id.is_not(None),
         )

@@ -3,7 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.conteudo import Conteudo
-from app.schemas.conteudo import CategoriaConteudo, OrdemConteudo, StatusConteudo
+from app.schemas.conteudo import (
+    CategoriaConteudo,
+    DestinoConteudo,
+    OrdemConteudo,
+    StatusConteudo,
+)
 
 
 async def listar(
@@ -14,31 +19,84 @@ async def listar(
     categoria: CategoriaConteudo | None,
     classificacao_id: int | None,
     aparece_na_home: bool | None,
+    destino: DestinoConteudo | None,
     page: int,
     limit: int,
     order: OrdemConteudo,
 ) -> tuple[list[Conteudo], int]:
     filtros = []
-    if busca:
-        filtros.append(Conteudo.titulo.icontains(busca, autoescape=True))
-    if status is not None:
-        filtros.append(Conteudo.status == status)
-    if categoria is not None:
-        filtros.append(Conteudo.categoria == categoria)
-    if classificacao_id is not None:
-        filtros.append(Conteudo.classificacao_ids.contains([classificacao_id]))
-    if aparece_na_home is not None:
-        filtros.append(Conteudo.aparece_na_home.is_(aparece_na_home))
 
-    total = await db.scalar(select(func.count()).select_from(Conteudo).where(*filtros)) or 0
+    if busca:
+        filtros.append(
+            Conteudo.titulo.icontains(
+                busca,
+                autoescape=True,
+            )
+        )
+
+    if status is not None:
+        filtros.append(
+            Conteudo.status == status,
+        )
+
+    if categoria is not None:
+        filtros.append(
+            Conteudo.categoria == categoria,
+        )
+
+    if classificacao_id is not None:
+        filtros.append(
+            Conteudo.classificacao_ids.contains(
+                [classificacao_id]
+            )
+        )
+
+    if aparece_na_home is not None:
+        filtros.append(
+            Conteudo.aparece_na_home.is_(aparece_na_home)
+        )
+
+    if destino is not None:
+        filtros.append(
+            Conteudo.destinos.any(destino.value)
+        )
+
+    total = (
+        await db.scalar(
+            select(func.count())
+            .select_from(Conteudo)
+            .where(*filtros)
+        )
+        or 0
+    )
+
     if order == OrdemConteudo.ORDEM_DESC:
-        ordenacao = (Conteudo.ordem.desc(), Conteudo.created_at.desc(), Conteudo.id.desc())
+        ordenacao = (
+            Conteudo.ordem.desc(),
+            Conteudo.created_at.desc(),
+            Conteudo.id.desc(),
+        )
+
     elif order == OrdemConteudo.CRIADO_ASC:
-        ordenacao = (Conteudo.created_at.asc(), Conteudo.ordem.asc(), Conteudo.id.asc())
+        ordenacao = (
+            Conteudo.created_at.asc(),
+            Conteudo.ordem.asc(),
+            Conteudo.id.asc(),
+        )
+
     elif order == OrdemConteudo.CRIADO_DESC:
-        ordenacao = (Conteudo.created_at.desc(), Conteudo.ordem.asc(), Conteudo.id.asc())
+        ordenacao = (
+            Conteudo.created_at.desc(),
+            Conteudo.ordem.asc(),
+            Conteudo.id.asc(),
+        )
+
     else:
-        ordenacao = (Conteudo.ordem.asc(), Conteudo.created_at.asc(), Conteudo.id.asc())
+        ordenacao = (
+            Conteudo.ordem.asc(),
+            Conteudo.created_at.asc(),
+            Conteudo.id.asc(),
+        )
 
     resultado = await db.execute(
         select(Conteudo)
@@ -47,39 +105,90 @@ async def listar(
         .offset((page - 1) * limit)
         .limit(limit)
     )
+
     return list(resultado.scalars().all()), total
 
 
-async def buscar_por_id(db: AsyncSession, conteudo_id: int) -> Conteudo | None:
-    return await db.get(Conteudo, conteudo_id)
+async def buscar_por_id(
+    db: AsyncSession,
+    conteudo_id: int,
+) -> Conteudo | None:
+    return await db.get(
+        Conteudo,
+        conteudo_id,
+    )
 
 
 async def listar_classificacao_ids_existentes(
-    db: AsyncSession, classificacao_ids: list[int]
+    db: AsyncSession,
+    classificacao_ids: list[int],
 ) -> set[int]:
     if not classificacao_ids:
         return set()
+
     resultado = await db.execute(
         select(ClassificacaoDiagnostico.id).where(
-            ClassificacaoDiagnostico.id.in_(classificacao_ids)
+            ClassificacaoDiagnostico.id.in_(
+                classificacao_ids
+            )
         )
     )
+
     return set(resultado.scalars().all())
 
 
-async def inserir(db: AsyncSession, valores: dict) -> Conteudo:
+async def listar_publicados_por_destino(
+    db: AsyncSession,
+    destino: DestinoConteudo,
+) -> list[Conteudo]:
+    resultado = await db.execute(
+        select(Conteudo)
+        .where(
+            Conteudo.destinos.any(destino.value),
+            Conteudo.status == StatusConteudo.PUBLICADO,
+            Conteudo.criado_por_id.is_not(None),
+        )
+        .order_by(
+            Conteudo.ordem.asc(),
+            Conteudo.id.asc(),
+        )
+    )
+
+    return list(resultado.scalars().all())
+
+
+async def inserir(
+    db: AsyncSession,
+    valores: dict,
+) -> Conteudo:
     conteudo = Conteudo(**valores)
+
     db.add(conteudo)
+
     await db.flush()
+
     return conteudo
 
 
-async def atualizar(db: AsyncSession, conteudo: Conteudo, valores: dict) -> Conteudo:
+async def atualizar(
+    db: AsyncSession,
+    conteudo: Conteudo,
+    valores: dict,
+) -> Conteudo:
     for campo, valor in valores.items():
-        setattr(conteudo, campo, valor)
+        setattr(
+            conteudo,
+            campo,
+            valor,
+        )
+
     await db.flush()
+
     return conteudo
 
 
-async def deletar(db: AsyncSession, conteudo: Conteudo) -> None:
+async def deletar(
+    db: AsyncSession,
+    conteudo: Conteudo,
+) -> None:
     await db.delete(conteudo)
