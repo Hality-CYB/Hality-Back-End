@@ -15,7 +15,13 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.main import app
-from app.models import Anamnese, ClassificacaoDiagnostico, Diagnostico, User
+from app.models import (
+    Anamnese,
+    ClassificacaoDiagnostico,
+    ConsentimentoEvento,
+    Diagnostico,
+    User,
+)
 from app.services import diagnostico_mock, diagnostico_service
 
 client = TestClient(app)
@@ -240,6 +246,13 @@ async def _limpar_diagnosticos_para_listagem(criados: DiagnosticosListagemCriado
 def test_criar_diagnostico(monkeypatch):
     diagnostico = _diagnostico()
 
+    # `db` é um AsyncMock aqui: neutraliza a consulta de consentimento.
+    monkeypatch.setattr(
+        diagnostico_service.consentimento_service,
+        "exigir_tratamento_nao_revogado",
+        AsyncMock(return_value=None),
+    )
+
     monkeypatch.setattr(
         diagnostico_service.anamnese_queries,
         "buscar_por_id",
@@ -284,6 +297,100 @@ def test_criar_diagnostico(monkeypatch):
     assert resultado["id"] == 4
     assert resultado["status"] == "processando"
     assert resultado["anamnese_id"] == 128
+
+
+def _criar_anamnese_do_paciente_stub() -> int:
+    async def _criar() -> int:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                anamnese = Anamnese(
+                    paciente_id=PACIENTE_STUB_ID,
+                    id_versao_questionario=VERSAO_QUESTIONARIO_TESTE,
+                    respostas=[],
+                )
+                db.add(anamnese)
+                await db.commit()
+                return anamnese.id
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_criar())
+
+
+def _registrar_decisao_de_tratamento(aceito: bool) -> int:
+    async def _registrar() -> int:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                evento = ConsentimentoEvento(
+                    titular_id=PACIENTE_STUB_ID,
+                    finalidade="health_data",
+                    versao="v1",
+                    aceito=aceito,
+                    origem="perfil",
+                    ator_id=PACIENTE_STUB_ID,
+                    ator_papel="paciente",
+                )
+                db.add(evento)
+                await db.commit()
+                return evento.id
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_registrar())
+
+
+def _contar_diagnosticos_da_anamnese(anamnese_id: int) -> int:
+    async def _contar() -> int:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                ids = await db.scalars(
+                    select(Diagnostico.id).where(Diagnostico.anamnese_id == anamnese_id)
+                )
+                return len(list(ids))
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_contar())
+
+
+def _limpar_consentimento_e_anamnese(evento_ids: list[int], anamnese_id: int) -> None:
+    async def _limpar() -> None:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                await db.execute(
+                    delete(ConsentimentoEvento).where(ConsentimentoEvento.id.in_(evento_ids))
+                )
+                await db.execute(delete(Diagnostico).where(Diagnostico.anamnese_id == anamnese_id))
+                await db.execute(delete(Anamnese).where(Anamnese.id == anamnese_id))
+                await db.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_limpar())
+
+
+def test_criar_diagnostico_apos_revogar_tratamento_retorna_403() -> None:
+    anamnese_id = _criar_anamnese_do_paciente_stub()
+    evento_ids = [_registrar_decisao_de_tratamento(aceito=True)]
+    try:
+        evento_ids.append(_registrar_decisao_de_tratamento(aceito=False))
+
+        resposta = client.post(
+            "/api/v1/diagnosticos",
+            headers=AUTH_HEADERS,
+            data={"anamnese_id": str(anamnese_id), "parametros_captura": "{}"},
+            files={"imagem": ("lingua.jpg", b"\xff\xd8\xff\xe0" + b"0" * 64, "image/jpeg")},
+        )
+
+        assert resposta.status_code == 403
+        assert "revogado" in resposta.json()["detail"]
+        assert _contar_diagnosticos_da_anamnese(anamnese_id) == 0
+    finally:
+        _limpar_consentimento_e_anamnese(evento_ids, anamnese_id)
 
 
 def test_anamnese_de_outro_paciente(

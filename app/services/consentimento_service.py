@@ -49,6 +49,10 @@ class VersaoDesatualizadaError(Exception):
         super().__init__(f"{finalidade}: versão vigente é {versao_vigente}")
 
 
+class TratamentoRevogadoError(Exception):
+    """O titular recusou/revogou o tratamento de dados de saúde."""
+
+
 class DecisaoDuplicadaError(Exception):
     """A mesma finalidade veio mais de uma vez no mesmo envio."""
 
@@ -185,6 +189,19 @@ async def finalidade_vigente(
     ultimos = await consentimento_queries.ultimos_eventos(db, titular_id)
     evento = ultimos.get(finalidade.value)
     return bool(evento and evento.aceito and evento.versao == TERMOS[finalidade].versao)
+
+
+async def exigir_tratamento_nao_revogado(db: AsyncSession, titular_id: uuid.UUID) -> None:
+    """Barra operações novas sobre dados de saúde de quem revogou o tratamento.
+
+    Bloqueia só quando a decisão mais recente de `health_data` é uma recusa ou
+    revogação explícita. Quem ainda não decidiu (conta antiga ou cadastrada por
+    um profissional, que coleta o aceite no primeiro acesso) não é barrado aqui.
+    """
+    ultimos = await consentimento_queries.ultimos_eventos(db, titular_id)
+    evento = ultimos.get(Finalidade.HEALTH_DATA.value)
+    if evento is not None and not evento.aceito:
+        raise TratamentoRevogadoError
 
 
 async def registrar_decisao_do_titular(

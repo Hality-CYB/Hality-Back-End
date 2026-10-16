@@ -19,7 +19,7 @@ from app.api.deps import (
     OptionalClinicalUser,
 )
 from app.schemas.diagnostico import DiagnosticoListResponse
-from app.services import diagnostico_service, diagnostico_storage
+from app.services import consentimento_service, diagnostico_service, diagnostico_storage
 
 router = APIRouter(
     prefix="/diagnosticos",
@@ -149,6 +149,12 @@ async def criar_diagnostico(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="anamnese não encontrada",
+        ) from exc
+
+    except consentimento_service.TratamentoRevogadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="consentimento para tratamento de dados de saúde revogado",
         ) from exc
 
     except diagnostico_service.AnamneseJaUtilizadaError as exc:

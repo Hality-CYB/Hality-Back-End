@@ -494,3 +494,50 @@ async def test_idempotency_key_nao_duplica_o_evento(
     assert primeira.status_code == 200
     assert repetida.status_code == 409
     assert len(await _eventos(db_session, email)) == total + 1
+
+
+# ---------------------------------------------------------------------------
+# Revogação do tratamento barra operações novas com dados de saúde
+# ---------------------------------------------------------------------------
+
+TRATAMENTO_REVOGADO = {**TRATAMENTO, "aceito": False}
+
+
+@pytest.mark.asyncio
+async def test_exigir_tratamento_nao_revogado_segue_a_decisao_mais_recente(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    email = "revoga_tratamento@hality.com"
+    headers = await _registrar_e_logar(client, email)
+    usuario = await db_session.scalar(select(User).where(User.email == email))
+
+    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+
+    await client.post(CONSENTIMENTOS_URL, json=TRATAMENTO_REVOGADO, headers=headers)
+    with pytest.raises(consentimento_service.TratamentoRevogadoError):
+        await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+
+    await client.post(CONSENTIMENTOS_URL, json=TRATAMENTO, headers=headers)
+    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+
+
+@pytest.mark.asyncio
+async def test_revogar_so_o_treino_nao_barra_dados_de_saude(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    email = "so_treino_revogado@hality.com"
+    headers = await _registrar_e_logar(client, email, [TRATAMENTO, TREINO_ACEITO])
+    usuario = await db_session.scalar(select(User).where(User.email == email))
+
+    await client.post(CONSENTIMENTOS_URL, json=TREINO_RECUSADO, headers=headers)
+
+    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+
+
+@pytest.mark.asyncio
+async def test_quem_nao_decidiu_ainda_nao_e_barrado(db_session: AsyncSession) -> None:
+    usuario = User(name="Sem Decisao", email="sem_decisao@hality.com", hashed_password="x")
+    db_session.add(usuario)
+    await db_session.commit()
+
+    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
