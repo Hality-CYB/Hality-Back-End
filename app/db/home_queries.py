@@ -35,9 +35,7 @@ async def listar_dicas_home(
         select(Conteudo)
         .where(
             or_(
-                Conteudo.destinos.any(
-                    DestinoConteudo.HOME_AUTENTICADA.value
-                ),
+                Conteudo.destinos.any(DestinoConteudo.HOME_AUTENTICADA.value),
                 Conteudo.aparece_na_home.is_(True),
             ),
             Conteudo.status == StatusConteudo.PUBLICADO,

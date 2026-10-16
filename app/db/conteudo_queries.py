@@ -45,30 +45,15 @@ async def listar(
         )
 
     if classificacao_id is not None:
-        filtros.append(
-            Conteudo.classificacao_ids.contains(
-                [classificacao_id]
-            )
-        )
+        filtros.append(Conteudo.classificacao_ids.contains([classificacao_id]))
 
     if aparece_na_home is not None:
-        filtros.append(
-            Conteudo.aparece_na_home.is_(aparece_na_home)
-        )
+        filtros.append(Conteudo.aparece_na_home.is_(aparece_na_home))
 
     if destino is not None:
-        filtros.append(
-            Conteudo.destinos.any(destino.value)
-        )
+        filtros.append(Conteudo.destinos.any(destino.value))
 
-    total = (
-        await db.scalar(
-            select(func.count())
-            .select_from(Conteudo)
-            .where(*filtros)
-        )
-        or 0
-    )
+    total = await db.scalar(select(func.count()).select_from(Conteudo).where(*filtros)) or 0
 
     if order == OrdemConteudo.ORDEM_DESC:
         ordenacao = (
@@ -128,9 +113,7 @@ async def listar_classificacao_ids_existentes(
 
     resultado = await db.execute(
         select(ClassificacaoDiagnostico.id).where(
-            ClassificacaoDiagnostico.id.in_(
-                classificacao_ids
-            )
+            ClassificacaoDiagnostico.id.in_(classificacao_ids)
         )
     )
 

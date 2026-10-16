@@ -1,5 +1,4 @@
 import uuid
-
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,8 +64,7 @@ def _normalizar_destinos(
     destinos: list[DestinoConteudo] | list[str],
 ) -> list[str]:
     return [
-        destino.value if isinstance(destino, DestinoConteudo) else destino
-        for destino in destinos
+        destino.value if isinstance(destino, DestinoConteudo) else destino for destino in destinos
     ]
 
 
@@ -75,9 +73,7 @@ def _sincronizar_home_legado(
     campos_informados: set[str],
     destinos_atuais: list[DestinoConteudo] | list[str] | None = None,
 ) -> None:
-    destinos = _normalizar_destinos(
-        valores.get("destinos", destinos_atuais or [])
-    )
+    destinos = _normalizar_destinos(valores.get("destinos", destinos_atuais or []))
 
     home = DestinoConteudo.HOME_AUTENTICADA.value
 
@@ -88,11 +84,7 @@ def _sincronizar_home_legado(
             if home not in destinos:
                 destinos.append(home)
         else:
-            destinos = [
-                destino
-                for destino in destinos
-                if destino != home
-            ]
+            destinos = [destino for destino in destinos if destino != home]
 
         valores["destinos"] = destinos
         return
@@ -131,9 +123,7 @@ def _validar_estado_conteudo(
         )
 
         if DestinoConteudo.LANDING_PUBLICA.value in destinos:
-            _validar_conteudo_publico(
-                ConteudoSchema.model_validate(conteudo)
-            )
+            _validar_conteudo_publico(ConteudoSchema.model_validate(conteudo))
     except ValueError as exc:
         raise ConteudoInvalidoError(str(exc)) from exc
 
@@ -212,9 +202,7 @@ async def listar(
     busca = q.strip() if q else None
 
     if busca and len(busca) > TAMANHO_MAXIMO_BUSCA:
-        raise ValueError(
-            f"q deve ter no máximo {TAMANHO_MAXIMO_BUSCA} caracteres"
-        )
+        raise ValueError(f"q deve ter no máximo {TAMANHO_MAXIMO_BUSCA} caracteres")
 
     itens, total = await conteudo_queries.listar(
         db,
@@ -268,16 +256,9 @@ async def atualizar(
         exclude_unset=True,
     )
 
-    acao = (
-        "conteudo.publicar"
-        if payload.status == StatusConteudo.PUBLICADO
-        else "conteudo.editar"
-    )
+    acao = "conteudo.publicar" if payload.status == StatusConteudo.PUBLICADO else "conteudo.editar"
 
-    if (
-        payload.status == StatusConteudo.RASCUNHO
-        and conteudo.status != StatusConteudo.RASCUNHO
-    ):
+    if payload.status == StatusConteudo.RASCUNHO and conteudo.status != StatusConteudo.RASCUNHO:
         acao = "conteudo.despublicar"
 
     await auditoria_queries.validar_chave_operacao(
@@ -311,10 +292,7 @@ async def atualizar(
     alteracoes["atualizado_por_id"] = admin_id
     alteracoes["updated_at"] = datetime.now(UTC)
 
-    if (
-        payload.status == StatusConteudo.PUBLICADO
-        and conteudo.status != StatusConteudo.PUBLICADO
-    ):
+    if payload.status == StatusConteudo.PUBLICADO and conteudo.status != StatusConteudo.PUBLICADO:
         _registrar_publicacao(alteracoes, admin_id)
 
     elif payload.status == StatusConteudo.RASCUNHO:
@@ -330,16 +308,9 @@ async def atualizar(
     if actor is not None:
         publicado = payload.status == StatusConteudo.PUBLICADO
 
-        acao = (
-            "conteudo.publicar"
-            if publicado
-            else "conteudo.editar"
-        )
+        acao = "conteudo.publicar" if publicado else "conteudo.editar"
 
-        if (
-            payload.status == StatusConteudo.RASCUNHO
-            and status_anterior != StatusConteudo.RASCUNHO
-        ):
+        if payload.status == StatusConteudo.RASCUNHO and status_anterior != StatusConteudo.RASCUNHO:
             acao = "conteudo.despublicar"
 
         await auditoria_queries.registrar_mutacao(

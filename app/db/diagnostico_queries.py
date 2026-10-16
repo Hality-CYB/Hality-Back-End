@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import paciente_profissional_queries
@@ -499,8 +499,9 @@ async def listar_conteudos_por_classificacao(
         select(Conteudo)
         .where(
             Conteudo.classificacao_ids.any(classificacao_id),
-            Conteudo.destinos.any(
-                DestinoConteudo.ORIENTACOES_DIAGNOSTICO.value
+            or_(
+                Conteudo.destinos.any(DestinoConteudo.ORIENTACOES_DIAGNOSTICO.value),
+                func.cardinality(Conteudo.destinos) == 0,
             ),
             Conteudo.status == StatusConteudo.PUBLICADO,
             Conteudo.criado_por_id.is_not(None),

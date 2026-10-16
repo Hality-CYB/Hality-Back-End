@@ -1,5 +1,4 @@
 import uuid
-
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -53,13 +52,8 @@ def _validar_destinos_classificacoes(
     destinos: list[DestinoConteudo],
     classificacao_ids: list[int],
 ) -> None:
-    if (
-        DestinoConteudo.ORIENTACOES_DIAGNOSTICO in destinos
-        and not classificacao_ids
-    ):
-        raise ValueError(
-            "orientacoes_diagnostico exige ao menos uma classificação"
-        )
+    if DestinoConteudo.ORIENTACOES_DIAGNOSTICO in destinos and not classificacao_ids:
+        raise ValueError("orientacoes_diagnostico exige ao menos uma classificação")
 
     if DestinoConteudo.CAPTURA in destinos and classificacao_ids:
         raise ValueError("captura não aceita classificação clínica")
@@ -111,9 +105,7 @@ def _validar_conteudo_publico(conteudo: ConteudoSchema) -> None:
             _validar_url_publica(url)
 
         else:
-            raise ValueError(
-                f"tipo de bloco não permitido em conteúdo público: {tipo}"
-            )
+            raise ValueError(f"tipo de bloco não permitido em conteúdo público: {tipo}")
 
 
 class ConteudoCreate(BaseModel):
@@ -132,9 +124,7 @@ class ConteudoCreate(BaseModel):
     aparece_na_home: bool = Field(
         default=False,
         deprecated=True,
-        description=(
-            "Campo legado. Use o destino home_autenticada em destinos."
-        ),
+        description=("Campo legado. Use o destino home_autenticada em destinos."),
     )
 
     status: StatusConteudo = StatusConteudo.RASCUNHO
@@ -187,9 +177,7 @@ class ConteudoUpdate(BaseModel):
     aparece_na_home: bool | None = Field(
         default=None,
         deprecated=True,
-        description=(
-            "Campo legado. Use o destino home_autenticada em destinos."
-        ),
+        description=("Campo legado. Use o destino home_autenticada em destinos."),
     )
 
     status: StatusConteudo | None = None

@@ -11,9 +11,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
-from sqlalchemy.dialects import postgresql
 
 from app.core.config import get_settings
 from app.core.consentimentos import TERMOS, Finalidade
@@ -713,6 +713,7 @@ def test_listar_diagnosticos_limite_maior_que_50_retorna_400() -> None:
     )
 
     assert response.status_code == 400
+
 
 @pytest.mark.asyncio
 async def test_query_conteudos_diagnostico_filtra_destino_orientacoes():

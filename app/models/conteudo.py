@@ -1,7 +1,6 @@
 """Conteúdo informativo genérico exibido no aplicativo."""
 
 import uuid
-
 from datetime import datetime
 from enum import StrEnum
 
@@ -89,16 +88,10 @@ class Conteudo(Base):
         server_default=text("'{}'::integer[]"),
     )
 
-    destinos: Mapped[list[DestinoConteudo]] = mapped_column(
-        ARRAY(
-            Enum(
-                DestinoConteudo,
-                name="destino_conteudo",
-                values_callable=lambda enum: [item.value for item in enum],
-            )
-        ),
+    destinos: Mapped[list[str]] = mapped_column(
+        ARRAY(String),
         nullable=False,
-        server_default=text("'{}'::destino_conteudo[]"),
+        server_default=text("'{}'::varchar[]"),
     )
 
     aparece_na_home: Mapped[bool] = mapped_column(
