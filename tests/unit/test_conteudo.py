@@ -20,6 +20,7 @@ def _conteudo(**alteracoes):
         "categoria": "higiene",
         "conteudo": {"itens": [{"tipo": "texto", "texto": "Use fio dental."}]},
         "classificacao_ids": [2],
+        "destinos": [],
         "aparece_na_home": False,
         "status": "rascunho",
         "ordem": 0,
@@ -42,7 +43,6 @@ def test_novo_conteudo_nasce_rascunho() -> None:
             "conteudo": {"itens": [{"tipo": "texto", "texto": "Use fio dental."}]},
         }
     )
-
     assert payload.status == "rascunho"
 
 
@@ -128,7 +128,16 @@ def test_queries_do_paciente_exigem_publicado_e_autoria() -> None:
 
 @pytest.mark.parametrize(
     "campo",
-    ["titulo", "categoria", "conteudo", "classificacao_ids", "aparece_na_home", "status", "ordem"],
+    [
+        "titulo",
+        "categoria",
+        "conteudo",
+        "classificacao_ids",
+        "destinos",
+        "aparece_na_home",
+        "status",
+        "ordem",
+    ],
 )
 def test_update_rejeita_null_explicito(campo):
     # `null` explícito gravaria NULL em coluna NOT NULL (antes respondia 500).
@@ -150,7 +159,14 @@ def test_listagem_paginada_normaliza_busca_vazia_e_calcula_has_next(monkeypatch)
 
     monkeypatch.setattr(conteudo_service.conteudo_queries, "listar", listar)
 
-    resposta = asyncio.run(conteudo_service.listar(SimpleNamespace(), page=2, limit=10, q="  "))
+    resposta = asyncio.run(
+        conteudo_service.listar(
+            SimpleNamespace(),
+            page=2,
+            limit=10,
+            q="  ",
+        )
+    )
 
     assert isinstance(resposta, ConteudoListResponse)
     assert resposta.model_dump(mode="json")["items"][0]["conteudo"]["itens"]

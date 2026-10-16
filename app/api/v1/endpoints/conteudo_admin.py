@@ -15,53 +15,116 @@ from app.schemas.conteudo import (
     ConteudoDetail,
     ConteudoListResponse,
     ConteudoUpdate,
+    DestinoConteudo,
     OrdemConteudo,
     StatusConteudo,
 )
 from app.services import conteudo_service
 
-router = APIRouter(prefix="/admin/conteudos", tags=["admin-conteudos"])
+router = APIRouter(
+    prefix="/admin/conteudos",
+    tags=["admin-conteudos"],
+)
 
 
 def _traduzir_erro(
     exc: conteudo_service.ConteudoNaoEncontradoError
-    | conteudo_service.ClassificacaoNaoEncontradaError,
+    | conteudo_service.ClassificacaoNaoEncontradaError
+    | conteudo_service.ConteudoInvalidoError,
 ) -> HTTPException:
-    if isinstance(exc, conteudo_service.ConteudoNaoEncontradoError):
+    if isinstance(
+        exc,
+        conteudo_service.ConteudoNaoEncontradoError,
+    ):
         return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="conteúdo não encontrado"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="conteúdo não encontrado",
         )
+
+    if isinstance(
+        exc,
+        conteudo_service.ConteudoInvalidoError,
+    ):
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="uma ou mais classificações não foram encontradas",
     )
 
 
-@router.post("", response_model=ConteudoDetail, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ConteudoDetail,
+    status_code=status.HTTP_201_CREATED,
+)
 async def criar_conteudo(
     payload: ConteudoCreate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            max_length=100,
+        ),
+    ] = None,
 ) -> ConteudoDetail:
     try:
-        return await conteudo_service.criar(db, admin.id, payload, admin, idempotency_key)
-    except conteudo_service.ClassificacaoNaoEncontradaError as exc:
+        return await conteudo_service.criar(
+            db,
+            admin.id,
+            payload,
+            admin,
+            idempotency_key,
+        )
+    except (
+        conteudo_service.ClassificacaoNaoEncontradaError,
+        conteudo_service.ConteudoInvalidoError,
+    ) as exc:
         raise _traduzir_erro(exc) from exc
 
 
-@router.get("", response_model=ConteudoListResponse)
+@router.get(
+    "",
+    response_model=ConteudoListResponse,
+)
 async def listar_conteudos(
     admin: CurrentAdminDep,
     db: DbSession,
     page: PaginaQuery = 1,
     limit: LimiteQuery = 20,
-    q: Annotated[str | None, Query(max_length=100)] = None,
-    status_filtro: Annotated[StatusConteudo | None, Query(alias="status")] = None,
-    categoria: Annotated[CategoriaConteudo | None, Query()] = None,
-    classificacao_id: Annotated[int | None, Query(ge=1)] = None,
-    aparece_na_home: Annotated[bool | None, Query()] = None,
-    order: Annotated[OrdemConteudo, Query()] = OrdemConteudo.ORDEM_ASC,
+    q: Annotated[
+        str | None,
+        Query(max_length=100),
+    ] = None,
+    status_filtro: Annotated[
+        StatusConteudo | None,
+        Query(alias="status"),
+    ] = None,
+    categoria: Annotated[
+        CategoriaConteudo | None,
+        Query(),
+    ] = None,
+    classificacao_id: Annotated[
+        int | None,
+        Query(ge=1),
+    ] = None,
+    aparece_na_home: Annotated[
+        bool | None,
+        Query(),
+    ] = None,
+    destino: Annotated[
+        DestinoConteudo | None,
+        Query(),
+    ] = None,
+    order: Annotated[
+        OrdemConteudo,
+        Query(),
+    ] = OrdemConteudo.ORDEM_ASC,
 ) -> ConteudoListResponse:
     try:
         return await conteudo_service.listar(
@@ -73,51 +136,98 @@ async def listar_conteudos(
             categoria=categoria,
             classificacao_id=classificacao_id,
             aparece_na_home=aparece_na_home,
+            destino=destino,
             order=order,
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
         ) from exc
 
 
-@router.get("/{conteudo_id}", response_model=ConteudoDetail)
-async def obter_conteudo(conteudo_id: int, admin: CurrentAdminDep, db: DbSession) -> ConteudoDetail:
+@router.get(
+    "/{conteudo_id}",
+    response_model=ConteudoDetail,
+)
+async def obter_conteudo(
+    conteudo_id: int,
+    admin: CurrentAdminDep,
+    db: DbSession,
+) -> ConteudoDetail:
     try:
-        return await conteudo_service.obter(db, conteudo_id)
+        return await conteudo_service.obter(
+            db,
+            conteudo_id,
+        )
     except conteudo_service.ConteudoNaoEncontradoError as exc:
         raise _traduzir_erro(exc) from exc
 
 
-@router.put("/{conteudo_id}", response_model=ConteudoDetail)
-@router.patch("/{conteudo_id}", response_model=ConteudoDetail)
+@router.put(
+    "/{conteudo_id}",
+    response_model=ConteudoDetail,
+)
+@router.patch(
+    "/{conteudo_id}",
+    response_model=ConteudoDetail,
+)
 async def atualizar_conteudo(
     conteudo_id: int,
     payload: ConteudoUpdate,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            max_length=100,
+        ),
+    ] = None,
 ) -> ConteudoDetail:
     try:
         return await conteudo_service.atualizar(
-            db, admin.id, conteudo_id, payload, admin, idempotency_key
+            db,
+            admin.id,
+            conteudo_id,
+            payload,
+            admin,
+            idempotency_key,
         )
     except (
         conteudo_service.ConteudoNaoEncontradoError,
         conteudo_service.ClassificacaoNaoEncontradaError,
+        conteudo_service.ConteudoInvalidoError,
     ) as exc:
         raise _traduzir_erro(exc) from exc
 
 
-@router.delete("/{conteudo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{conteudo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def deletar_conteudo(
     conteudo_id: int,
     admin: CurrentAdminMutationDep,
     db: DbSession,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            max_length=100,
+        ),
+    ] = None,
 ) -> Response:
     try:
-        await conteudo_service.deletar(db, conteudo_id, admin, idempotency_key)
+        await conteudo_service.deletar(
+            db,
+            conteudo_id,
+            admin,
+            idempotency_key,
+        )
     except conteudo_service.ConteudoNaoEncontradoError as exc:
         raise _traduzir_erro(exc) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+    )

@@ -32,6 +32,7 @@ from sqlalchemy.pool import NullPool
 
 from app.api.deps import exigir_papeis
 from app.api.v1.endpoints import anamnese as anamnese_endpoints
+from app.api.v1.endpoints import conteudo as conteudo_endpoints
 from app.api.v1.endpoints import diagnostico as diagnostico_endpoints
 from app.api.v1.endpoints import paciente as paciente_endpoints
 from app.auth import policies
@@ -469,6 +470,7 @@ _ROTAS_CLINICAS = [
     ("POST", "/api/v1/diagnosticos"),
     ("GET", "/api/v1/diagnosticos/1"),
     ("GET", "/api/v1/diagnosticos/imagens/qualquer.jpg"),
+    ("GET", "/api/v1/conteudos/captura"),
 ]
 
 
@@ -639,6 +641,7 @@ _APP_DIR = Path(__file__).resolve().parents[1] / "app"
 # Routers de recursos clínicos. Router clínico novo deve entrar nesta lista.
 _ROUTERS_CLINICOS = (
     anamnese_endpoints.router,
+    conteudo_endpoints.router,
     diagnostico_endpoints.router,
     paciente_endpoints.router,
 )
@@ -662,7 +665,7 @@ def test_toda_rota_clinica_declara_papeis_via_exigir_papeis() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and r.path not in _ROTAS_CLINICAS_PUBLICAS
     ]
-    assert len(rotas) == 13
+    assert len(rotas) == 14
 
     for rota in rotas:
         papeis = _papeis_declarados(rota.dependant)
