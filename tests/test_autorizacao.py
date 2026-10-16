@@ -49,6 +49,7 @@ from app.models import (
 )
 from app.schemas.usuario import TipoUsuario
 from app.services import diagnostico_storage
+from tests.conftest import CONSENTIMENTOS_CADASTRO
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 
@@ -415,6 +416,7 @@ _USUARIO = {
     "email": "rbac@hality.com",
     "password": "SenhaSegura123!",
     "name": "Usuário RBAC",
+    "consentimentos": CONSENTIMENTOS_CADASTRO,
 }
 
 

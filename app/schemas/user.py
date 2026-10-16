@@ -5,7 +5,9 @@ import uuid
 from fastapi_users import schemas
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.consentimentos import Finalidade
 from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO
+from app.schemas.consentimento import DecisaoConsentimento
 from app.schemas.profissionais import ProfissionalPerfilRead, ProfissionalPerfilUpdate
 
 
@@ -27,6 +29,18 @@ class UserCreate(schemas.BaseUserCreate):
 
     name: str = Field(..., min_length=2, max_length=255, examples=["Maria Silva"])
     phone: str | None = Field(None, max_length=20, examples=["(11) 99999-9999"])
+
+
+class RegistroCreate(UserCreate):
+    """Cadastro público: dados da conta + decisões de consentimento por finalidade.
+
+    As decisões são sempre explícitas (nada vem marcado por padrão); o backend
+    exige o aceite do tratamento de dados de saúde na versão vigente do termo.
+    """
+
+    consentimentos: list[DecisaoConsentimento] = Field(
+        default_factory=list, max_length=len(Finalidade)
+    )
 
 
 class UserUpdate(BaseModel):

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User
+from tests.conftest import CONSENTIMENTOS_CADASTRO
 
 # fastapi-users usa /auth/register (JSON) e /auth/login (form-data com campo 'username')
 REGISTER_URL = "/api/v1/auth/register"
@@ -26,6 +27,7 @@ _DEFAULT_USER = {
     "password": "SenhaSegura123!",
     "name": "Mariana Oliveira",
     "phone": "(11) 97777-6666",
+    "consentimentos": CONSENTIMENTOS_CADASTRO,
 }
 
 
@@ -67,7 +69,12 @@ async def test_register_patient_success(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_register_patient_duplicate_email(client: AsyncClient) -> None:
     """Testa erro 400 ao tentar cadastrar com e-mail já existente."""
-    payload = {"email": "dup@hality.com", "password": "SenhaSegura123!", "name": "Dup User"}
+    payload = {
+        "email": "dup@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Dup User",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await client.post(REGISTER_URL, json=payload)
     response = await client.post(REGISTER_URL, json=payload)
     assert response.status_code == 400
@@ -89,7 +96,12 @@ async def test_register_missing_name(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient) -> None:
     """Testa login bem-sucedido via form-data (status 200 + token JWT)."""
-    user = {"email": "lucas@hality.com", "password": "SenhaCorreta123!", "name": "Lucas Santos"}
+    user = {
+        "email": "lucas@hality.com",
+        "password": "SenhaCorreta123!",
+        "name": "Lucas Santos",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await client.post(REGISTER_URL, json=user)
 
     # fastapi-users usa OAuth2PasswordRequestForm: campo 'username' (não 'email')
@@ -137,6 +149,7 @@ async def test_get_me_success(client: AsyncClient) -> None:
         "password": "SenhaSegura123!",
         "name": "Renata Costa",
         "phone": "(11) 95555-4444",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
     token = await _register_and_login(client, user)
 
@@ -213,7 +226,12 @@ async def test_rotas_users_por_id_nao_sao_expostas(
 @pytest.mark.asyncio
 async def test_refresh_success(client: AsyncClient) -> None:
     """Refresh válido (cookie enviado automaticamente) devolve access token novo."""
-    user = {"email": "paulo@hality.com", "password": "SenhaSegura123!", "name": "Paulo Reis"}
+    user = {
+        "email": "paulo@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Paulo Reis",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await _register_and_login(client, user)
 
     response = await client.post(REFRESH_URL)
@@ -232,7 +250,12 @@ async def test_refresh_success(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_refresh_rotacao_invalida_cookie_antigo(client: AsyncClient) -> None:
     """Depois de um refresh, o cookie antigo não pode ser reusado (rotação)."""
-    user = {"email": "sofia@hality.com", "password": "SenhaSegura123!", "name": "Sofia Lima"}
+    user = {
+        "email": "sofia@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Sofia Lima",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await _register_and_login(client, user)
     cookie_antigo = client.cookies.get(REFRESH_COOKIE_NAME)
 
@@ -264,7 +287,12 @@ async def test_refresh_com_cookie_invalido(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_logout_invalida_refresh_token(client: AsyncClient) -> None:
     """Logout apaga o refresh_token do banco — usar o cookie depois falha."""
-    user = {"email": "bianca@hality.com", "password": "SenhaSegura123!", "name": "Bianca Alves"}
+    user = {
+        "email": "bianca@hality.com",
+        "password": "SenhaSegura123!",
+        "name": "Bianca Alves",
+        "consentimentos": CONSENTIMENTOS_CADASTRO,
+    }
     await _register_and_login(client, user)
     cookie = client.cookies.get(REFRESH_COOKIE_NAME)
 

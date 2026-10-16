@@ -16,7 +16,7 @@ from app.auth.users import current_active_user
 from app.core.config import get_settings
 from app.main import app
 from app.models import PacienteProfissional, Profissional, User
-from tests.conftest import CenarioAdmin, autenticar_como
+from tests.conftest import CONSENTIMENTOS_CADASTRO, CenarioAdmin, autenticar_como
 
 client = TestClient(app)
 
@@ -354,7 +354,12 @@ def test_paciente_do_registro_publico_pode_ser_vinculado(cenario_admin: CenarioA
     email = cenario_admin.email("registrado")
     registro = client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "SenhaSegura123!", "name": "Paciente Registrado"},
+        json={
+            "email": email,
+            "password": "SenhaSegura123!",
+            "name": "Paciente Registrado",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
     assert registro.status_code == 201
     assert registro.json()["role"] == "paciente"

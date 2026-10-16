@@ -1,6 +1,7 @@
 from app.models.anamnese import Anamnese
 from app.models.auditoria_acesso import AuditoriaAcesso
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
+from app.models.consentimento import ConsentimentoEvento
 from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
 from app.models.diagnostico_revisao import DiagnosticoRevisao
@@ -15,6 +16,7 @@ __all__ = [
     "Anamnese",
     "AuditoriaAcesso",
     "ClassificacaoDiagnostico",
+    "ConsentimentoEvento",
     "Diagnostico",
     "Conteudo",
     "Imagem",

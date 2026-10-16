@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models import Profissional, User
+from tests.conftest import CONSENTIMENTOS_CADASTRO
 
 REGISTER_URL = "/api/v1/auth/register"
 LOGIN_URL = "/api/v1/auth/login"
@@ -35,7 +36,13 @@ async def _registrar_e_logar(
     """Registra, opcionalmente troca o role direto no banco e devolve o header de auth."""
     await client.post(
         REGISTER_URL,
-        json={"email": email, "password": SENHA, "name": "Nome Original", "phone": "1111"},
+        json={
+            "email": email,
+            "password": SENHA,
+            "name": "Nome Original",
+            "phone": "1111",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
     if role is not None:
         user = await db.scalar(select(User).where(User.email == email))

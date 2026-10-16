@@ -47,7 +47,7 @@ from app.schemas.profissional_diagnostico import (
     RevisaoProfissionalResponse,
     RevisaoProfissionalResumo,
 )
-from app.services import diagnostico_mock, diagnostico_storage
+from app.services import consentimento_service, diagnostico_mock, diagnostico_storage
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
@@ -406,6 +406,9 @@ async def criar_diagnostico(
 
     if existente is not None:
         raise AnamneseJaUtilizadaError(existente)
+
+    # O titular é o dono da anamnese, mesmo quando quem envia é o profissional.
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, paciente_id)
 
     _validar_imagem(
         imagem,
