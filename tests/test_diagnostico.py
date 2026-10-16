@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.core.consentimentos import TERMOS, Finalidade
 from app.main import app
 from app.models import (
     Anamnese,
@@ -249,7 +251,7 @@ def test_criar_diagnostico(monkeypatch):
     # `db` é um AsyncMock aqui: neutraliza a consulta de consentimento.
     monkeypatch.setattr(
         diagnostico_service.consentimento_service,
-        "exigir_tratamento_nao_revogado",
+        "exigir_tratamento_vigente_se_decidido",
         AsyncMock(return_value=None),
     )
 
@@ -318,7 +320,7 @@ def _criar_anamnese_do_paciente_stub() -> int:
     return asyncio.run(_criar())
 
 
-def _registrar_decisao_de_tratamento(aceito: bool) -> int:
+def _registrar_decisao_de_tratamento(aceito: bool, versao: str = "v1") -> int:
     async def _registrar() -> int:
         db, engine = await _abrir_sessao_teste()
         try:
@@ -326,7 +328,7 @@ def _registrar_decisao_de_tratamento(aceito: bool) -> int:
                 evento = ConsentimentoEvento(
                     titular_id=PACIENTE_STUB_ID,
                     finalidade="health_data",
-                    versao="v1",
+                    versao=versao,
                     aceito=aceito,
                     origem="perfil",
                     ator_id=PACIENTE_STUB_ID,
@@ -373,21 +375,44 @@ def _limpar_consentimento_e_anamnese(evento_ids: list[int], anamnese_id: int) ->
     asyncio.run(_limpar())
 
 
+JPEG_MINIMO = bytes([0xFF, 0xD8, 0xFF, 0xE0]) + b"0" * 64
+
+
+def _enviar_diagnostico(anamnese_id: int):
+    return client.post(
+        "/api/v1/diagnosticos",
+        headers=AUTH_HEADERS,
+        data={"anamnese_id": str(anamnese_id), "parametros_captura": "{}"},
+        files={"imagem": ("lingua.jpg", JPEG_MINIMO, "image/jpeg")},
+    )
+
+
 def test_criar_diagnostico_apos_revogar_tratamento_retorna_403() -> None:
     anamnese_id = _criar_anamnese_do_paciente_stub()
     evento_ids = [_registrar_decisao_de_tratamento(aceito=True)]
     try:
         evento_ids.append(_registrar_decisao_de_tratamento(aceito=False))
 
-        resposta = client.post(
-            "/api/v1/diagnosticos",
-            headers=AUTH_HEADERS,
-            data={"anamnese_id": str(anamnese_id), "parametros_captura": "{}"},
-            files={"imagem": ("lingua.jpg", b"\xff\xd8\xff\xe0" + b"0" * 64, "image/jpeg")},
-        )
+        resposta = _enviar_diagnostico(anamnese_id)
 
         assert resposta.status_code == 403
-        assert "revogado" in resposta.json()["detail"]
+        assert "não vigente" in resposta.json()["detail"]
+        assert _contar_diagnosticos_da_anamnese(anamnese_id) == 0
+    finally:
+        _limpar_consentimento_e_anamnese(evento_ids, anamnese_id)
+
+
+def test_criar_diagnostico_com_aceite_de_versao_antiga_retorna_403(monkeypatch) -> None:
+    anamnese_id = _criar_anamnese_do_paciente_stub()
+    # Aceite dado na v1; o termo de tratamento passa a ser v2.
+    evento_ids = [_registrar_decisao_de_tratamento(aceito=True, versao="v1")]
+    termo_v2 = dataclasses.replace(TERMOS[Finalidade.HEALTH_DATA], versao="v2")
+    monkeypatch.setitem(TERMOS, Finalidade.HEALTH_DATA, termo_v2)
+    try:
+        resposta = _enviar_diagnostico(anamnese_id)
+
+        assert resposta.status_code == 403
+        assert "não vigente" in resposta.json()["detail"]
         assert _contar_diagnosticos_da_anamnese(anamnese_id) == 0
     finally:
         _limpar_consentimento_e_anamnese(evento_ids, anamnese_id)

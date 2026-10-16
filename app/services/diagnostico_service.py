@@ -408,7 +408,7 @@ async def criar_diagnostico(
         raise AnamneseJaUtilizadaError(existente)
 
     # O titular é o dono da anamnese, mesmo quando quem envia é o profissional.
-    await consentimento_service.exigir_tratamento_nao_revogado(db, paciente_id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, paciente_id)
 
     _validar_imagem(
         imagem,

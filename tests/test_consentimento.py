@@ -504,21 +504,21 @@ TRATAMENTO_REVOGADO = {**TRATAMENTO, "aceito": False}
 
 
 @pytest.mark.asyncio
-async def test_exigir_tratamento_nao_revogado_segue_a_decisao_mais_recente(
+async def test_exigir_tratamento_vigente_se_decidido_segue_a_decisao_mais_recente(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     email = "revoga_tratamento@hality.com"
     headers = await _registrar_e_logar(client, email)
     usuario = await db_session.scalar(select(User).where(User.email == email))
 
-    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
 
     await client.post(CONSENTIMENTOS_URL, json=TRATAMENTO_REVOGADO, headers=headers)
-    with pytest.raises(consentimento_service.TratamentoRevogadoError):
-        await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+    with pytest.raises(consentimento_service.TratamentoNaoVigenteError):
+        await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
 
     await client.post(CONSENTIMENTOS_URL, json=TRATAMENTO, headers=headers)
-    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
 
 
 @pytest.mark.asyncio
@@ -531,7 +531,7 @@ async def test_revogar_so_o_treino_nao_barra_dados_de_saude(
 
     await client.post(CONSENTIMENTOS_URL, json=TREINO_RECUSADO, headers=headers)
 
-    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
 
 
 @pytest.mark.asyncio
@@ -540,4 +540,26 @@ async def test_quem_nao_decidiu_ainda_nao_e_barrado(db_session: AsyncSession) ->
     db_session.add(usuario)
     await db_session.commit()
 
-    await consentimento_service.exigir_tratamento_nao_revogado(db_session, usuario.id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
+
+
+@pytest.mark.asyncio
+async def test_aceite_de_versao_antiga_do_tratamento_barra_ate_decidir_de_novo(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = "tratamento_v1@hality.com"
+    headers = await _registrar_e_logar(client, email)
+    usuario = await db_session.scalar(select(User).where(User.email == email))
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
+
+    monkeypatch.setitem(
+        TERMOS,
+        Finalidade.HEALTH_DATA,
+        dataclasses.replace(TERMOS[Finalidade.HEALTH_DATA], versao="v2"),
+    )
+
+    with pytest.raises(consentimento_service.TratamentoNaoVigenteError):
+        await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)
+
+    await client.post(CONSENTIMENTOS_URL, json={**TRATAMENTO, "versao": "v2"}, headers=headers)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db_session, usuario.id)

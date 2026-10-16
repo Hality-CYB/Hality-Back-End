@@ -151,10 +151,13 @@ async def criar_diagnostico(
             detail="anamnese não encontrada",
         ) from exc
 
-    except consentimento_service.TratamentoRevogadoError as exc:
+    except consentimento_service.TratamentoNaoVigenteError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="consentimento para tratamento de dados de saúde revogado",
+            detail=(
+                "consentimento para tratamento de dados de saúde não vigente "
+                "(revogado ou termo desatualizado)"
+            ),
         ) from exc
 
     except diagnostico_service.AnamneseJaUtilizadaError as exc:
