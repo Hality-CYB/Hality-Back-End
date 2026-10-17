@@ -1,3 +1,4 @@
+import secrets
 import uuid
 
 from sqlalchemy import Row
@@ -11,14 +12,15 @@ from app.db import paciente_queries, user_queries
 from app.models.user import User
 from app.schemas.paciente import (
     PacienteCreate,
+    PacienteCreateResponse,
     PacienteDetail,
     PacienteListItem,
     PacienteListResponse,
     PacienteVinculo,
 )
-from app.schemas.paciente_profissional import VinculoDetail
 from app.schemas.usuario import TipoUsuario
 from app.services import diagnostico_service
+from app.services.identity_token_service import create_invitation
 
 ORDENS_LISTAGEM = {"nome_asc"}
 LIMITE_MAXIMO = 50
@@ -183,11 +185,11 @@ async def criar_paciente(
     db: AsyncSession,
     usuario: User,
     dados: PacienteCreate,
-) -> VinculoDetail:
-    """Profissional cadastra um paciente novo, já vinculado a ele.
+) -> PacienteCreateResponse:
+    """Profissional cadastra um paciente novo, já vinculado a ele e com convite pendente.
 
-    Usuário e vínculo saem no mesmo commit: não fica paciente órfão se o vínculo
-    falhar. E-mail já cadastrado -> ``EmailJaCadastradoError``; para um paciente
+    Usuário, vínculo e convite saem no mesmo commit: não fica paciente órfão se o vínculo
+    ou o convite falhar. E-mail já cadastrado -> ``EmailJaCadastradoError``; para um paciente
     que já tem conta o caminho é ``POST /vinculos``.
     """
     if await user_queries.email_em_uso(db, dados.email):
@@ -200,9 +202,11 @@ async def criar_paciente(
             email=dados.email,
             phone=dados.telefone,
             role=TipoUsuario.PACIENTE.value,
-            hashed_password=password_helper.hash(dados.senha),
+            hashed_password=password_helper.hash(dados.senha or secrets.token_urlsafe(32)),
+            is_active=False,
         )
         vinculo = await vinculo_queries.criar_vinculo(db, paciente.id, usuario.id)
+        await create_invitation(db, paciente, commit=False)
         await db.commit()
 
     except IntegrityError as exc:
@@ -217,11 +221,15 @@ async def criar_paciente(
         recurso=f"paciente:{paciente.id}",
         usuario=usuario,
     )
-    return VinculoDetail(
-        id=vinculo.id,
+    return PacienteCreateResponse(
+        id=paciente.id,
+        role=TipoUsuario.PACIENTE.value,
+        status="inativo",
+        invitation_status="pending",
         paciente_id=paciente.id,
         paciente_nome=paciente.name,
         paciente_email=paciente.email,
         data_vinculo=vinculo.data_vinculo,
         ativo=vinculo.ativo,
+        vinculo_id=vinculo.id,
     )

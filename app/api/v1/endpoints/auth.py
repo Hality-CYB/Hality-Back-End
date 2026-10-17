@@ -29,6 +29,7 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.identity import (
+    InvitationAcceptRequest,
     PasswordRecoveryConfirm,
     PasswordRecoveryRequest,
     PasswordRecoveryResponse,
@@ -241,4 +242,41 @@ async def invitation_confirm(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="TOKEN_DE_CONVITE_INVALIDO",
+        ) from exc
+
+
+@router.post("/invitations/{token}/accept", status_code=status.HTTP_204_NO_CONTENT)
+async def accept_invitation(
+    token: str,
+    payload: InvitationAcceptRequest,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    try:
+        await consume_invitation(
+            db,
+            token,
+            payload.senha,
+            consentimentos=payload.consentimentos,
+            referencia_coleta=definir_correlation_id(request.headers.get(CORRELATION_HEADER)),
+        )
+    except InvalidIdentityTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TOKEN_DE_CONVITE_INVALIDO",
+        ) from exc
+    except consentimento_service.TratamentoObrigatorioError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="o consentimento para tratamento de dados de saúde é obrigatório",
+        ) from exc
+    except consentimento_service.DecisaoDuplicadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="finalidade de consentimento repetida",
+        ) from exc
+    except consentimento_service.VersaoDesatualizadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"versão do termo desatualizada; versão vigente: {exc.versao_vigente}",
         ) from exc

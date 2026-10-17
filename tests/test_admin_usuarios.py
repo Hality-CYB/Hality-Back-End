@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.users import current_active_user, password_helper
 from app.db import user_queries
 from app.main import app
-from app.models import EmailOutbox, IdentityAction, PacienteProfissional, Profissional, User
+from app.models import (
+    AuditoriaAcesso,
+    EmailOutbox,
+    IdentityAction,
+    PacienteProfissional,
+    Profissional,
+    User,
+)
 from app.services.identity_token_service import INVITATION, _token_for
 from tests.conftest import CenarioAdmin, autenticar_como, executar_no_banco
 
@@ -638,3 +645,126 @@ def test_query_de_outros_admins_efetivos(cenario_admin: CenarioAdmin) -> None:
         cenario_admin.profissional_sem_registro.id,
     }
     assert not nunca_admins & (outros_do_admin | outros_do_superuser)
+
+
+def test_criar_usuario_rejeita_senha_padrao(cenario_admin: CenarioAdmin) -> None:
+    payload = _payload(cenario_admin, "padrao", "paciente", senha="hality1234")
+    resposta = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+    assert resposta.status_code == 422
+
+
+def test_criar_usuario_com_convite_retorna_contrato_completo(cenario_admin: CenarioAdmin) -> None:
+    payload = _payload(cenario_admin, "contrato", "paciente")
+    payload.pop("senha")
+    resposta = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+    assert resposta.status_code == 201
+    corpo = resposta.json()
+    assert corpo["role"] == "paciente"
+    assert corpo["status"] == "inativo"
+    assert corpo["invitation_status"] == "pending"
+    assert corpo["convite_pendente"] is True
+    assert "id" in corpo
+    _assert_sem_segredos(corpo)
+
+
+def test_reenviar_convite_sucesso_invalida_anterior_e_nao_duplica_usuario(
+    cenario_admin: CenarioAdmin,
+) -> None:
+    payload = _payload(cenario_admin, "reenvio", "paciente")
+    payload.pop("senha")
+    criada = client.post(USUARIOS_URL, json=payload, headers=AUTH)
+    assert criada.status_code == 201
+    user_id = criada.json()["id"]
+
+    async def _buscar_acoes(db: AsyncSession) -> list[IdentityAction]:
+        resultado = await db.scalars(
+            select(IdentityAction)
+            .where(
+                IdentityAction.user_id == uuid.UUID(user_id),
+                IdentityAction.purpose == INVITATION,
+            )
+            .order_by(IdentityAction.created_at)
+        )
+        return list(resultado)
+
+    acoes_iniciais = executar_no_banco(_buscar_acoes)
+    assert len(acoes_iniciais) == 1
+    token1 = _token_for(acoes_iniciais[0].id, acoes_iniciais[0].purpose)
+
+    # Reenvio de convite pelo admin
+    reenvio = client.post(f"{USUARIOS_URL}/{user_id}/reenviar-convite", headers=AUTH)
+    assert reenvio.status_code == 200
+    corpo_reenvio = reenvio.json()
+    assert corpo_reenvio["convite_pendente"] is True
+    assert corpo_reenvio["status"] == "inativo"
+    assert corpo_reenvio["invitation_status"] == "pending"
+
+    # Não duplica usuário no banco
+    async def _contar_usuarios(db: AsyncSession) -> int:
+        return len(
+            list(
+                await db.scalars(
+                    select(User.id).where(User.email == payload["email"])
+                )
+            )
+        )
+
+    assert executar_no_banco(_contar_usuarios) == 1
+
+    # Nova ação foi criada e a anterior foi revogada
+    acoes_depois = executar_no_banco(_buscar_acoes)
+    assert len(acoes_depois) == 2
+    assert acoes_depois[0].revoked_at is not None
+    assert acoes_depois[1].revoked_at is None
+    token2 = _token_for(acoes_depois[1].id, acoes_depois[1].purpose)
+    assert token1 != token2
+
+    # Token antigo é rejeitado
+    resp_token1 = client.post(
+        f"/api/v1/auth/invitations/{token1}/accept",
+        json={"senha": "SenhaValida123!"},
+    )
+    assert resp_token1.status_code == 400
+    assert resp_token1.json()["detail"] == "TOKEN_DE_CONVITE_INVALIDO"
+
+    # Token novo é aceito com sucesso
+    resp_token2 = client.post(
+        f"/api/v1/auth/invitations/{token2}/accept",
+        json={"senha": "SenhaValida123!"},
+    )
+    assert resp_token2.status_code == 204
+
+    # Auditoria registrada
+    async def _buscar_auditoria(db: AsyncSession) -> AuditoriaAcesso | None:
+        return await db.scalar(
+            select(AuditoriaAcesso).where(
+                AuditoriaAcesso.acao == "usuario.convite.reenviar",
+                AuditoriaAcesso.recurso_id == user_id,
+            )
+        )
+
+    auditoria = executar_no_banco(_buscar_auditoria)
+    assert auditoria is not None
+
+
+def test_reenviar_convite_nao_autorizado_retorna_403(cenario_admin: CenarioAdmin) -> None:
+    autenticar_como(cenario_admin.paciente)
+    resposta = client.post(
+        f"{USUARIOS_URL}/{cenario_admin.paciente_inativo.id}/reenviar-convite", headers=AUTH
+    )
+    assert resposta.status_code == 403
+
+
+def test_reenviar_convite_usuario_ja_ativo_retorna_409(cenario_admin: CenarioAdmin) -> None:
+    resposta = client.post(
+        f"{USUARIOS_URL}/{cenario_admin.paciente.id}/reenviar-convite", headers=AUTH
+    )
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"] == "usuário já ativado"
+
+
+def test_reenviar_convite_usuario_inexistente_retorna_404(cenario_admin: CenarioAdmin) -> None:
+    resposta = client.post(
+        f"{USUARIOS_URL}/{uuid.uuid4()}/reenviar-convite", headers=AUTH
+    )
+    assert resposta.status_code == 404
