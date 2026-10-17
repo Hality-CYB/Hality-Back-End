@@ -27,6 +27,7 @@ from app.db.session import async_session_factory
 from app.models import (
     Anamnese,
     ClassificacaoDiagnostico,
+    ConsentimentoEvento,
     Conteudo,
     Diagnostico,
     Imagem,
@@ -98,6 +99,8 @@ async def seed() -> None:
             Profissional,
             ClassificacaoDiagnostico,
             Questionario,
+            # FK RESTRICT para users: precisa sair antes dos usuários.
+            ConsentimentoEvento,
             User,
         ):
             await db.execute(delete(model))

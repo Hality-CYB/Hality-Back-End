@@ -24,6 +24,10 @@ async def email_em_uso(db: AsyncSession, email: str) -> bool:
     return encontrado is not None
 
 
+async def buscar_por_email(db: AsyncSession, email: str) -> User | None:
+    return await db.scalar(select(User).where(func.lower(User.email) == email.lower()).limit(1))
+
+
 async def buscar_usuario(db: AsyncSession, usuario_id: uuid.UUID) -> User | None:
     return await db.get(User, usuario_id)
 

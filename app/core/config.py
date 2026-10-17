@@ -60,6 +60,27 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
 
+    # Login com Google (US-012). Tudo opcional: sem as quatro variáveis o fluxo
+    # fica desligado (503) e o restante da API não é afetado. O client secret
+    # só existe aqui, no backend — nunca vai para o frontend.
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
+    # URL do callback do BACKEND, a mesma cadastrada no console do Google.
+    google_redirect_uri: str | None = None
+    # Para onde o backend devolve o navegador ao fim do callback (com `code` de
+    # troca de uso único ou `erro`). Fixa em configuração: nunca vem do request.
+    google_frontend_redirect_url: str | None = None
+
+    @property
+    def google_configurado(self) -> bool:
+        return bool(
+            self.google_client_id
+            and self.google_client_secret
+            and self.google_client_secret.get_secret_value()
+            and self.google_redirect_uri
+            and self.google_frontend_redirect_url
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
