@@ -8,14 +8,18 @@ Não usa `UserManager.create/update`: o adaptador SQLAlchemy do fastapi-users
 faz commit internamente, o que quebraria a atomicidade de User + Profissional.
 """
 
+import secrets
 import uuid
+from datetime import UTC, datetime
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import password_helper
 from app.db import auditoria_queries, user_queries
 from app.db import paciente_profissional_queries as vinculo_queries
+from app.models.identity_action import IdentityAction
 from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.admin_usuario import (
@@ -28,6 +32,7 @@ from app.schemas.admin_usuario import (
     ProfissionalDados,
 )
 from app.schemas.usuario import TipoUsuario
+from app.services.identity_token_service import INVITATION, create_invitation
 
 _COLUNAS_USUARIO = {"nome": "name", "telefone": "phone", "ativo": "is_active", "role": "role"}
 
@@ -54,7 +59,9 @@ class TrocaDeRoleBloqueadaError(Exception):
         super().__init__(motivo)
 
 
-def _para_detalhe(usuario: User, profissional: Profissional | None) -> AdminUsuarioDetail:
+def _para_detalhe(
+    usuario: User, profissional: Profissional | None, convite_pendente: bool = False
+) -> AdminUsuarioDetail:
     return AdminUsuarioDetail(
         id=usuario.id,
         nome=usuario.name,
@@ -62,6 +69,7 @@ def _para_detalhe(usuario: User, profissional: Profissional | None) -> AdminUsua
         telefone=usuario.phone,
         role=usuario.role,
         ativo=usuario.is_active,
+        convite_pendente=convite_pendente,
         created_at=usuario.created_at,
         profissional=None
         if profissional is None
@@ -70,6 +78,21 @@ def _para_detalhe(usuario: User, profissional: Profissional | None) -> AdminUsua
             especialidade=profissional.especialidade,
             vinculado_hality=profissional.vinculado_hality,
         ),
+    )
+
+
+async def _convites_pendentes(db: AsyncSession, usuario_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    if not usuario_ids:
+        return set()
+    return set(
+        await db.scalars(
+            select(IdentityAction.user_id).where(
+                IdentityAction.user_id.in_(usuario_ids),
+                IdentityAction.purpose == INVITATION,
+                IdentityAction.used_at.is_(None),
+                IdentityAction.revoked_at.is_(None),
+            )
+        )
     )
 
 
@@ -90,8 +113,12 @@ async def listar_usuarios(
         offset=(pagina - 1) * limite,
         limite=limite,
     )
+    convites_pendentes = await _convites_pendentes(db, [usuario.id for usuario, _ in linhas])
     return AdminUsuarioListResponse(
-        itens=[_para_detalhe(usuario, profissional) for usuario, profissional in linhas],
+        itens=[
+            _para_detalhe(usuario, profissional, usuario.id in convites_pendentes)
+            for usuario, profissional in linhas
+        ],
         pagina=pagina,
         limite=limite,
         total=total,
@@ -103,7 +130,8 @@ async def obter_usuario(db: AsyncSession, usuario_id: uuid.UUID) -> AdminUsuario
     encontrado = await user_queries.buscar_usuario_com_profissional(db, usuario_id)
     if encontrado is None:
         raise UsuarioNaoEncontradoError
-    return _para_detalhe(*encontrado)
+    convites_pendentes = await _convites_pendentes(db, [encontrado[0].id])
+    return _para_detalhe(*encontrado, encontrado[0].id in convites_pendentes)
 
 
 async def criar_usuario(
@@ -130,7 +158,7 @@ async def criar_usuario(
             email=dados.email,
             phone=dados.telefone,
             role=dados.role,
-            hashed_password=password_helper.hash(dados.senha),
+            hashed_password=password_helper.hash(dados.senha or secrets.token_urlsafe(32)),
         )
         profissional = None
         if dados.role == TipoUsuario.PROFISSIONAL:
@@ -147,6 +175,8 @@ async def criar_usuario(
             metadata={"role": str(dados.role)},
             operation_key=operation_key,
         )
+        if dados.enviar_convite:
+            await create_invitation(db, usuario, commit=False)
         await db.commit()
 
     except IntegrityError as exc:
@@ -155,7 +185,7 @@ async def criar_usuario(
             raise EmailJaCadastradoError from exc
         raise
 
-    return _para_detalhe(usuario, profissional)
+    return _para_detalhe(usuario, profissional, dados.enviar_convite)
 
 
 def _tem_acesso_admin(role: str, ativo: bool) -> bool:
@@ -242,6 +272,17 @@ async def atualizar_usuario(
     for campo, valor in campos.items():
         setattr(usuario, _COLUNAS_USUARIO[campo], valor)
 
+    if campos.get("ativo") is False:
+        await db.execute(
+            update(IdentityAction)
+            .where(
+                IdentityAction.user_id == usuario.id,
+                IdentityAction.used_at.is_(None),
+                IdentityAction.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+
     await auditoria_queries.registrar_mutacao(
         db,
         actor,
@@ -252,7 +293,8 @@ async def atualizar_usuario(
         operation_key=operation_key,
     )
     await db.commit()
-    return _para_detalhe(usuario, profissional)
+    convites_pendentes = await _convites_pendentes(db, [usuario.id])
+    return _para_detalhe(usuario, profissional, usuario.id in convites_pendentes)
 
 
 async def atualizar_profissional(
@@ -288,4 +330,5 @@ async def atualizar_profissional(
         operation_key=operation_key,
     )
     await db.commit()
-    return _para_detalhe(usuario, profissional)
+    convites_pendentes = await _convites_pendentes(db, [usuario.id])
+    return _para_detalhe(usuario, profissional, usuario.id in convites_pendentes)
