@@ -119,7 +119,9 @@ def test_paciente_aceita_convite_com_nova_senha_e_consentimentos(
         db: AsyncSession,
     ) -> tuple[IdentityAction | None, EmailOutbox | None]:
         acao = await db.scalar(
-            select(IdentityAction).join(User, User.id == IdentityAction.user_id).where(
+            select(IdentityAction)
+            .join(User, User.id == IdentityAction.user_id)
+            .where(
                 User.email == payload["email"],
                 IdentityAction.purpose == INVITATION,
             )

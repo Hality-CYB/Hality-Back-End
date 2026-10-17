@@ -701,13 +701,7 @@ def test_reenviar_convite_sucesso_invalida_anterior_e_nao_duplica_usuario(
 
     # Não duplica usuário no banco
     async def _contar_usuarios(db: AsyncSession) -> int:
-        return len(
-            list(
-                await db.scalars(
-                    select(User.id).where(User.email == payload["email"])
-                )
-            )
-        )
+        return len(list(await db.scalars(select(User.id).where(User.email == payload["email"]))))
 
     assert executar_no_banco(_contar_usuarios) == 1
 
@@ -764,7 +758,5 @@ def test_reenviar_convite_usuario_ja_ativo_retorna_409(cenario_admin: CenarioAdm
 
 
 def test_reenviar_convite_usuario_inexistente_retorna_404(cenario_admin: CenarioAdmin) -> None:
-    resposta = client.post(
-        f"{USUARIOS_URL}/{uuid.uuid4()}/reenviar-convite", headers=AUTH
-    )
+    resposta = client.post(f"{USUARIOS_URL}/{uuid.uuid4()}/reenviar-convite", headers=AUTH)
     assert resposta.status_code == 404
