@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO
+from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO, SENHAS_PADRAO_PROIBIDAS
 from app.schemas.diagnostico import DiagnosticoListResponse
+from app.schemas.usuario import TipoUsuario
 
 SENHA_PADRAO_PACIENTE = "hality1234"
 
@@ -45,9 +46,8 @@ class PacienteDetail(PacienteListItem):
 class PacienteCreate(BaseModel):
     """Cadastro de um paciente novo pelo profissional, já vinculado a ele.
 
-    A ``senha`` é provisória: se o profissional não informar, vale
-    ``SENHA_PADRAO_PACIENTE``. Papel e ativo não vêm do cliente — sempre
-    ``paciente`` e ativo.
+    A ``senha`` é opcional no fluxo de convite. Senhas padrão (ex.: hality1234)
+    são explicitamente rejeitadas.
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -55,4 +55,26 @@ class PacienteCreate(BaseModel):
     nome: str = Field(..., min_length=2, max_length=255)
     email: EmailStr
     telefone: str | None = Field(None, max_length=20)
-    senha: str = Field(SENHA_PADRAO_PACIENTE, min_length=SENHA_TAMANHO_MINIMO)
+    senha: str | None = Field(None, min_length=SENHA_TAMANHO_MINIMO)
+
+    @field_validator("senha", mode="after")
+    @classmethod
+    def _validar_senha(cls, valor: str | None) -> str | None:
+        if valor is None:
+            return None
+        if valor.strip().lower() in SENHAS_PADRAO_PROIBIDAS:
+            raise ValueError("senha padrão não é permitida")
+        return valor
+
+
+class PacienteCreateResponse(BaseModel):
+    id: uuid.UUID
+    role: str = TipoUsuario.PACIENTE.value
+    status: str = "inativo"
+    invitation_status: str = "pending"
+    paciente_id: uuid.UUID
+    paciente_nome: str
+    paciente_email: str
+    data_vinculo: datetime
+    ativo: bool
+    vinculo_id: int | None = None
