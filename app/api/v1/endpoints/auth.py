@@ -61,7 +61,7 @@ def _limpar_cookie_refresh(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
 
 
-async def _emitir_access_e_setar_cookie(
+async def emitir_sessao(
     user: User,
     response: Response,
     jwt_strategy: JWTStrategy,
@@ -135,7 +135,7 @@ async def login(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ErrorCode.LOGIN_BAD_CREDENTIALS,
         )
-    return await _emitir_access_e_setar_cookie(user, response, jwt_strategy, refresh_strategy)
+    return await emitir_sessao(user, response, jwt_strategy, refresh_strategy)
 
 
 @router.post("/refresh", response_model=AccessTokenResponse, name="auth:refresh")
@@ -159,7 +159,7 @@ async def refresh(
     # depois (ex.: um atacante que roubou uma cópia antiga), a checagem
     # acima já vai falhar — sinal de comprometimento, não só de expiração.
     await refresh_strategy.destroy_token(refresh_token, user)
-    return await _emitir_access_e_setar_cookie(user, response, jwt_strategy, refresh_strategy)
+    return await emitir_sessao(user, response, jwt_strategy, refresh_strategy)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, name="auth:logout")

@@ -59,6 +59,8 @@ from app.models import (
     Anamnese,
     AuditoriaAcesso,
     ConsentimentoEvento,
+    IdentidadeExterna,
+    OAuthFluxo,
     Profissional,
     Questionario,
     RefreshToken,
@@ -97,6 +99,10 @@ if "auditoria_acessos" not in TestBase.metadata.tables:
     AuditoriaAcesso.__table__.to_metadata(TestBase.metadata)
 if "consentimento_eventos" not in TestBase.metadata.tables:
     ConsentimentoEvento.__table__.to_metadata(TestBase.metadata)
+if "identidades_externas" not in TestBase.metadata.tables:
+    IdentidadeExterna.__table__.to_metadata(TestBase.metadata)
+if "oauth_fluxos" not in TestBase.metadata.tables:
+    OAuthFluxo.__table__.to_metadata(TestBase.metadata)
 
 
 @pytest_asyncio.fixture
