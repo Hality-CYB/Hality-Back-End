@@ -6,6 +6,7 @@ from app.models.conteudo import Conteudo
 from app.models.diagnostico import Diagnostico
 from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.identidade_externa import IdentidadeExterna
+from app.models.identity_action import EmailOutbox, IdentityAction, IdentityRateLimit
 from app.models.imagem import Imagem
 from app.models.oauth_fluxo import OAuthFluxo
 from app.models.paciente_profissional import PacienteProfissional
@@ -24,6 +25,9 @@ __all__ = [
     "IdentidadeExterna",
     "Imagem",
     "OAuthFluxo",
+    "IdentityAction",
+    "EmailOutbox",
+    "IdentityRateLimit",
     "PacienteProfissional",
     "Profissional",
     "Questionario",

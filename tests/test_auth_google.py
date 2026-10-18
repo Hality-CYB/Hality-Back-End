@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,7 @@ from app.models import (
     AuditoriaAcesso,
     ConsentimentoEvento,
     IdentidadeExterna,
+    IdentityRateLimit,
     OAuthFluxo,
     User,
 )
@@ -205,6 +206,56 @@ async def test_cada_authorize_gera_state_nonce_e_verifier_novos(
     assert len({f.state_hash for f in fluxos}) == 2
     assert len({f.nonce for f in fluxos}) == 2
     assert len({f.code_verifier for f in fluxos}) == 2
+
+
+@pytest.mark.asyncio
+async def test_authorize_acima_do_limite_devolve_429_e_nao_cria_fluxo(
+    client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
+) -> None:
+    settings = _settings(google_authorize_rate_limit=2)
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    await _iniciar(client)
+    await _iniciar(client)
+    bloqueada = await client.get(AUTHORIZE_URL, follow_redirects=False)
+
+    assert bloqueada.status_code == 429
+    assert bloqueada.headers["retry-after"] == str(settings.google_authorize_rate_window_seconds)
+    assert "set-cookie" not in bloqueada.headers
+    assert await _contar(db_session, OAuthFluxo) == 2
+
+
+@pytest.mark.asyncio
+async def test_limite_do_authorize_e_por_cliente(
+    client: AsyncClient, google: ProviderFalso
+) -> None:
+    settings = _settings(google_authorize_rate_limit=1)
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    await _iniciar(client)
+    assert (await client.get(AUTHORIZE_URL, follow_redirects=False)).status_code == 429
+
+    outro_ip = ASGITransport(app=app, client=("203.0.113.7", 50000))
+    async with AsyncClient(transport=outro_ip, base_url="http://test") as outro_cliente:
+        assert (await outro_cliente.get(AUTHORIZE_URL, follow_redirects=False)).status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_authorize_volta_a_responder_quando_a_janela_vence(
+    client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
+) -> None:
+    settings = _settings(google_authorize_rate_limit=1)
+    app.dependency_overrides[get_settings] = lambda: settings
+    await _iniciar(client)
+    assert (await client.get(AUTHORIZE_URL, follow_redirects=False)).status_code == 429
+
+    vencida = datetime.now(UTC) - timedelta(
+        seconds=settings.google_authorize_rate_window_seconds + 1
+    )
+    await db_session.execute(update(IdentityRateLimit).values(window_started_at=vencida))
+    await db_session.commit()
+
+    assert (await client.get(AUTHORIZE_URL, follow_redirects=False)).status_code == 303
 
 
 @pytest.mark.asyncio

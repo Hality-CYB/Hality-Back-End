@@ -21,6 +21,7 @@ from app.auth.users import get_jwt_strategy, get_refresh_strategy
 from app.core.config import Settings
 from app.schemas.oauth_google import TrocaGoogleRequest
 from app.services import consentimento_service, oauth_google_service
+from app.services.identity_token_service import consume_rate_limit
 
 router = APIRouter(prefix="/auth/google", tags=["auth"])
 
@@ -55,12 +56,30 @@ def _redirecionar_ao_frontend(settings: Settings, parametros: dict[str, str]) ->
     )
 
 
+async def _limitar_authorize(request: Request, db: DbSession, settings: Settings) -> None:
+    """O `authorize` é público e grava um fluxo por chamada: limita por IP do cliente."""
+    client_host = request.client.host if request.client else "unknown"
+    excedeu = await consume_rate_limit(
+        db,
+        f"google_authorize:{client_host}",
+        limit=settings.google_authorize_rate_limit,
+        window_seconds=settings.google_authorize_rate_window_seconds,
+    )
+    if excedeu:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="muitas tentativas de login com Google; aguarde e tente novamente",
+            headers={"Retry-After": str(settings.google_authorize_rate_window_seconds)},
+        )
+
+
 @router.get("/authorize", name="auth:google_authorize")
 async def authorize(
-    db: DbSession, settings: SettingsDep, provider: ProviderDep
+    request: Request, db: DbSession, settings: SettingsDep, provider: ProviderDep
 ) -> RedirectResponse:
     """Inicia o OAuth: redireciona o navegador ao Google (state, nonce e PKCE S256)."""
     _exigir_configurado(settings)
+    await _limitar_authorize(request, db, settings)
     url, state = await oauth_google_service.iniciar_autorizacao(db, provider)
 
     resposta = RedirectResponse(

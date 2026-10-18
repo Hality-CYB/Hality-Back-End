@@ -44,6 +44,9 @@ def _settings_google():
             "google_client_secret": SecretStr("segredo"),
             "google_redirect_uri": "http://localhost:8000/api/v1/auth/google/callback",
             "google_frontend_redirect_url": FRONTEND_URL,
+            # O banco é persistente e o TestClient tem sempre o mesmo IP: sem folga,
+            # execuções seguidas da suíte acumulariam tentativas na mesma janela.
+            "google_authorize_rate_limit": 1000,
         }
     )
 

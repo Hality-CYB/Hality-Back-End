@@ -326,6 +326,8 @@ Cada ambiente (local, homologação, produção) usa o seu próprio par de crede
 | `GET /api/v1/auth/google/callback` | Retorno do Google. Valida state + cookie, troca o código, valida o ID token (assinatura, `iss`, `aud`, `exp`, `nonce`, `email_verified`) e redireciona (303) ao frontend |
 | `POST /api/v1/auth/google/exchange` | O frontend entrega o código de troca de uso único e recebe a sessão no mesmo formato do `POST /auth/login` (`access_token` no corpo, refresh em cookie httpOnly) |
 
+O `authorize` é público e grava um fluxo por chamada, então tem rate limit por IP do cliente (mesma tabela `identity_rate_limits` da recuperação de senha): acima de `GOOGLE_AUTHORIZE_RATE_LIMIT` chamadas (padrão 20) em `GOOGLE_AUTHORIZE_RATE_WINDOW_SECONDS` segundos (padrão 60) a resposta é `429` com `Retry-After`, sem criar fluxo. Atrás de proxy/load balancer, o `uvicorn` precisa receber o IP real (`--proxy-headers` com `FORWARDED_ALLOW_IPS` apontando para o proxy); caso contrário todos os usuários dividem o mesmo contador.
+
 O callback sempre redireciona para `GOOGLE_FRONTEND_REDIRECT_URL` com:
 
 - sucesso: `?code=<código de troca, uso único, 2 min>&etapa=sessao|consentimento`. Com `etapa=consentimento` (conta nova) o frontend mostra os termos (`GET /consentimentos/termos`) e envia o `POST /auth/google/exchange` com `{"codigo": "...", "consentimentos": [...]}` — o aceite de `health_data` é obrigatório e **só então a conta é criada**;

@@ -1,7 +1,7 @@
 """cria tabelas de identidade externa e fluxo OAuth (login Google)
 
 Revision ID: f2b3c4d5e6a7
-Revises: d6d3ff40f0bc
+Revises: 9b0c1d2e3f4a
 """
 
 from collections.abc import Sequence
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f2b3c4d5e6a7"
-down_revision: str | None = "d6d3ff40f0bc"
+down_revision: str | None = "9b0c1d2e3f4a"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

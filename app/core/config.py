@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     secret_key: SecretStr
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    identity_token_expire_minutes: int = 60
+    identity_token_base_url: str = "http://localhost:3000"
+    email_provider: str = "noop"
+    identity_recovery_rate_limit: int = 5
+    identity_recovery_rate_window_seconds: int = 60
+    identity_worker_poll_seconds: int = 5
 
     # Login com Google (US-012). Tudo opcional: sem as quatro variáveis o fluxo
     # fica desligado (503) e o restante da API não é afetado. O client secret
@@ -70,6 +76,10 @@ class Settings(BaseSettings):
     # Para onde o backend devolve o navegador ao fim do callback (com `code` de
     # troca de uso único ou `erro`). Fixa em configuração: nunca vem do request.
     google_frontend_redirect_url: str | None = None
+    # Rate limit do GET /auth/google/authorize (público, grava um fluxo por chamada),
+    # por IP do cliente, sobre a mesma tabela do rate limit de identidade.
+    google_authorize_rate_limit: int = 20
+    google_authorize_rate_window_seconds: int = 60
 
     @property
     def google_configurado(self) -> bool:
