@@ -98,6 +98,7 @@ uv run fastapi deploy
 - [Rodando a API com Docker](#rodando-a-api-com-docker)
 - [Banco de dados](#banco-de-dados)
 - [Seeds](#seeds)
+- [Login com Google (paciente)](#login-com-google-paciente)
 - [Arquitetura](#arquitetura)
 - [Detalhamento](#detalhamento)
 - [Convenções](#convenções)
@@ -299,6 +300,42 @@ Todos os usuários de seed usam a senha `hality123` (hash bcrypt via `pwdlib`) �
 ### Idempotência
 
 O script **apaga** os dados das tabelas de negócio (na ordem reversa das foreign keys) antes de inserir de novo. Ou seja, pode rodar `uv run python -m scripts.seed` quantas vezes quiser — sempre termina com a mesma massa de dados, sem erro de chave duplicada. Isso também significa que ele **não deve rodar contra um banco com dados reais**.
+
+## Login com Google (paciente)
+
+Fluxo OAuth 2.0/OIDC *authorization code* com PKCE (S256), `state` e `nonce`, conduzido inteiramente pelo backend: o client secret nunca vai para o frontend e nenhum token trafega em query string. Vale só para **paciente**; profissional e admin continuam entrando por e-mail e senha.
+
+### Configuração
+
+Sem as quatro variáveis abaixo o fluxo fica desligado (as rotas respondem 503) e o resto da API não é afetado. Nunca commite os valores — use o `.env` local ou o cofre de segredos do ambiente.
+
+| Variável | O que é |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Client ID da credencial "Aplicativo da Web" no Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | Client secret da mesma credencial (só no backend) |
+| `GOOGLE_REDIRECT_URI` | URL do **callback do backend** (`.../api/v1/auth/google/callback`); precisa estar cadastrada, idêntica, no console do Google |
+| `GOOGLE_FRONTEND_REDIRECT_URL` | Página do frontend para onde o backend devolve o navegador (fixa em configuração, nunca vem do request) |
+
+Cada ambiente (local, homologação, produção) usa o seu próprio par de credenciais e a sua própria `GOOGLE_REDIRECT_URI`.
+
+### Rotas
+
+| Rota | Papel |
+|---|---|
+| `GET /api/v1/auth/google/authorize` | O botão "Entrar com Google" aponta para cá. Grava o fluxo e o cookie `google_oauth_state` (httpOnly) e redireciona (303) ao Google |
+| `GET /api/v1/auth/google/callback` | Retorno do Google. Valida state + cookie, troca o código, valida o ID token (assinatura, `iss`, `aud`, `exp`, `nonce`, `email_verified`) e redireciona (303) ao frontend |
+| `POST /api/v1/auth/google/exchange` | O frontend entrega o código de troca de uso único e recebe a sessão no mesmo formato do `POST /auth/login` (`access_token` no corpo, refresh em cookie httpOnly) |
+
+O `authorize` é público e grava um fluxo por chamada, então tem rate limit por IP do cliente (mesma tabela `identity_rate_limits` da recuperação de senha): acima de `GOOGLE_AUTHORIZE_RATE_LIMIT` chamadas (padrão 20) em `GOOGLE_AUTHORIZE_RATE_WINDOW_SECONDS` segundos (padrão 60) a resposta é `429` com `Retry-After`, sem criar fluxo. Atrás de proxy/load balancer, o `uvicorn` precisa receber o IP real (`--proxy-headers` com `FORWARDED_ALLOW_IPS` apontando para o proxy); caso contrário todos os usuários dividem o mesmo contador.
+
+O callback sempre redireciona para `GOOGLE_FRONTEND_REDIRECT_URL` com:
+
+- sucesso: `?code=<código de troca, uso único, 2 min>&etapa=sessao|consentimento`. Com `etapa=consentimento` (conta nova) o frontend mostra os termos (`GET /consentimentos/termos`) e envia o `POST /auth/google/exchange` com `{"codigo": "...", "consentimentos": [...]}` — o aceite de `health_data` é obrigatório e **só então a conta é criada**;
+- falha (sempre recuperável, nenhuma conta parcial): `?erro=<código>` com `cancelado`, `estado_invalido`, `callback_invalido`, `erro_provedor`, `provedor_indisponivel`, `identidade_invalida`, `email_nao_verificado`, `conta_existente`, `papel_nao_permitido` ou `conta_inativa`.
+
+### Política de vínculo de contas
+
+A identidade é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail **nunca** vincula sozinho. Se o e-mail do Google já pertence a uma conta que não está vinculada ao Google, o login é recusado com `conta_existente` (vincular exigiria uma ação autenticada do titular, fora deste corte). Unlink e múltiplos provedores também estão fora de escopo.
 
 ## Home
 

@@ -84,9 +84,14 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
-    """Registra a tentativa em banco e retorna se a janela foi excedida."""
-    settings = get_settings()
+async def consume_rate_limit(
+    db: AsyncSession, key: str, *, limit: int, window_seconds: int
+) -> bool:
+    """Registra a tentativa em banco e retorna se a janela foi excedida.
+
+    Janela fixa por chave, compartilhada entre processos (tabela `identity_rate_limits`).
+    Chaves de fluxos diferentes devem ter prefixos diferentes para não dividir contador.
+    """
     key_hash = _hash_token(key)
     now = _now()
     for _ in range(2):
@@ -106,16 +111,12 @@ async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
                 )
                 await db.commit()
                 return False
-            if (
-                _utc(row.window_started_at)
-                + timedelta(seconds=settings.identity_recovery_rate_window_seconds)
-                <= now
-            ):
+            if _utc(row.window_started_at) + timedelta(seconds=window_seconds) <= now:
                 row.window_started_at = now
                 row.attempts = 1
                 await db.commit()
                 return False
-            if row.attempts >= settings.identity_recovery_rate_limit:
+            if row.attempts >= limit:
                 return True
             row.attempts += 1
             await db.commit()
@@ -123,6 +124,17 @@ async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
         except IntegrityError:
             await db.rollback()
     return True
+
+
+async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
+    """Rate limit da recuperação de senha (limite e janela de `identity_recovery_*`)."""
+    settings = get_settings()
+    return await consume_rate_limit(
+        db,
+        key,
+        limit=settings.identity_recovery_rate_limit,
+        window_seconds=settings.identity_recovery_rate_window_seconds,
+    )
 
 
 async def _create_action(
@@ -248,10 +260,14 @@ async def dispatch_pending_emails(
     """Entrega itens da outbox; falhas ficam disponíveis para retry."""
     now = _now()
     settings = get_settings()
+    # A tabela não guarda a janela de cada chave: só some o que já venceu em todas.
+    retention_seconds = max(
+        settings.identity_recovery_rate_window_seconds,
+        settings.google_authorize_rate_window_seconds,
+    )
     await db.execute(
         delete(IdentityRateLimit).where(
-            IdentityRateLimit.window_started_at
-            < now - timedelta(seconds=settings.identity_recovery_rate_window_seconds)
+            IdentityRateLimit.window_started_at < now - timedelta(seconds=retention_seconds)
         )
     )
     await db.commit()

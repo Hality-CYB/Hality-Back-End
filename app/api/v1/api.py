@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     admin_vinculos,
     anamnese,
     auth,
+    auth_google,
     consentimentos,
     conteudo,
     conteudo_admin,
@@ -47,6 +48,9 @@ api_router.include_router(
     prefix="/auth",
     tags=["auth"],
 )
+
+# Login com Google para paciente (authorize, callback e troca de código).
+api_router.include_router(auth_google.router)
 
 # Registro de novos usuários: POST /auth/register está em auth.py (rota própria,
 # porque o cadastro e os consentimentos precisam sair na mesma transação).
