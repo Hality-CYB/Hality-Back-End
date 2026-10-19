@@ -70,8 +70,16 @@ class AnamneseRepository:
         )
         return [_para_record(orm) for orm in resultado.scalars().all()]
 
-    async def obter_por_id(self, id_resp: int) -> AnamneseRecord | None:
-        orm = await self.db.get(Anamnese, id_resp)
+    async def obter_por_id(self, id_resp: int, *, bloquear: bool = False) -> AnamneseRecord | None:
+        if bloquear:
+            orm = await self.db.scalar(
+                select(Anamnese)
+                .where(Anamnese.id == id_resp)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        else:
+            orm = await self.db.get(Anamnese, id_resp)
         return _para_record(orm) if orm is not None else None
 
     async def atualizar(

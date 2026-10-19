@@ -23,6 +23,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from app.auth.users import current_active_user
+from app.core.erros_diagnostico import MENSAGENS, CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.db.base import Base
 from app.db.session import get_db
@@ -145,14 +146,35 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
             0,
             escala_saburra=1,
             confianca_ia=0.91,
+            origem_resultado="modelo",
+            modelo_provider="provider-teste",
+            modelo_versao="v-teste",
             profissional_revisor_id=PROFISSIONAL_ID,
             data_revisao=DATA_BASE + timedelta(days=1),
             observacoes_revisao="ok",
         )
         d2 = _d(2, PACIENTE_A, "concluido", intima, 1, escala_saburra=3, confianca_ia=0.8)
-        d3 = _d(3, PACIENTE_B, "aguardando_revisao", social, 2, escala_saburra=5, confianca_ia=0.7)
+        d3 = _d(
+            3,
+            PACIENTE_B,
+            "aguardando_revisao",
+            social,
+            2,
+            escala_saburra=5,
+            confianca_ia=0.7,
+            origem_resultado="mock",
+        )
         d4 = _d(4, PACIENTE_B, "processando", None, 3)
-        d5 = _d(5, PACIENTE_A, "falha", None, 4, erro="timeout do modelo")
+        d5 = _d(
+            5,
+            PACIENTE_A,
+            "falha",
+            None,
+            4,
+            origem_resultado="mock",
+            erro_codigo="falha_processamento",
+            erro="timeout do modelo",
+        )
         db.add_all([d1, d2, d3, d4, d5])
         await db.flush()
 
@@ -426,6 +448,11 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["automatica"]["classificacao"]["codigo"] == "halito_normal"
     assert corpo["automatica"]["escala_saburra"] == 1
     assert corpo["automatica"]["confianca_ia"] == pytest.approx(0.91)
+    assert corpo["automatica"]["origem"] == {
+        "tipo": "modelo",
+        "provider": "provider-teste",
+        "versao": "v-teste",
+    }
 
     assert corpo["revisao"]["profissional_revisor_id"] == str(PROFISSIONAL_ID)
     assert corpo["revisao"]["profissional_revisor_nome"] == "Prof"
@@ -475,11 +502,23 @@ async def test_detalhe_sem_classificacao_e_sem_revisao(http, dados, como) -> Non
         "classificacao": None,
         "escala_saburra": None,
         "confianca_ia": None,
+        "origem": None,
     }
     assert corpo["revisao"]["status"] == "pendente"
     assert corpo["revisao"]["profissional_revisor_nome"] is None
     assert corpo["revisao"]["classificacao"] is None
-    assert corpo["erro"] == "timeout do modelo"
+    assert corpo["erro_codigo"] == "falha_processamento"
+    assert corpo["erro"] == MENSAGENS[CodigoErroDiagnostico.FALHA_PROCESSAMENTO]
+    assert "timeout do modelo" not in r.text
+
+
+async def test_listagem_expoe_origem_mock_sem_inventar_modelo(http, dados, como) -> None:
+    como("admin")
+    r = await http.get(BASE, params={"status": "aguardando_revisao"})
+
+    assert r.status_code == 200
+    item = next(i for i in r.json()["itens"] if i["id"] == dados["d"]["d3"].id)
+    assert item["automatica"]["origem"] == {"tipo": "mock", "provider": None, "versao": None}
 
 
 async def test_detalhe_revisao_legada_sem_historico(http, dados, como) -> None:

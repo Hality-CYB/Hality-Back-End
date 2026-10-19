@@ -1,7 +1,7 @@
 import uuid
 
 from app.auth.policies import UsuarioAutenticado, pode_acessar_paciente
-from app.db import user_queries
+from app.db import diagnostico_queries, user_queries
 from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail
 from app.services.anamnese_lexer import AnamneseValidationError, lexar_respostas
 from app.services.anamnese_questionary import get_questionario_ativo
@@ -10,6 +10,7 @@ from app.services.anamnese_store import AnamneseRecord, AnamneseRepository
 __all__ = [
     "AnamneseValidationError",
     "AnamneseNaoEncontradaError",
+    "AnamneseEmUsoError",
     "PacienteNaoEncontradoError",
     "criar_anamnese",
     "criar_anamnese_para_paciente",
@@ -25,6 +26,10 @@ class AnamneseNaoEncontradaError(Exception):
 
 
 class PacienteNaoEncontradoError(Exception):
+    pass
+
+
+class AnamneseEmUsoError(Exception):
     pass
 
 
@@ -91,7 +96,9 @@ async def listar_anamneses(
 
 
 async def _buscar_com_acesso(
-    repo: AnamneseRepository, usuario: UsuarioAutenticado, id_resp: int
+    repo: AnamneseRepository,
+    usuario: UsuarioAutenticado,
+    id_resp: int,
 ) -> AnamneseRecord:
     registro = await repo.obter_por_id(id_resp)
     # Sem acesso responde igual a inexistente (404) para não permitir enumeração.
@@ -109,6 +116,14 @@ async def obter_anamnese(
     return _para_detalhe(registro)
 
 
+async def _travar_se_nao_usada(repo: AnamneseRepository, id_resp: int) -> None:
+    # Mesmo lock do envio do diagnóstico: sem corrida entre checar e alterar.
+    if await repo.obter_por_id(id_resp, bloquear=True) is None:
+        raise AnamneseNaoEncontradaError
+    if await diagnostico_queries.anamnese_possui_diagnostico(repo.db, id_resp):
+        raise AnamneseEmUsoError
+
+
 async def atualizar_anamnese(
     repo: AnamneseRepository,
     usuario: UsuarioAutenticado,
@@ -116,8 +131,10 @@ async def atualizar_anamnese(
     payload: AnamneseCreate,
 ) -> AnamneseDetail:
     await _buscar_com_acesso(repo, usuario, id_resp)
+    # Valida antes de travar: o fallback do questionário dá rollback e soltaria o lock.
     questionario = await get_questionario_ativo(repo.db)
     respostas_lexadas = lexar_respostas(questionario, payload)
+    await _travar_se_nao_usada(repo, id_resp)
     atualizado = await repo.atualizar(
         id_resp=id_resp,
         id_versao_questionario=payload.versao_questionario,
@@ -132,4 +149,5 @@ async def deletar_anamnese(
     repo: AnamneseRepository, usuario: UsuarioAutenticado, id_resp: int
 ) -> None:
     await _buscar_com_acesso(repo, usuario, id_resp)
+    await _travar_se_nao_usada(repo, id_resp)
     await repo.deletar(id_resp)

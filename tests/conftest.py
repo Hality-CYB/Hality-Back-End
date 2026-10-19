@@ -59,6 +59,7 @@ from app.models import (
     Anamnese,
     AuditoriaAcesso,
     ConsentimentoEvento,
+    Diagnostico,
     EmailOutbox,
     IdentityAction,
     IdentityRateLimit,
@@ -235,12 +236,15 @@ async def _limpar(
     try:
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as db:
-            await db.execute(
-                delete(Anamnese).where(
-                    Anamnese.paciente_id == PACIENTE_STUB_ID,
-                    Anamnese.id.not_in(anamneses_existentes),
-                )
+            anamneses_do_teste = select(Anamnese.id).where(
+                Anamnese.paciente_id == PACIENTE_STUB_ID,
+                Anamnese.id.not_in(anamneses_existentes),
             )
+            # A FK diagnostico -> anamnese não tem cascade.
+            await db.execute(
+                delete(Diagnostico).where(Diagnostico.anamnese_id.in_(anamneses_do_teste))
+            )
+            await db.execute(delete(Anamnese).where(Anamnese.id.in_(anamneses_do_teste)))
             if questionarios_snapshot:
                 await db.execute(delete(Questionario))
                 db.add_all(Questionario(**item) for item in questionarios_snapshot)

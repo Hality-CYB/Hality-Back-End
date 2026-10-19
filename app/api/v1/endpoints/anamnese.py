@@ -11,6 +11,8 @@ from app.services.anamnese_store import AnamneseRepository, get_anamnese_reposit
 router = APIRouter(prefix="/anamneses", tags=["anamnese"])
 AnamneseRepoDep = Annotated[AnamneseRepository, Depends(get_anamnese_repository)]
 
+DETALHE_ANAMNESE_EM_USO = "anamnese já vinculada a um diagnóstico e não pode ser alterada"
+
 
 @router.get("/questionario", response_model=Questionario)
 async def obter_questionario(db: DbSession) -> Questionario:
@@ -67,6 +69,10 @@ async def atualizar_anamnese(
         ) from exc
     except anamnese_service.AnamneseValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.erros) from exc
+    except anamnese_service.AnamneseEmUsoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=DETALHE_ANAMNESE_EM_USO
+        ) from exc
 
 
 @router.delete("/{anamnese_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -79,4 +85,8 @@ async def deletar_anamnese(
     except anamnese_service.AnamneseNaoEncontradaError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
+        ) from exc
+    except anamnese_service.AnamneseEmUsoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=DETALHE_ANAMNESE_EM_USO
         ) from exc

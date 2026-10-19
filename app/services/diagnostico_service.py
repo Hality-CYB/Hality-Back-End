@@ -13,7 +13,9 @@ from app.auth.policies import (
     url_imagem_assinada_valida,
 )
 from app.core.config import get_settings
+from app.core.erros_diagnostico import erro_publico
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
+from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
@@ -30,9 +32,19 @@ from app.schemas.admin_diagnostico import (
 )
 from app.schemas.anamnese import ItemRespostaRegistrada
 from app.schemas.diagnostico import (
+    STATUS_COM_RESULTADO,
+    AnamneseDiagnostico,
+    ClassificacaoDiagnosticoDetalhe,
     ClassificacaoDiagnosticoResumo,
+    ConteudoDiagnostico,
+    DiagnosticoCriadoResponse,
     DiagnosticoListItem,
     DiagnosticoListResponse,
+    DiagnosticoPacienteDetalhe,
+    ImagemDiagnostico,
+    OrigemResultado,
+    OrigemResultadoInfo,
+    RevisaoDiagnosticoPaciente,
     StatusDiagnostico,
 )
 from app.schemas.profissional_diagnostico import (
@@ -53,17 +65,7 @@ AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
 )
 
-STATUS_COM_RESULTADO = {
-    StatusDiagnostico.AGUARDANDO_REVISAO.value,
-    StatusDiagnostico.CONCLUIDO.value,
-}
-
-STATUS_SEM_RESULTADO_LISTAGEM = {
-    StatusDiagnostico.FALHA.value,
-    StatusDiagnostico.PROCESSANDO.value,
-}
-
-STATUS_VALIDOS_ADMIN = STATUS_COM_RESULTADO | STATUS_SEM_RESULTADO_LISTAGEM
+STATUS_VALIDOS_ADMIN = {status.value for status in StatusDiagnostico}
 STATUS_VALIDOS_PROFISSIONAL = STATUS_VALIDOS_ADMIN
 
 ACAO_ADMIN_DETALHE_ABERTO = "diagnostico.detalhe.aberto"
@@ -73,6 +75,36 @@ ORDENS_LISTAGEM = {
     "data_asc",
     "data_desc",
 }
+
+
+def _tem_resultado(
+    diagnostico: Diagnostico,
+) -> bool:
+    return diagnostico.status in STATUS_COM_RESULTADO
+
+
+def _origem_resultado(
+    diagnostico: Diagnostico,
+) -> OrigemResultadoInfo | None:
+    if not _tem_resultado(diagnostico) or diagnostico.origem_resultado is None:
+        return None
+
+    return OrigemResultadoInfo(
+        tipo=OrigemResultado(diagnostico.origem_resultado),
+        provider=diagnostico.modelo_provider,
+        versao=diagnostico.modelo_versao,
+    )
+
+
+def _campos_erro(
+    diagnostico: Diagnostico,
+) -> dict[str, str | None]:
+    erro = erro_publico(diagnostico.status, diagnostico.erro_codigo)
+
+    if erro is None:
+        return {"erro": None, "erro_codigo": None}
+
+    return {"erro": erro.mensagem, "erro_codigo": erro.codigo.value}
 
 
 class ImagemInvalidaError(Exception):
@@ -243,7 +275,7 @@ def _para_item_listagem(
     revisao: diagnostico_queries.DiagnosticoRevisaoDetalhada | None = None,
 ) -> DiagnosticoListItem:
     diagnostico = item.diagnostico
-    tem_resultado = diagnostico.status not in STATUS_SEM_RESULTADO_LISTAGEM
+    tem_resultado = _tem_resultado(diagnostico)
     classificacao = (
         (revisao.classificacao if revisao is not None else item.classificacao)
         if tem_resultado
@@ -272,7 +304,7 @@ def _montar_revisao(
     profissional_nome: str | None,
     revisao_detalhada: diagnostico_queries.DiagnosticoRevisaoDetalhada | None = None,
 ) -> dict[str, Any] | None:
-    if diagnostico.status not in STATUS_COM_RESULTADO:
+    if not _tem_resultado(diagnostico):
         return None
 
     if revisao_detalhada is not None:
@@ -378,10 +410,12 @@ async def criar_diagnostico(
     imagem: bytes,
     content_type: str,
     parametros_captura: dict[str, Any],
-) -> dict[str, Any]:
+) -> DiagnosticoCriadoResponse:
+    # Lock até o commit: um reenvio concorrente espera e recebe 409.
     anamnese = await anamnese_queries.buscar_por_id(
         db,
         anamnese_id,
+        bloquear=True,
     )
 
     if anamnese is None or not await pode_acessar_paciente(
@@ -415,6 +449,8 @@ async def criar_diagnostico(
         content_type,
     )
 
+    sha256 = await diagnostico_storage.calcular_sha256(imagem)
+
     url_arquivo = await diagnostico_storage.salvar(
         imagem,
         content_type,
@@ -427,7 +463,12 @@ async def criar_diagnostico(
             paciente_id=paciente_id,
             executor_id=usuario.id,
             anamnese_id=anamnese_id,
-            url_arquivo=url_arquivo,
+            arquivo=diagnostico_queries.ArquivoImagem(
+                url_arquivo=url_arquivo,
+                sha256=sha256,
+                content_type=content_type,
+                tamanho_bytes=len(imagem),
+            ),
             parametros_captura=parametros_captura,
         )
 
@@ -450,12 +491,12 @@ async def criar_diagnostico(
         await diagnostico_storage.remover(url_arquivo)
         raise
 
-    return {
-        "id": diagnostico.id,
-        "status": diagnostico.status,
-        "data_diagnostico": diagnostico.data_diagnostico,
-        "anamnese_id": anamnese_id,
-    }
+    return DiagnosticoCriadoResponse(
+        id=diagnostico.id,
+        status=diagnostico.status,
+        data_diagnostico=diagnostico.data_diagnostico,
+        anamnese_id=anamnese_id,
+    )
 
 
 async def obter_caminho_imagem(
@@ -503,7 +544,7 @@ async def obter_diagnostico(
     db: AsyncSession,
     usuario: UsuarioAutenticado,
     diagnostico_id: int,
-) -> dict[str, Any]:
+) -> DiagnosticoPacienteDetalhe:
     diagnostico = await diagnostico_queries.buscar_por_id(
         db,
         diagnostico_id,
@@ -542,7 +583,7 @@ async def obter_diagnostico(
         diagnostico,
     )
 
-    tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
+    tem_resultado = _tem_resultado(diagnostico)
 
     ultima_revisao = None
 
@@ -552,26 +593,24 @@ async def obter_diagnostico(
             diagnostico.id,
         )
 
-    classificacao = (
-        ultima_revisao.classificacao
-        if tem_resultado and ultima_revisao is not None
-        else dados.classificacao
-        if tem_resultado
-        else None
-    )
+    classificacao = None
+    conteudos = []
 
-    conteudos = dados.conteudos
-    if (
-        tem_resultado
-        and ultima_revisao is not None
-        and (
+    if tem_resultado:
+        classificacao = (
+            ultima_revisao.classificacao if ultima_revisao is not None else dados.classificacao
+        )
+        conteudos = dados.conteudos
+
+        revisao_mudou_classificacao = ultima_revisao is not None and (
             dados.classificacao is None or dados.classificacao.id != ultima_revisao.classificacao.id
         )
-    ):
-        conteudos = await diagnostico_queries.listar_conteudos_por_classificacao(
-            db,
-            ultima_revisao.classificacao.id,
-        )
+
+        if revisao_mudou_classificacao:
+            conteudos = await diagnostico_queries.listar_conteudos_por_classificacao(
+                db,
+                ultima_revisao.classificacao.id,
+            )
 
     revisao = _montar_revisao(
         diagnostico=diagnostico,
@@ -579,63 +618,57 @@ async def obter_diagnostico(
         revisao_detalhada=ultima_revisao,
     )
 
-    return {
-        "id": diagnostico.id,
-        "data_diagnostico": diagnostico.data_diagnostico,
-        "status": diagnostico.status,
-        "classificacao": (
-            {
-                "id": classificacao.id,
-                "codigo": classificacao.codigo,
-                "nome_exibicao": classificacao.nome_exibicao,
-                "ordem": classificacao.ordem,
-            }
+    return DiagnosticoPacienteDetalhe(
+        id=diagnostico.id,
+        data_diagnostico=diagnostico.data_diagnostico,
+        status=diagnostico.status,
+        classificacao=(
+            ClassificacaoDiagnosticoDetalhe(
+                id=classificacao.id,
+                codigo=classificacao.codigo,
+                nome_exibicao=classificacao.nome_exibicao,
+                ordem=classificacao.ordem,
+            )
             if classificacao is not None
             else None
         ),
-        "escala_saburra": (diagnostico.escala_saburra if tem_resultado else None),
-        "confianca_ia": (diagnostico.confianca_ia if tem_resultado else None),
-        "imagens": [
-            {
-                "id": imagem.id,
-                "url_arquivo": assinar_url_imagem(
-                    imagem.url_arquivo,
-                ),
-                "ordem": imagem.ordem,
-                "data_captura": imagem.data_captura,
-            }
+        escala_saburra=(diagnostico.escala_saburra if tem_resultado else None),
+        confianca_ia=(diagnostico.confianca_ia if tem_resultado else None),
+        imagens=[
+            ImagemDiagnostico(
+                id=imagem.id,
+                url_arquivo=assinar_url_imagem(imagem.url_arquivo),
+                ordem=imagem.ordem,
+                data_captura=imagem.data_captura,
+            )
             for imagem in dados.imagens
         ],
-        "anamnese": {
-            "id": anamnese.id,
-            "paciente_id": anamnese.paciente_id,
-            "data_preenchimento": anamnese.data_preenchimento,
-            "versao_questionario": anamnese.id_versao_questionario,
-            "respostas": [
+        anamnese=AnamneseDiagnostico(
+            id=anamnese.id,
+            paciente_id=anamnese.paciente_id,
+            data_preenchimento=anamnese.data_preenchimento,
+            versao_questionario=anamnese.id_versao_questionario,
+            respostas=[
                 ItemRespostaRegistrada.model_validate(resposta).model_dump(
                     mode="json",
                     by_alias=True,
                 )
                 for resposta in anamnese.respostas
             ],
-        },
-        "revisao": revisao,
-        "tem_profissional_vinculado": (dados.tem_profissional_vinculado),
-        "conteudos": (
-            [
-                {
-                    "id": conteudo.id,
-                    "conteudo": conteudo.conteudo,
-                    "titulo": conteudo.titulo,
-                }
-                for conteudo in conteudos
-            ]
-            if tem_resultado
-            else []
         ),
-        "aviso_legal": AVISO_LEGAL,
-        "erro": (diagnostico.erro if diagnostico.status == "falha" else None),
-    }
+        revisao=(RevisaoDiagnosticoPaciente(**revisao) if revisao is not None else None),
+        tem_profissional_vinculado=dados.tem_profissional_vinculado,
+        conteudos=[
+            ConteudoDiagnostico(
+                id=conteudo.id,
+                conteudo=conteudo.conteudo,
+                titulo=conteudo.titulo,
+            )
+            for conteudo in conteudos
+        ],
+        aviso_legal=AVISO_LEGAL,
+        **_campos_erro(diagnostico),
+    )
 
 
 def _resumo_classificacao(
@@ -793,7 +826,7 @@ async def listar_diagnosticos_profissional(
                 status=diagnostico.status,
                 classificacao_automatica=(
                     _resumo_classificacao(item.classificacao)
-                    if diagnostico.status in STATUS_COM_RESULTADO
+                    if _tem_resultado(diagnostico)
                     else None
                 ),
                 tem_revisao=(ultima_revisao is not None or _foi_revisado(diagnostico)),
@@ -879,8 +912,6 @@ async def obter_diagnostico_profissional(
 
     version = revisao_atual.revisao.versao if revisao_atual is not None else 0
 
-    tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
-
     return DiagnosticoProfissionalDetalhe(
         id=diagnostico.id,
         data_diagnostico=diagnostico.data_diagnostico,
@@ -915,18 +946,19 @@ async def obter_diagnostico_profissional(
         ],
         automatico=(
             ResultadoAutomaticoDiagnostico(
-                classificacao=(_resumo_classificacao(classificacao_automatica)),
-                escala_saburra=(diagnostico.escala_saburra),
-                confianca_ia=(diagnostico.confianca_ia),
+                classificacao=_resumo_classificacao(classificacao_automatica),
+                escala_saburra=diagnostico.escala_saburra,
+                confianca_ia=diagnostico.confianca_ia,
+                origem=_origem_resultado(diagnostico),
             )
-            if tem_resultado
+            if _tem_resultado(diagnostico)
             else None
         ),
         revisao=(_para_revisao_profissional(revisao_atual) if revisao_atual is not None else None),
         historico_revisoes=[_para_revisao_profissional(revisao) for revisao in historico],
         version=version,
         aviso_legal=AVISO_LEGAL,
-        erro=(diagnostico.erro if diagnostico.status == "falha" else None),
+        **_campos_erro(diagnostico),
     )
 
 
@@ -956,7 +988,7 @@ async def revisar_diagnostico_profissional(
     if not permitido:
         raise DiagnosticoNaoEncontradoError
 
-    if diagnostico.status not in STATUS_COM_RESULTADO:
+    if not _tem_resultado(diagnostico):
         raise DiagnosticoNaoRevisavelError
 
     codigo = classificacao_codigo.strip()
@@ -1004,6 +1036,26 @@ async def revisar_diagnostico_profissional(
     return RevisaoProfissionalResponse(
         revisao=revisao_response,
         version=revisao_response.version,
+    )
+
+
+def _classificacao_automatica_admin(
+    diagnostico: Diagnostico,
+    classificacao: ClassificacaoDiagnostico | None,
+) -> ClassificacaoAutomatica:
+    if not _tem_resultado(diagnostico):
+        return ClassificacaoAutomatica(
+            classificacao=None,
+            escala_saburra=None,
+            confianca_ia=None,
+            origem=None,
+        )
+
+    return ClassificacaoAutomatica(
+        classificacao=_resumo_classificacao(classificacao),
+        escala_saburra=diagnostico.escala_saburra,
+        confianca_ia=diagnostico.confianca_ia,
+        origem=_origem_resultado(diagnostico),
     )
 
 
@@ -1078,22 +1130,9 @@ async def listar_diagnosticos_admin(
                 ),
                 data=(item.diagnostico.data_diagnostico),
                 status=item.diagnostico.status,
-                automatica=ClassificacaoAutomatica(
-                    classificacao=(
-                        _resumo_classificacao(item.classificacao)
-                        if item.diagnostico.status in STATUS_COM_RESULTADO
-                        else None
-                    ),
-                    escala_saburra=(
-                        item.diagnostico.escala_saburra
-                        if item.diagnostico.status in STATUS_COM_RESULTADO
-                        else None
-                    ),
-                    confianca_ia=(
-                        item.diagnostico.confianca_ia
-                        if item.diagnostico.status in STATUS_COM_RESULTADO
-                        else None
-                    ),
+                automatica=_classificacao_automatica_admin(
+                    item.diagnostico,
+                    item.classificacao,
                 ),
                 revisao=RevisaoResumo(
                     **_valores_revisao_admin(
@@ -1149,8 +1188,6 @@ async def obter_diagnostico_admin(
     )
     historico = await diagnostico_queries.listar_revisoes(db, diagnostico.id)
     ultima_revisao = historico[-1] if historico else None
-    tem_resultado = diagnostico.status in STATUS_COM_RESULTADO
-    classificacao_automatica = _resumo_classificacao(classificacao) if tem_resultado else None
 
     revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
 
@@ -1160,12 +1197,8 @@ async def obter_diagnostico_admin(
         paciente=PacienteAdminResumo(id=paciente.id, nome=paciente.name),
         data=diagnostico.data_diagnostico,
         status=diagnostico.status,
-        erro=(diagnostico.erro if diagnostico.status == "falha" else None),
-        automatica=ClassificacaoAutomatica(
-            classificacao=classificacao_automatica,
-            escala_saburra=diagnostico.escala_saburra if tem_resultado else None,
-            confianca_ia=diagnostico.confianca_ia if tem_resultado else None,
-        ),
+        **_campos_erro(diagnostico),
+        automatica=_classificacao_automatica_admin(diagnostico, classificacao),
         revisao=revisao,
         historico_revisoes=[
             RevisaoHistorica(

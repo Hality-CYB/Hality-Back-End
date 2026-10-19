@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -34,13 +35,30 @@ async def salvar(
     caminho = _STORAGE_DIR / nome_arquivo
 
     await asyncio.to_thread(
-        caminho.write_bytes,
+        _gravar_exclusivo,
+        caminho,
         conteudo,
     )
 
     prefixo = api_prefix.rstrip("/")
 
     return f"{prefixo}/diagnosticos/imagens/{nome_arquivo}"
+
+
+def _gravar_exclusivo(
+    caminho: Path,
+    conteudo: bytes,
+) -> None:
+    with caminho.open("xb") as arquivo:
+        arquivo.write(conteudo)
+
+
+async def calcular_sha256(
+    conteudo: bytes,
+) -> str:
+    return await asyncio.to_thread(
+        lambda: hashlib.sha256(conteudo).hexdigest(),
+    )
 
 
 async def remover(

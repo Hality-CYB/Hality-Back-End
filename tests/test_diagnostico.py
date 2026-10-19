@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import hashlib
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 from app.core.consentimentos import TERMOS, Finalidade
+from app.core.erros_diagnostico import MENSAGENS, CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.main import app
 from app.models import (
@@ -24,9 +26,10 @@ from app.models import (
     ClassificacaoDiagnostico,
     ConsentimentoEvento,
     Diagnostico,
+    Imagem,
     User,
 )
-from app.services import diagnostico_mock, diagnostico_service
+from app.services import diagnostico_mock, diagnostico_service, diagnostico_storage
 
 client = TestClient(app)
 
@@ -69,6 +72,10 @@ def _diagnostico(
         data_revisao=None,
         observacoes_revisao=None,
         nivel_corrigido=False,
+        origem_resultado=None,
+        modelo_provider=None,
+        modelo_versao=None,
+        erro_codigo=None,
         erro=None,
     )
 
@@ -269,10 +276,11 @@ def test_criar_diagnostico(monkeypatch):
         AsyncMock(return_value=None),
     )
 
+    inserir = AsyncMock(return_value=diagnostico)
     monkeypatch.setattr(
         diagnostico_service.diagnostico_queries,
         "inserir",
-        AsyncMock(return_value=diagnostico),
+        inserir,
     )
 
     monkeypatch.setattr(
@@ -298,9 +306,16 @@ def test_criar_diagnostico(monkeypatch):
         )
     )
 
-    assert resultado["id"] == 4
-    assert resultado["status"] == "processando"
-    assert resultado["anamnese_id"] == 128
+    assert resultado.id == 4
+    assert resultado.status == "processando"
+    assert resultado.anamnese_id == 128
+
+    assert inserir.await_args.kwargs["arquivo"] == diagnostico_queries.ArquivoImagem(
+        url_arquivo="/imagem.jpg",
+        sha256=hashlib.sha256(b"imagem").hexdigest(),
+        content_type="image/jpeg",
+        tamanho_bytes=len(b"imagem"),
+    )
 
 
 def _criar_anamnese_do_paciente_stub() -> int:
@@ -323,13 +338,17 @@ def _criar_anamnese_do_paciente_stub() -> int:
 
 
 def _registrar_decisao_de_tratamento(aceito: bool, versao: str = "v1") -> int:
+    return _registrar_decisao(Finalidade.HEALTH_DATA, aceito, versao)
+
+
+def _registrar_decisao(finalidade: Finalidade, aceito: bool, versao: str = "v1") -> int:
     async def _registrar() -> int:
         db, engine = await _abrir_sessao_teste()
         try:
             async with db:
                 evento = ConsentimentoEvento(
                     titular_id=PACIENTE_STUB_ID,
-                    finalidade="health_data",
+                    finalidade=finalidade.value,
                     versao=versao,
                     aceito=aceito,
                     origem="perfil",
@@ -732,3 +751,290 @@ async def test_query_conteudos_diagnostico_filtra_destino_orientacoes():
     assert "ANY (conteudos.destinos)" in sql
     assert "conteudos.status" in sql
     assert "ORDER BY conteudos.ordem ASC, conteudos.id ASC" in sql
+
+
+ERRO_INTERNO_TESTE = "stacktrace interno: conexão recusada pelo provider"
+DATA_FUTURA = datetime(2099, 1, 1, tzinfo=UTC)
+
+
+@dataclass
+class DiagnosticoDeStatus:
+    diagnostico_id: int
+    anamnese_id: int
+    classificacao_id: int
+    classificacao_criada: bool
+
+
+def _criar_diagnostico_com_status(status: str) -> DiagnosticoDeStatus:
+    async def _criar() -> DiagnosticoDeStatus:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                classificacao = await db.scalar(
+                    select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.ordem == 1)
+                )
+                classificacao_criada = classificacao is None
+                if classificacao is None:
+                    classificacao = ClassificacaoDiagnostico(
+                        codigo=f"{CLASSIFICACAO_TESTE_PREFIX}{uuid4().hex[:12]}",
+                        nome_exibicao="Hálito Normal",
+                        ordem=1,
+                    )
+                    db.add(classificacao)
+                anamnese = Anamnese(
+                    paciente_id=PACIENTE_STUB_ID,
+                    id_versao_questionario=VERSAO_QUESTIONARIO_TESTE,
+                    respostas=[],
+                )
+                db.add(anamnese)
+                await db.flush()
+
+                diagnostico = Diagnostico(
+                    paciente_id=PACIENTE_STUB_ID,
+                    anamnese_id=anamnese.id,
+                    classificacao_id=classificacao.id,
+                    escala_saburra=40,
+                    confianca_ia=0.5,
+                    status=status,
+                    origem_resultado=None if status == "processando" else "mock",
+                    erro_codigo="falha_processamento" if status == "falha" else None,
+                    erro=ERRO_INTERNO_TESTE if status == "falha" else None,
+                    data_diagnostico=DATA_FUTURA,
+                )
+                db.add(diagnostico)
+                await db.commit()
+                return DiagnosticoDeStatus(
+                    diagnostico.id, anamnese.id, classificacao.id, classificacao_criada
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_criar())
+
+
+def _remover_diagnostico_com_status(criado: DiagnosticoDeStatus) -> None:
+    async def _remover() -> None:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                await db.execute(delete(Diagnostico).where(Diagnostico.id == criado.diagnostico_id))
+                await db.execute(delete(Anamnese).where(Anamnese.id == criado.anamnese_id))
+                if criado.classificacao_criada:
+                    await db.execute(
+                        delete(ClassificacaoDiagnostico).where(
+                            ClassificacaoDiagnostico.id == criado.classificacao_id
+                        )
+                    )
+                await db.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_remover())
+
+
+@pytest.fixture
+def diagnostico_de_status(request: pytest.FixtureRequest) -> Iterator[DiagnosticoDeStatus]:
+    criado = _criar_diagnostico_com_status(request.param)
+    try:
+        yield criado
+    finally:
+        _remover_diagnostico_com_status(criado)
+
+
+@pytest.mark.parametrize("diagnostico_de_status", ["processando", "falha"], indirect=True)
+def test_detalhe_sem_resultado_anula_saida_automatica(
+    diagnostico_de_status: DiagnosticoDeStatus,
+) -> None:
+    resposta = client.get(
+        f"/api/v1/diagnosticos/{diagnostico_de_status.diagnostico_id}", headers=AUTH_HEADERS
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["classificacao"] is None
+    assert corpo["escala_saburra"] is None
+    assert corpo["confianca_ia"] is None
+    assert corpo["revisao"] is None
+    assert corpo["conteudos"] == []
+
+
+@pytest.mark.parametrize("diagnostico_de_status", ["falha"], indirect=True)
+def test_detalhe_de_falha_expoe_somente_erro_publico(
+    diagnostico_de_status: DiagnosticoDeStatus,
+) -> None:
+    resposta = client.get(
+        f"/api/v1/diagnosticos/{diagnostico_de_status.diagnostico_id}", headers=AUTH_HEADERS
+    )
+
+    corpo = resposta.json()
+    assert corpo["erro_codigo"] == "falha_processamento"
+    assert corpo["erro"] == MENSAGENS[CodigoErroDiagnostico.FALHA_PROCESSAMENTO]
+    assert ERRO_INTERNO_TESTE not in resposta.text
+
+
+@pytest.mark.parametrize(
+    "diagnostico_de_status", ["processando", "aguardando_revisao", "concluido"], indirect=True
+)
+def test_detalhe_fora_de_falha_nao_tem_erro(diagnostico_de_status: DiagnosticoDeStatus) -> None:
+    corpo = client.get(
+        f"/api/v1/diagnosticos/{diagnostico_de_status.diagnostico_id}", headers=AUTH_HEADERS
+    ).json()
+
+    assert corpo["erro"] is None
+    assert corpo["erro_codigo"] is None
+
+
+@pytest.mark.parametrize(
+    "diagnostico_de_status", ["aguardando_revisao", "concluido"], indirect=True
+)
+def test_detalhe_com_resultado_expoe_saida_sem_origem(
+    diagnostico_de_status: DiagnosticoDeStatus,
+) -> None:
+    corpo = client.get(
+        f"/api/v1/diagnosticos/{diagnostico_de_status.diagnostico_id}", headers=AUTH_HEADERS
+    ).json()
+
+    assert corpo["classificacao"]["id"] == diagnostico_de_status.classificacao_id
+    assert corpo["escala_saburra"] == 40
+    assert corpo["confianca_ia"] == pytest.approx(0.5)
+    assert "origem" not in corpo
+
+
+def test_mock_sem_classificacao_configurada_falha_com_codigo_publico(monkeypatch) -> None:
+    diagnostico = _diagnostico()
+    diagnostico.data_diagnostico = datetime.now(UTC) - timedelta(minutes=1)
+    monkeypatch.setattr(
+        diagnostico_queries, "buscar_classificacao_por_ordem", AsyncMock(return_value=None)
+    )
+
+    asyncio.run(diagnostico_mock.processar_se_necessario(AsyncMock(), diagnostico))
+
+    assert diagnostico.status == "falha"
+    assert diagnostico.erro_codigo == "classificacao_nao_configurada"
+    assert diagnostico.origem_resultado == "mock"
+    assert diagnostico.modelo_provider is None
+    assert diagnostico.modelo_versao is None
+    assert diagnostico.classificacao_id is None
+    assert diagnostico.erro
+
+
+def test_falha_ao_gravar_diagnostico_remove_original_do_storage(monkeypatch) -> None:
+    monkeypatch.setattr(
+        diagnostico_service.consentimento_service,
+        "exigir_tratamento_vigente_se_decidido",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.anamnese_queries, "buscar_por_id", AsyncMock(return_value=_anamnese())
+    )
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "buscar_por_anamnese",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_queries,
+        "inserir",
+        AsyncMock(side_effect=RuntimeError("banco indisponível")),
+    )
+    monkeypatch.setattr(
+        diagnostico_service.diagnostico_storage, "salvar", AsyncMock(return_value="/x/a.jpg")
+    )
+    remover = AsyncMock()
+    monkeypatch.setattr(diagnostico_service.diagnostico_storage, "remover", remover)
+    db = AsyncMock()
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            diagnostico_service.criar_diagnostico(
+                db=db,
+                usuario=PACIENTE_STUB,
+                anamnese_id=128,
+                imagem=b"imagem",
+                content_type="image/jpeg",
+                parametros_captura={},
+            )
+        )
+
+    remover.assert_awaited_once_with("/x/a.jpg")
+    db.rollback.assert_awaited_once()
+
+
+def test_storage_nao_sobrescreve_original(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+    nome_fixo = SimpleNamespace(hex="mesmo-nome")
+    monkeypatch.setattr(diagnostico_storage, "uuid4", lambda: nome_fixo)
+
+    asyncio.run(diagnostico_storage.salvar(b"original", "image/jpeg", "/api/v1"))
+
+    with pytest.raises(FileExistsError):
+        asyncio.run(diagnostico_storage.salvar(b"outra", "image/jpeg", "/api/v1"))
+
+    assert (tmp_path / "mesmo-nome.jpg").read_bytes() == b"original"
+
+
+def _imagens_da_anamnese(anamnese_id: int) -> list[Imagem]:
+    async def _listar() -> list[Imagem]:
+        db, engine = await _abrir_sessao_teste()
+        try:
+            async with db:
+                return list(
+                    await db.scalars(
+                        select(Imagem)
+                        .join(Diagnostico, Diagnostico.id == Imagem.diagnostico_id)
+                        .where(Diagnostico.anamnese_id == anamnese_id)
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_listar())
+
+
+def _remover_arquivos(imagens: list[Imagem]) -> None:
+    for imagem in imagens:
+        asyncio.run(diagnostico_storage.remover(imagem.url_arquivo))
+
+
+def test_reenvio_da_mesma_anamnese_e_idempotente() -> None:
+    anamnese_id = _criar_anamnese_do_paciente_stub()
+    imagens: list[Imagem] = []
+    try:
+        primeira = _enviar_diagnostico(anamnese_id)
+        assert primeira.status_code == 202
+        imagens = _imagens_da_anamnese(anamnese_id)
+
+        segunda = _enviar_diagnostico(anamnese_id)
+
+        assert segunda.status_code == 409
+        assert segunda.json()["diagnostico_id"] == primeira.json()["id"]
+        assert segunda.json()["status"] == "processando"
+        assert _contar_diagnosticos_da_anamnese(anamnese_id) == 1
+        assert len(_imagens_da_anamnese(anamnese_id)) == 1
+        imagem = imagens[0]
+        assert imagem.sha256 == hashlib.sha256(JPEG_MINIMO).hexdigest()
+        assert imagem.tamanho_bytes == len(JPEG_MINIMO)
+        assert imagem.content_type == "image/jpeg"
+        caminho = diagnostico_storage.resolver_caminho(imagem.url_arquivo.rsplit("/", 1)[-1])
+        assert caminho is not None
+        assert caminho.read_bytes() == JPEG_MINIMO
+    finally:
+        _remover_arquivos(imagens)
+        _limpar_consentimento_e_anamnese([], anamnese_id)
+
+
+def test_recusa_de_treino_nao_bloqueia_diagnostico() -> None:
+    anamnese_id = _criar_anamnese_do_paciente_stub()
+    evento_ids = [
+        _registrar_decisao(Finalidade.HEALTH_DATA, aceito=True),
+        _registrar_decisao(Finalidade.IMAGE_TRAINING, aceito=True),
+    ]
+    try:
+        evento_ids.append(_registrar_decisao(Finalidade.IMAGE_TRAINING, aceito=False))
+
+        resposta = _enviar_diagnostico(anamnese_id)
+
+        assert resposta.status_code == 202
+    finally:
+        _remover_arquivos(_imagens_da_anamnese(anamnese_id))
+        _limpar_consentimento_e_anamnese(evento_ids, anamnese_id)

@@ -21,6 +21,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from app.auth.users import current_active_user
+from app.core.erros_diagnostico import MENSAGENS, CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.db.base import Base
 from app.db.session import get_db
@@ -319,6 +320,8 @@ async def dados(
             "falha",
             None,
             3,
+            origem_resultado="mock",
+            erro_codigo="classificacao_nao_configurada",
             erro="timeout do modelo",
         )
 
@@ -922,6 +925,29 @@ async def test_ia_deixa_diagnostico_aguardando_revisao(
 
         assert diagnostico.status == "aguardando_revisao"
         assert diagnostico.classificacao_id is not None
+        assert diagnostico.origem_resultado == "mock"
+        assert diagnostico.modelo_provider is None
+        assert diagnostico.modelo_versao is None
+        assert diagnostico.erro_codigo is None
+
+
+async def test_detalhe_de_falha_expoe_apenas_erro_publico(
+    http,
+    dados,
+    como,
+) -> None:
+    como()
+
+    response = await http.get(f"{BASE}/{dados['d']['d4'].id}")
+
+    assert response.status_code == 200
+    corpo = response.json()
+    assert corpo["status"] == "falha"
+    assert corpo["automatico"] is None
+    assert corpo["revisao"] is None
+    assert corpo["erro_codigo"] == "classificacao_nao_configurada"
+    assert corpo["erro"] == MENSAGENS[CodigoErroDiagnostico.CLASSIFICACAO_NAO_CONFIGURADA]
+    assert "timeout do modelo" not in response.text
 
 
 async def test_revisao_marca_diagnostico_como_concluido(

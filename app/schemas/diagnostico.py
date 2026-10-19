@@ -1,12 +1,13 @@
+import uuid
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
-# Esta classe só será usada caso o dentista puxe o cliente para uma consulta!!!
 class StatusDiagnostico(StrEnum):
-    """Estados do processamento do diagnóstico.
+    """Estados do processamento do diagnóstico (semântica no README).
 
     A revisão profissional não é um estado concorrente: ela é representada
     separadamente por `revisao`/`tem_revisao`.
@@ -18,35 +19,34 @@ class StatusDiagnostico(StrEnum):
     FALHA = "falha"
 
 
-class DiagnosticoCreate(BaseModel):
-    """Gerado automaticamente pela IA a partir das imagens já enviadas.
-
-    [confirmar] sem anamnese_id por enquanto - a padronização das perguntas
-    da anamnese ainda vai ser repensada.
-    """
-
-    paciente_id: int
-    classificacao_id: int
-    escala_saburra: int = Field(ge=0, le=6, description="Escala 0-6 usada pela clinica")
-    confianca_ia: float
+STATUS_COM_RESULTADO = frozenset(
+    {
+        StatusDiagnostico.AGUARDANDO_REVISAO.value,
+        StatusDiagnostico.CONCLUIDO.value,
+    }
+)
 
 
-class DiagnosticoCreated(BaseModel):
-    """Resultado vai direto ao paciente assim que gerado."""
+class OrigemResultado(StrEnum):
+    LEGADO = "legado"
+    MOCK = "mock"
+    MODELO = "modelo"
 
-    id: int
-    paciente_id: int
-    classificacao_id: int
-    escala_saburra: int
-    confianca_ia: float
-    status: StatusDiagnostico
-    data_diagnostico: datetime
+
+class OrigemResultadoInfo(BaseModel):
+    tipo: OrigemResultado
+    provider: str | None
+    versao: str | None
 
 
 class ClassificacaoDiagnosticoResumo(BaseModel):
     codigo: str
     nome_exibicao: str
     ordem: int
+
+
+class ClassificacaoDiagnosticoDetalhe(ClassificacaoDiagnosticoResumo):
+    id: int
 
 
 class DiagnosticoListItem(BaseModel):
@@ -65,32 +65,55 @@ class DiagnosticoListResponse(BaseModel):
     total_paginas: int
 
 
-class DiagnosticoRevisao(BaseModel):
-    """Corpo usado pelo profissional para revisar/validar um diagnóstico.
-
-    A revisão é apenas auditoria/validação clínica - NÃO alimenta retreino do modelo.
-    """
-
-    profissional_revisor_id: int
-    observacoes_revisao: str | None = None
-    status: StatusDiagnostico = StatusDiagnostico.CONCLUIDO
-
-
-class DiagnosticoInteresseConsulta(BaseModel):
-    """Preenchido quando o paciente clica no CTA pós-diagnóstico (ex: "marque sua consulta")."""
-
-    interesse_consulta: datetime
-
-
-class DiagnosticoDetail(BaseModel):
+class DiagnosticoCriadoResponse(BaseModel):
     id: int
-    paciente_id: int
-    data_diagnostico: datetime
-    classificacao_id: int
-    escala_saburra: int
-    confianca_ia: float
     status: StatusDiagnostico
-    profissional_revisor_id: int | None = None
-    data_revisao: datetime | None = None
-    observacoes_revisao: str | None = None
-    interesse_consulta: datetime | None = None
+    data_diagnostico: datetime
+    anamnese_id: int
+
+
+class ImagemDiagnostico(BaseModel):
+    id: int
+    url_arquivo: str
+    ordem: int
+    data_captura: datetime
+
+
+class AnamneseDiagnostico(BaseModel):
+    id: int
+    paciente_id: uuid.UUID
+    data_preenchimento: datetime
+    versao_questionario: str
+    respostas: list[dict[str, Any]]
+
+
+class RevisaoDiagnosticoPaciente(BaseModel):
+    profissional_nome: str | None
+    data_revisao: datetime | None
+    observacoes: str | None
+    nivel_corrigido: bool
+    classificacao: ClassificacaoDiagnosticoDetalhe | None
+    version: int
+
+
+class ConteudoDiagnostico(BaseModel):
+    id: int
+    conteudo: dict[str, Any]
+    titulo: str
+
+
+class DiagnosticoPacienteDetalhe(BaseModel):
+    id: int
+    data_diagnostico: datetime
+    status: StatusDiagnostico
+    classificacao: ClassificacaoDiagnosticoDetalhe | None
+    escala_saburra: int | None
+    confianca_ia: float | None
+    imagens: list[ImagemDiagnostico]
+    anamnese: AnamneseDiagnostico
+    revisao: RevisaoDiagnosticoPaciente | None
+    tem_profissional_vinculado: bool
+    conteudos: list[ConteudoDiagnostico]
+    aviso_legal: str
+    erro: str | None
+    erro_codigo: str | None

@@ -22,8 +22,18 @@ async def inserir(db: AsyncSession, paciente_id: uuid.UUID, respostas: list[dict
     return anamnese
 
 
-async def buscar_por_id(db: AsyncSession, anamnese_id: int) -> Anamnese | None:
-    return await db.get(Anamnese, anamnese_id)
+async def buscar_por_id(
+    db: AsyncSession, anamnese_id: int, *, bloquear: bool = False
+) -> Anamnese | None:
+    if not bloquear:
+        return await db.get(Anamnese, anamnese_id)
+
+    return await db.scalar(
+        select(Anamnese)
+        .where(Anamnese.id == anamnese_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
 
 async def listar_por_paciente(db: AsyncSession, paciente_id: uuid.UUID) -> list[Anamnese]:

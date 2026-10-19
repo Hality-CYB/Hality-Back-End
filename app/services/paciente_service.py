@@ -9,6 +9,7 @@ from app.auth.users import password_helper
 from app.db import paciente_profissional_queries as vinculo_queries
 from app.db import paciente_queries, user_queries
 from app.models.user import User
+from app.schemas.diagnostico import STATUS_COM_RESULTADO
 from app.schemas.paciente import (
     PacienteCreate,
     PacienteDetail,
@@ -76,7 +77,7 @@ def _para_item(
 ) -> PacienteListItem:
     ultimo_nivel = None
 
-    if resumo is not None and resumo.ultimo_status in diagnostico_service.STATUS_COM_RESULTADO:
+    if resumo is not None and resumo.ultimo_status in STATUS_COM_RESULTADO:
         ultimo_nivel = resumo.ultimo_nivel
 
     return PacienteListItem(
