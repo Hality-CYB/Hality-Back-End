@@ -94,8 +94,6 @@ class AdminUsuarioDetail(BaseModel):
     convite_pendente: bool
     created_at: datetime
     profissional: AdminProfissionalDetail | None
-    status: str = "inativo"
-    invitation_status: str | None = None
 
 
 class AdminUsuarioListResponse(BaseModel):

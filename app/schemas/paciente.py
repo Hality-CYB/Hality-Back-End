@@ -68,13 +68,12 @@ class PacienteCreate(BaseModel):
 
 
 class PacienteCreateResponse(BaseModel):
-    id: uuid.UUID
+    id: int
     role: str = TipoUsuario.PACIENTE.value
-    status: str = "inativo"
-    invitation_status: str = "pending"
     paciente_id: uuid.UUID
     paciente_nome: str
     paciente_email: str
     data_vinculo: datetime
     ativo: bool
+    convite_pendente: bool = True
     vinculo_id: int | None = None

@@ -151,6 +151,12 @@ async def reenviar_convite(
             detail="usuário já ativado",
         ) from exc
 
+    except service.UsuarioJaConvidadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="usuário já aceitou um convite",
+        ) from exc
+
 
 @router.post(
     "/usuarios/{usuario_id}/convite",

@@ -55,14 +55,13 @@ def test_profissional_cadastra_paciente_ja_vinculado(cenario_admin: CenarioAdmin
     assert corpo["paciente_email"] == payload["email"]
     assert corpo["ativo"] is True
     assert corpo["role"] == "paciente"
-    assert corpo["status"] == "inativo"
-    assert corpo["invitation_status"] == "pending"
+    assert corpo["convite_pendente"] is True
     assert "senha" not in corpo and "hashed_password" not in corpo
 
     paciente, vinculos = _buscar_por_email(payload["email"])
     assert paciente is not None
     assert str(paciente.id) == corpo["paciente_id"]
-    assert str(paciente.id) == corpo["id"]
+    assert vinculos[0].id == corpo["id"]
     assert paciente.role == "paciente"
     assert paciente.is_active is False
     assert paciente.phone == "(51) 98888-7777"
@@ -137,15 +136,16 @@ def test_paciente_aceita_convite_com_nova_senha_e_consentimentos(
 
     # Rejeita senha padrão no aceite
     resp_padrao = client.post(
-        f"/api/v1/auth/invitations/{token}/accept",
-        json={"senha": "hality1234"},
+        "/api/v1/auth/invitation/confirm",
+        json={"token": token, "senha": "hality1234"},
     )
     assert resp_padrao.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     # Aceite válido com consentimento obrigatório de dados de saúde
     aceite = client.post(
-        f"/api/v1/auth/invitations/{token}/accept",
+        "/api/v1/auth/invitation/confirm",
         json={
+            "token": token,
             "senha": "NovaSenhaSegura123!",
             "consentimentos": [
                 {"finalidade": "health_data", "versao": "v1", "aceito": True},
@@ -171,8 +171,8 @@ def test_paciente_aceita_convite_com_nova_senha_e_consentimentos(
 
     # Tentativa de reutilizar token falha com 400
     reuso = client.post(
-        f"/api/v1/auth/invitations/{token}/accept",
-        json={"senha": "OutraSenhaValida123!"},
+        "/api/v1/auth/invitation/confirm",
+        json={"token": token, "senha": "OutraSenhaValida123!"},
     )
     assert reuso.status_code == status.HTTP_400_BAD_REQUEST
     assert reuso.json()["detail"] == "TOKEN_DE_CONVITE_INVALIDO"

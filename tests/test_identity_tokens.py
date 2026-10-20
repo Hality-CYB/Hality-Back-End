@@ -130,7 +130,11 @@ async def test_confirmacao_de_convite_publica(
 
     response = await client.post(
         "/api/v1/auth/invitation/confirm",
-        json={"token": _token_for(action.id, action.purpose), "senha": "SenhaConvite123!"},
+        json={
+            "token": _token_for(action.id, action.purpose),
+            "senha": "SenhaConvite123!",
+            "consentimentos": CONSENTIMENTOS_CADASTRO,
+        },
     )
 
     assert response.status_code == 204
@@ -220,7 +224,12 @@ async def test_outbox_sucesso_e_consumo_de_convite(db_session: AsyncSession) -> 
     assert messages[0].token in messages[0].token_url
     assert messages[0].purpose in messages[0].token_url
 
-    await consume_invitation(db_session, messages[0].token, "SenhaConvite123!")
+    await consume_invitation(
+        db_session,
+        messages[0].token,
+        "SenhaConvite123!",
+        consentimentos=CONSENTIMENTOS_CADASTRO,
+    )
     await db_session.refresh(outbox)
     assert outbox.status == CONSUMED
 

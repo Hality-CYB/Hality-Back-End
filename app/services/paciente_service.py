@@ -222,14 +222,13 @@ async def criar_paciente(
         usuario=usuario,
     )
     return PacienteCreateResponse(
-        id=paciente.id,
+        id=vinculo.id,
         role=TipoUsuario.PACIENTE.value,
-        status="inativo",
-        invitation_status="pending",
         paciente_id=paciente.id,
         paciente_nome=paciente.name,
         paciente_email=paciente.email,
         data_vinculo=vinculo.data_vinculo,
         ativo=vinculo.ativo,
+        convite_pendente=True,
         vinculo_id=vinculo.id,
     )

@@ -63,11 +63,13 @@ class UsuarioJaAtivoError(Exception):
     pass
 
 
+class UsuarioJaConvidadoError(Exception):
+    pass
+
+
 def _para_detalhe(
     usuario: User, profissional: Profissional | None, convite_pendente: bool = False
 ) -> AdminUsuarioDetail:
-    status_str = "ativo" if usuario.is_active else "inativo"
-    invitation_status = "pending" if convite_pendente else None
     return AdminUsuarioDetail(
         id=usuario.id,
         nome=usuario.name,
@@ -84,8 +86,6 @@ def _para_detalhe(
             especialidade=profissional.especialidade,
             vinculado_hality=profissional.vinculado_hality,
         ),
-        status=status_str,
-        invitation_status=invitation_status,
     )
 
 
@@ -356,6 +356,19 @@ async def reenviar_convite(
     if usuario.is_active:
         raise UsuarioJaAtivoError
 
+    historico_convites = list(
+        await db.scalars(
+            select(IdentityAction).where(
+                IdentityAction.user_id == usuario.id,
+                IdentityAction.purpose == INVITATION,
+            )
+        )
+    )
+    if historico_convites and not any(
+        convite.used_at is None and convite.revoked_at is None for convite in historico_convites
+    ):
+        raise UsuarioJaConvidadoError
+
     await auditoria_queries.validar_chave_operacao(
         db,
         actor=actor,
@@ -373,7 +386,7 @@ async def reenviar_convite(
         "usuario.convite.reenviar",
         "usuario",
         usuario.id,
-        metadata={"role": usuario.role, "email": usuario.email},
+        metadata={"role": usuario.role},
         operation_key=operation_key,
     )
     await db.commit()

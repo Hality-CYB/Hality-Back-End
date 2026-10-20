@@ -77,7 +77,9 @@ async def criar_anamnese_para_paciente(
         raise PacienteNaoEncontradoError
 
     paciente = await user_queries.buscar_usuario(repo.db, paciente_id)
-    if paciente is None or not paciente.is_active:
+    if paciente is None or (
+        not paciente.is_active and not await user_queries.tem_convite_pendente(repo.db, paciente_id)
+    ):
         raise PacienteNaoEncontradoError
 
     return await criar_anamnese(repo, paciente_id, payload, executor_id=profissional.id)

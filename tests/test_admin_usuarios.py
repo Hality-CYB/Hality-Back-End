@@ -660,8 +660,6 @@ def test_criar_usuario_com_convite_retorna_contrato_completo(cenario_admin: Cena
     assert resposta.status_code == 201
     corpo = resposta.json()
     assert corpo["role"] == "paciente"
-    assert corpo["status"] == "inativo"
-    assert corpo["invitation_status"] == "pending"
     assert corpo["convite_pendente"] is True
     assert "id" in corpo
     _assert_sem_segredos(corpo)
@@ -696,8 +694,6 @@ def test_reenviar_convite_sucesso_invalida_anterior_e_nao_duplica_usuario(
     assert reenvio.status_code == 200
     corpo_reenvio = reenvio.json()
     assert corpo_reenvio["convite_pendente"] is True
-    assert corpo_reenvio["status"] == "inativo"
-    assert corpo_reenvio["invitation_status"] == "pending"
 
     # Não duplica usuário no banco
     async def _contar_usuarios(db: AsyncSession) -> int:
@@ -715,16 +711,20 @@ def test_reenviar_convite_sucesso_invalida_anterior_e_nao_duplica_usuario(
 
     # Token antigo é rejeitado
     resp_token1 = client.post(
-        f"/api/v1/auth/invitations/{token1}/accept",
-        json={"senha": "SenhaValida123!"},
+        "/api/v1/auth/invitation/confirm",
+        json={"token": token1, "senha": "SenhaValida123!"},
     )
     assert resp_token1.status_code == 400
     assert resp_token1.json()["detail"] == "TOKEN_DE_CONVITE_INVALIDO"
 
     # Token novo é aceito com sucesso
     resp_token2 = client.post(
-        f"/api/v1/auth/invitations/{token2}/accept",
-        json={"senha": "SenhaValida123!"},
+        "/api/v1/auth/invitation/confirm",
+        json={
+            "token": token2,
+            "senha": "SenhaValida123!",
+            "consentimentos": [{"finalidade": "health_data", "versao": "v1", "aceito": True}],
+        },
     )
     assert resp_token2.status_code == 204
 

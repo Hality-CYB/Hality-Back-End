@@ -28,9 +28,10 @@ class PasswordRecoveryResponse(BaseModel):
     message: str
 
 
-class InvitationAcceptRequest(BaseModel):
+class InvitationConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    token: str = Field(..., min_length=20)
     senha: str = Field(..., min_length=SENHA_TAMANHO_MINIMO)
     consentimentos: list[DecisaoConsentimento] = Field(default_factory=list)
 

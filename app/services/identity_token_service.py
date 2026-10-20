@@ -248,26 +248,29 @@ async def consume_identity_action(
     if user is None or (not user.is_active and purpose != INVITATION):
         raise InvalidIdentityTokenError
 
+    decisoes = None
+    if purpose == INVITATION:
+        from app.core.consentimentos import OrigemConsentimento
+        from app.schemas.consentimento import DecisaoConsentimento
+        from app.schemas.usuario import TipoUsuario
+        from app.services import consentimento_service
+
+        decisoes = [
+            d if isinstance(d, DecisaoConsentimento) else DecisaoConsentimento.model_validate(d)
+            for d in (consentimentos or [])
+        ]
+        if tem_papel(user, TipoUsuario.PACIENTE):
+            consentimento_service.validar_decisoes_cadastro(decisoes)
+
     action.used_at = now
     user.hashed_password = password_helper.hash(new_password)
     if purpose == INVITATION:
         user.is_active = True
-        if consentimentos:
-            from app.core.consentimentos import OrigemConsentimento
-            from app.schemas.consentimento import DecisaoConsentimento
-            from app.schemas.usuario import TipoUsuario
-            from app.services import consentimento_service
-
-            lista_decisoes = [
-                d if isinstance(d, DecisaoConsentimento) else DecisaoConsentimento.model_validate(d)
-                for d in consentimentos
-            ]
-            if tem_papel(user, TipoUsuario.PACIENTE):
-                consentimento_service.validar_decisoes_cadastro(lista_decisoes)
+        if decisoes:
             await consentimento_service.gravar_decisoes(
                 db,
                 titular=user,
-                decisoes=lista_decisoes,
+                decisoes=decisoes,
                 origem=OrigemConsentimento.CONVITE,
                 ator=user,
                 referencia_coleta=referencia_coleta,
