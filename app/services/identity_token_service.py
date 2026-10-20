@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import tem_papel
 from app.auth.users import password_helper
 from app.core.config import get_settings
 from app.models.identity_action import EmailOutbox, IdentityAction, IdentityRateLimit
@@ -153,16 +154,30 @@ async def _create_action(
     action_id = uuid.uuid4()
     token = _token_for(action_id, purpose)
 
-    await db.execute(
-        update(IdentityAction)
-        .where(
-            IdentityAction.user_id == user.id,
-            IdentityAction.purpose == purpose,
-            IdentityAction.used_at.is_(None),
-            IdentityAction.revoked_at.is_(None),
+    old_action_ids = list(
+        await db.scalars(
+            select(IdentityAction.id).where(
+                IdentityAction.user_id == user.id,
+                IdentityAction.purpose == purpose,
+                IdentityAction.used_at.is_(None),
+                IdentityAction.revoked_at.is_(None),
+            )
         )
-        .values(revoked_at=now)
     )
+    if old_action_ids:
+        await db.execute(
+            update(IdentityAction)
+            .where(IdentityAction.id.in_(old_action_ids))
+            .values(revoked_at=now)
+        )
+        await db.execute(
+            update(EmailOutbox)
+            .where(
+                EmailOutbox.action_id.in_(old_action_ids),
+                EmailOutbox.status.in_((QUEUED, PROCESSING)),
+            )
+            .values(status=EXPIRED)
+        )
     action = IdentityAction(
         id=action_id,
         user_id=user.id,
@@ -194,10 +209,10 @@ async def request_password_recovery(db: AsyncSession, email: str) -> None:
         await _create_action(db, user, PASSWORD_RESET)
 
 
-async def create_invitation(db: AsyncSession, user: User, *, commit: bool = True) -> None:
+async def create_invitation(db: AsyncSession, user: User, *, commit: bool = True) -> str:
     """Cria uma ação de convite para um usuário já persistido."""
     user.is_active = False
-    await _create_action(db, user, INVITATION, commit=commit)
+    return await _create_action(db, user, INVITATION, commit=commit)
 
 
 async def consume_identity_action(
@@ -205,7 +220,9 @@ async def consume_identity_action(
     token: str,
     new_password: str,
     purpose: str = PASSWORD_RESET,
-) -> None:
+    consentimentos: Sequence[object] | None = None,
+    referencia_coleta: str | None = None,
+) -> User:
     """Consome uma ação uma única vez e invalida refresh tokens do usuário."""
     action = await db.scalar(
         select(IdentityAction)
@@ -231,10 +248,34 @@ async def consume_identity_action(
     if user is None or (not user.is_active and purpose != INVITATION):
         raise InvalidIdentityTokenError
 
+    decisoes = None
+    if purpose == INVITATION:
+        from app.core.consentimentos import OrigemConsentimento
+        from app.schemas.consentimento import DecisaoConsentimento
+        from app.schemas.usuario import TipoUsuario
+        from app.services import consentimento_service
+
+        decisoes = [
+            d if isinstance(d, DecisaoConsentimento) else DecisaoConsentimento.model_validate(d)
+            for d in (consentimentos or [])
+        ]
+        if tem_papel(user, TipoUsuario.PACIENTE):
+            consentimento_service.validar_decisoes_cadastro(decisoes)
+
     action.used_at = now
     user.hashed_password = password_helper.hash(new_password)
     if purpose == INVITATION:
         user.is_active = True
+        if decisoes:
+            await consentimento_service.gravar_decisoes(
+                db,
+                titular=user,
+                decisoes=decisoes,
+                origem=OrigemConsentimento.CONVITE,
+                ator=user,
+                referencia_coleta=referencia_coleta,
+            )
+
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.execute(
         update(EmailOutbox)
@@ -242,14 +283,28 @@ async def consume_identity_action(
         .values(status=CONSUMED)
     )
     await db.commit()
+    return user
 
 
 async def consume_password_reset(db: AsyncSession, token: str, new_password: str) -> None:
     await consume_identity_action(db, token, new_password, PASSWORD_RESET)
 
 
-async def consume_invitation(db: AsyncSession, token: str, new_password: str) -> None:
-    await consume_identity_action(db, token, new_password, INVITATION)
+async def consume_invitation(
+    db: AsyncSession,
+    token: str,
+    new_password: str,
+    consentimentos: Sequence[object] | None = None,
+    referencia_coleta: str | None = None,
+) -> User:
+    return await consume_identity_action(
+        db,
+        token,
+        new_password,
+        INVITATION,
+        consentimentos=consentimentos,
+        referencia_coleta=referencia_coleta,
+    )
 
 
 async def dispatch_pending_emails(

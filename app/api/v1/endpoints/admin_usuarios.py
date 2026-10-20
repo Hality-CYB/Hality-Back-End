@@ -126,3 +126,48 @@ async def atualizar_profissional(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="profissional não encontrado"
         ) from exc
+
+
+@router.post(
+    "/usuarios/{usuario_id}/reenviar-convite",
+    response_model=AdminUsuarioDetail,
+    status_code=status.HTTP_200_OK,
+)
+async def reenviar_convite(
+    usuario_id: uuid.UUID,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+) -> AdminUsuarioDetail:
+    try:
+        return await service.reenviar_convite(db, usuario_id, admin, idempotency_key)
+
+    except service.UsuarioNaoEncontradoError as exc:
+        raise _usuario_nao_encontrado() from exc
+
+    except service.UsuarioJaAtivoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="usuário já ativado",
+        ) from exc
+
+    except service.UsuarioJaConvidadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="usuário já aceitou um convite",
+        ) from exc
+
+
+@router.post(
+    "/usuarios/{usuario_id}/convite",
+    response_model=AdminUsuarioDetail,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def reenviar_convite_alias(
+    usuario_id: uuid.UUID,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=100)] = None,
+) -> AdminUsuarioDetail:
+    return await reenviar_convite(usuario_id, admin, db, idempotency_key)

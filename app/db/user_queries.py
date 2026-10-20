@@ -1,14 +1,17 @@
 """Consultas de usuários e dos dados de profissional (`users`, `profissionais`)."""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.identity_action import IdentityAction
 from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.usuario import TipoUsuario
+from app.services.identity_token_service import INVITATION
 
 UsuarioComProfissional = tuple[User, Profissional | None]
 
@@ -26,6 +29,19 @@ async def email_em_uso(db: AsyncSession, email: str) -> bool:
 
 async def buscar_por_email(db: AsyncSession, email: str) -> User | None:
     return await db.scalar(select(User).where(func.lower(User.email) == email.lower()).limit(1))
+
+
+async def tem_convite_pendente(db: AsyncSession, usuario_id: uuid.UUID) -> bool:
+    encontrado = await db.scalar(
+        select(IdentityAction.id).where(
+            IdentityAction.user_id == usuario_id,
+            IdentityAction.purpose == INVITATION,
+            IdentityAction.used_at.is_(None),
+            IdentityAction.revoked_at.is_(None),
+            IdentityAction.expires_at > datetime.now(UTC),
+        )
+    )
+    return encontrado is not None
 
 
 async def buscar_usuario(db: AsyncSession, usuario_id: uuid.UUID) -> User | None:

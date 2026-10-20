@@ -59,6 +59,14 @@ class TrocaDeRoleBloqueadaError(Exception):
         super().__init__(motivo)
 
 
+class UsuarioJaAtivoError(Exception):
+    pass
+
+
+class UsuarioJaConvidadoError(Exception):
+    pass
+
+
 def _para_detalhe(
     usuario: User, profissional: Profissional | None, convite_pendente: bool = False
 ) -> AdminUsuarioDetail:
@@ -332,3 +340,55 @@ async def atualizar_profissional(
     await db.commit()
     convites_pendentes = await _convites_pendentes(db, [usuario.id])
     return _para_detalhe(usuario, profissional, usuario.id in convites_pendentes)
+
+
+async def reenviar_convite(
+    db: AsyncSession,
+    usuario_id: uuid.UUID,
+    actor: User,
+    operation_key: str | None = None,
+) -> AdminUsuarioDetail:
+    encontrado = await user_queries.buscar_usuario_com_profissional(db, usuario_id)
+    if encontrado is None:
+        raise UsuarioNaoEncontradoError
+    usuario, profissional = encontrado
+
+    if usuario.is_active:
+        raise UsuarioJaAtivoError
+
+    historico_convites = list(
+        await db.scalars(
+            select(IdentityAction).where(
+                IdentityAction.user_id == usuario.id,
+                IdentityAction.purpose == INVITATION,
+            )
+        )
+    )
+    if historico_convites and not any(
+        convite.used_at is None and convite.revoked_at is None for convite in historico_convites
+    ):
+        raise UsuarioJaConvidadoError
+
+    await auditoria_queries.validar_chave_operacao(
+        db,
+        actor=actor,
+        action="usuario.convite.reenviar",
+        resource="usuario",
+        resource_id=usuario.id,
+        operation_key=operation_key,
+    )
+
+    await create_invitation(db, usuario, commit=False)
+
+    await auditoria_queries.registrar_mutacao(
+        db,
+        actor,
+        "usuario.convite.reenviar",
+        "usuario",
+        usuario.id,
+        metadata={"role": usuario.role},
+        operation_key=operation_key,
+    )
+    await db.commit()
+
+    return _para_detalhe(usuario, profissional, convite_pendente=True)
