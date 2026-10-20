@@ -2,9 +2,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.erros_diagnostico import CodigoErroDiagnostico
 from app.db import paciente_profissional_queries
 from app.models.classificacao_diagnostico import (
     ClassificacaoDiagnostico,
@@ -15,6 +16,7 @@ from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import PacienteProfissional
 from app.models.user import User
+from app.schemas.diagnostico import OrigemResultado, StatusDiagnostico
 
 
 @dataclass
@@ -57,6 +59,14 @@ class DiagnosticoRevisaoDetalhada:
     revisao: DiagnosticoRevisao
     classificacao: ClassificacaoDiagnostico
     profissional_nome: str | None
+
+
+@dataclass(frozen=True)
+class ArquivoImagem:
+    url_arquivo: str
+    sha256: str
+    content_type: str
+    tamanho_bytes: int
 
 
 def _ordenacao(ordem: str):
@@ -394,12 +404,19 @@ async def buscar_por_anamnese(
     return result.scalar_one_or_none()
 
 
+async def anamnese_possui_diagnostico(
+    db: AsyncSession,
+    anamnese_id: int,
+) -> bool:
+    return bool(await db.scalar(select(exists().where(Diagnostico.anamnese_id == anamnese_id))))
+
+
 async def inserir(
     db: AsyncSession,
     paciente_id: uuid.UUID,
     executor_id: uuid.UUID,
     anamnese_id: int,
-    url_arquivo: str,
+    arquivo: ArquivoImagem,
     parametros_captura: dict,
 ) -> Diagnostico:
     # Diagnóstico e imagem entram no mesmo commit: ou os dois existem,
@@ -420,9 +437,12 @@ async def inserir(
 
     imagem = Imagem(
         diagnostico_id=diagnostico.id,
-        url_arquivo=url_arquivo,
+        url_arquivo=arquivo.url_arquivo,
         ordem=1,
         parametros_captura=parametros_captura,
+        sha256=arquivo.sha256,
+        content_type=arquivo.content_type,
+        tamanho_bytes=arquivo.tamanho_bytes,
     )
 
     db.add(imagem)
@@ -838,16 +858,15 @@ async def concluir_mock(
     confianca_ia: float,
 ) -> Diagnostico:
     diagnostico.classificacao_id = classificacao_id
-
     diagnostico.escala_saburra = escala_saburra
-
     diagnostico.confianca_ia = confianca_ia
-
+    diagnostico.origem_resultado = OrigemResultado.MOCK.value
+    diagnostico.modelo_provider = None
+    diagnostico.modelo_versao = None
     # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
-    diagnostico.status = "aguardando_revisao"
-
-    if hasattr(diagnostico, "erro"):
-        diagnostico.erro = None
+    diagnostico.status = StatusDiagnostico.AGUARDANDO_REVISAO.value
+    diagnostico.erro_codigo = None
+    diagnostico.erro = None
 
     await db.commit()
     await db.refresh(diagnostico)
@@ -858,15 +877,19 @@ async def concluir_mock(
 async def marcar_falha(
     db: AsyncSession,
     diagnostico: Diagnostico,
-    erro: str,
+    origem: OrigemResultado,
+    erro_codigo: CodigoErroDiagnostico,
+    erro_interno: str | None = None,
 ) -> Diagnostico:
     diagnostico.classificacao_id = None
     diagnostico.escala_saburra = None
     diagnostico.confianca_ia = None
-    diagnostico.status = "falha"
-
-    if hasattr(diagnostico, "erro"):
-        diagnostico.erro = erro
+    diagnostico.origem_resultado = origem.value
+    diagnostico.modelo_provider = None
+    diagnostico.modelo_versao = None
+    diagnostico.status = StatusDiagnostico.FALHA.value
+    diagnostico.erro_codigo = erro_codigo.value
+    diagnostico.erro = erro_interno
 
     await db.commit()
     await db.refresh(diagnostico)

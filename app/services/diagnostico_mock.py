@@ -1,13 +1,15 @@
+"""Fixture de desenvolvimento, não um modelo: resultado escolhido pelo ID e
+confiança fixa. Grava `origem_resultado = 'mock'` sem provider nem versão."""
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.classificacao_diagnostico import (
-    ClassificacaoDiagnostico,
-)
+from app.core.erros_diagnostico import CodigoErroDiagnostico
+from app.db import diagnostico_queries
 from app.models.diagnostico import Diagnostico
+from app.schemas.diagnostico import OrigemResultado, StatusDiagnostico
 
 MOCK_PROCESSING_SECONDS = 2.0
 
@@ -46,66 +48,49 @@ def resultado_para(
     return _RESULTADOS[indice]
 
 
-async def processar_se_necessario(
-    db: AsyncSession,
+def _processamento_concluido(
     diagnostico: Diagnostico,
-) -> Diagnostico:
-    if diagnostico.status != "processando":
-        return diagnostico
-
+) -> bool:
     criado_em = diagnostico.data_diagnostico
 
     if criado_em.tzinfo is None:
         criado_em = criado_em.replace(tzinfo=UTC)
 
-    decorrido = (datetime.now(UTC) - criado_em).total_seconds()
+    return (datetime.now(UTC) - criado_em).total_seconds() >= MOCK_PROCESSING_SECONDS
 
-    if decorrido < MOCK_PROCESSING_SECONDS:
+
+async def processar_se_necessario(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+) -> Diagnostico:
+    if diagnostico.status != StatusDiagnostico.PROCESSANDO or not _processamento_concluido(
+        diagnostico
+    ):
         return diagnostico
 
     resultado_mock = resultado_para(diagnostico.id)
 
-    result = await db.execute(
-        select(ClassificacaoDiagnostico).where(
-            ClassificacaoDiagnostico.ordem == resultado_mock.ordem_classificacao
-        )
+    classificacao = await diagnostico_queries.buscar_classificacao_por_ordem(
+        db,
+        resultado_mock.ordem_classificacao,
     )
 
-    classificacao = result.scalar_one_or_none()
-
     if classificacao is None:
-        diagnostico.status = "falha"
-        diagnostico.classificacao_id = None
-        diagnostico.escala_saburra = None
-        diagnostico.confianca_ia = None
-
-        if hasattr(
+        return await diagnostico_queries.marcar_falha(
+            db,
             diagnostico,
-            "erro",
-        ):
-            diagnostico.erro = "Classificação necessária para o mock não está configurada."
+            origem=OrigemResultado.MOCK,
+            erro_codigo=CodigoErroDiagnostico.CLASSIFICACAO_NAO_CONFIGURADA,
+            erro_interno=(
+                "classificação de ordem "
+                f"{resultado_mock.ordem_classificacao} não cadastrada para o mock"
+            ),
+        )
 
-        await db.commit()
-        await db.refresh(diagnostico)
-
-        return diagnostico
-
-    diagnostico.classificacao_id = classificacao.id
-
-    diagnostico.escala_saburra = resultado_mock.escala_saburra
-
-    diagnostico.confianca_ia = resultado_mock.confianca_ia
-
-    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
-    diagnostico.status = "aguardando_revisao"
-
-    if hasattr(
+    return await diagnostico_queries.concluir_mock(
+        db,
         diagnostico,
-        "erro",
-    ):
-        diagnostico.erro = None
-
-    await db.commit()
-    await db.refresh(diagnostico)
-
-    return diagnostico
+        classificacao_id=classificacao.id,
+        escala_saburra=resultado_mock.escala_saburra,
+        confianca_ia=resultado_mock.confianca_ia,
+    )

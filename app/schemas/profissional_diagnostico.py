@@ -4,7 +4,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo, StatusDiagnostico
+from app.schemas.diagnostico import (
+    ClassificacaoDiagnosticoResumo,
+    OrigemResultadoInfo,
+    StatusDiagnostico,
+)
 
 MAX_OBSERVACAO_REVISAO = 2000
 
@@ -58,6 +62,7 @@ class ResultadoAutomaticoDiagnostico(BaseModel):
     classificacao: ClassificacaoDiagnosticoResumo | None
     escala_saburra: int | None
     confianca_ia: float | None
+    origem: OrigemResultadoInfo | None
 
 
 class RevisaoProfissionalResumo(BaseModel):
@@ -83,6 +88,7 @@ class DiagnosticoProfissionalDetalhe(BaseModel):
     version: int
     aviso_legal: str
     erro: str | None = None
+    erro_codigo: str | None = None
 
 
 class RevisaoProfissionalInput(BaseModel):

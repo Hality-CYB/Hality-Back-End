@@ -19,6 +19,9 @@ class Questionario(Base):
     A versão vigente é a de `criado_em` mais recente. Se a tabela estiver
     vazia (ou a consulta falhar), `anamnese_questionary.py` cai pro catálogo
     estático como fallback — a aplicação nunca fica sem questionário.
+
+    Versões publicadas são imutáveis: anamneses referenciam a versão. Mudou
+    uma pergunta, publica-se uma versão nova.
     """
 
     __tablename__ = "questionarios"

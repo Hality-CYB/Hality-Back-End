@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 # (Questionario/Pergunta) é o mesmo nos dois casos.
 # É o fallback usado quando a tabela `questionarios` está vazia ou a consulta
 # falha, garantindo que a aplicação não quebre por falta de uma fonte de
-# dados real.
+# dados real. Também está persistido em `questionarios`: não altere as
+# perguntas sem trocar `versao`.
 _QUESTIONARIO_FALLBACK = Questionario(
     versao="2026-08-v1",
     perguntas=[

@@ -23,6 +23,7 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy import delete
 
 from app.auth.users import UserManager
+from app.core.erros_diagnostico import CodigoErroDiagnostico
 from app.db.session import async_session_factory
 from app.models import (
     Anamnese,
@@ -36,6 +37,8 @@ from app.models import (
     Questionario,
     User,
 )
+from app.schemas.diagnostico import OrigemResultado
+from app.services.anamnese_questionary import _QUESTIONARIO_FALLBACK
 
 load_dotenv()
 
@@ -287,7 +290,15 @@ async def seed() -> None:
                 },
             ],
         )
-        db.add(questionario)
+        # As anamneses abaixo usam a versão do fallback.
+        questionario_fallback = Questionario(
+            versao=_QUESTIONARIO_FALLBACK.versao,
+            perguntas=[
+                pergunta.model_dump(mode="json") for pergunta in _QUESTIONARIO_FALLBACK.perguntas
+            ],
+            criado_em=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+        db.add_all([questionario_fallback, questionario])
 
         profissional1 = Profissional(
             usuario_id=dentista1.id,
@@ -434,6 +445,7 @@ async def seed() -> None:
             classificacao_id=halito_normal.id,
             escala_saburra=24,
             confianca_ia=0.91,
+            origem_resultado=OrigemResultado.MOCK.value,
             status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=3),
         )
@@ -443,6 +455,7 @@ async def seed() -> None:
             classificacao_id=halitose_intima.id,
             escala_saburra=49,
             confianca_ia=0.89,
+            origem_resultado=OrigemResultado.MOCK.value,
             status="concluido",
             data_diagnostico=agora - timedelta(days=10),
             profissional_revisor_id=dentista1.id,
@@ -465,6 +478,8 @@ async def seed() -> None:
             escala_saburra=None,
             confianca_ia=None,
             status="falha",
+            origem_resultado=OrigemResultado.MOCK.value,
+            erro_codigo=CodigoErroDiagnostico.FALHA_PROCESSAMENTO.value,
             erro="Imagem fora de foco: não foi possível avaliar a saburra lingual.",
             data_diagnostico=agora - timedelta(days=15),
         )
@@ -474,6 +489,7 @@ async def seed() -> None:
             classificacao_id=mau_halito_social.id,
             escala_saburra=68,
             confianca_ia=0.87,
+            origem_resultado=OrigemResultado.MOCK.value,
             status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=5),
         )
@@ -483,6 +499,7 @@ async def seed() -> None:
             classificacao_id=halito_normal.id,
             escala_saburra=3,
             confianca_ia=0.75,
+            origem_resultado=OrigemResultado.MOCK.value,
             status="aguardando_revisao",
             data_diagnostico=agora - timedelta(days=2),
         )
@@ -599,7 +616,7 @@ async def seed() -> None:
     print(
         "Seed concluído: 7 usuarios, 2 profissionais, 3 classificacoes, "
         "6 conteudos, 6 anamneses, 6 diagnosticos, sem imagens externas, "
-        "1 questionario (11 perguntas).\n"
+        "2 questionarios (fallback 2026-08-v1 e vigente 2026-09-v1).\n"
     )
     print("Credenciais:")
     for email, role in (

@@ -366,6 +366,24 @@ A identidade é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail 
 
 As dicas são registros de `conteudos` com `aparece_na_home = true`, ordenados por `ordem` e `id`. `ultimo_diagnostico` é `null` quando o usuário ainda não possui histórico.
 
+## Diagnóstico: estados e contrato
+
+O status define o que cada resposta (paciente, profissional e admin) expõe:
+
+| status | classificação / escala / confiança | revisão | `erro` / `erro_codigo` |
+|---|---|---|---|
+| `processando` | `null` | `null` | `null` |
+| `falha` | `null` | `null` | mensagem pública + código |
+| `aguardando_revisao` | sugestão automática | ainda não revisado | `null` |
+| `concluido` | classificação da revisão mais recente | última versão | `null` |
+
+- `erro` é sempre a mensagem do catálogo (`app/core/erros_diagnostico.py`). O detalhe técnico gravado em `diagnosticos.erro` nunca sai na API.
+- A origem do resultado (`mock`, `modelo` ou `legado`, com provider/versão só para `modelo`) aparece para profissional e admin em `origem`. O mock é fixture de desenvolvimento e não mede a qualidade de um modelo.
+- Só o `GET /api/v1/diagnosticos/{id}` do paciente avança o mock. As rotas de profissional e admin só leem.
+- Uma anamnese que já gerou diagnóstico é imutável: `PUT`/`DELETE` retornam `409`. Reenviar a mesma anamnese retorna `409` com o `diagnostico_id` existente.
+
+Decisões e pendências (efeito da revogação de consentimento): [ADR 0002](docs/adr/0002-contratos-de-diagnostico-e-revogacao.md).
+
 ## Arquitetura
 
 O projeto segue uma organização **por camada** (horizontal): os arquivos são agrupados pelo *tipo* de responsabilidade que têm, não pelo domínio/feature a que pertencem. Ou seja, todo endpoint HTTP fica em `api/`, toda regra de negócio em `services/`, toda entidade de banco em `models/`, e assim por diante — independente de ser sobre "usuário", "pedido" etc.

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import diagnostico_queries, home_queries
 from app.models.diagnostico import Diagnostico
 from app.models.user import User
+from app.schemas.diagnostico import STATUS_COM_RESULTADO
 from app.schemas.home import (
     HomeClassificacao,
     HomeDica,
@@ -10,8 +11,6 @@ from app.schemas.home import (
     HomeUltimoDiagnostico,
     HomeUsuario,
 )
-
-STATUS_COM_RESULTADO = {"aguardando_revisao", "concluido"}
 
 
 async def _montar_ultimo_diagnostico(

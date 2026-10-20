@@ -1,10 +1,18 @@
 import asyncio
+from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
+from app.core.config import get_settings
 from app.db.session import async_session_factory
 from app.main import app
-from app.models import Questionario
+from app.models import Anamnese, Diagnostico, Questionario
+from tests.conftest import PACIENTE_STUB_ID
 
 client = TestClient(app)
 
@@ -222,3 +230,67 @@ def test_deletar_anamnese() -> None:
 
     assert delete_response.status_code == 204
     assert get_response.status_code == 404
+
+
+def _vincular_diagnostico(anamnese_id: int) -> None:
+    async def _vincular() -> None:
+        engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine)() as db:
+                db.add(
+                    Diagnostico(
+                        paciente_id=PACIENTE_STUB_ID,
+                        anamnese_id=anamnese_id,
+                        status="processando",
+                        data_diagnostico=datetime(2099, 1, 1, tzinfo=UTC),
+                    )
+                )
+                await db.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_vincular())
+
+
+def test_atualizar_anamnese_usada_em_diagnostico_retorna_409() -> None:
+    criada = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS).json()
+    _vincular_diagnostico(criada["id"])
+    payload_atualizado = _payload_valido()
+    payload_atualizado["respostas"][2]["valor"] = 5
+
+    response = client.put(
+        f"/api/v1/anamneses/{criada['id']}", json=payload_atualizado, headers=AUTH_HEADERS
+    )
+
+    assert response.status_code == 409
+    respostas = client.get(f"/api/v1/anamneses/{criada['id']}", headers=AUTH_HEADERS).json()[
+        "respostas"
+    ]
+    assert {r["pergunta_id"]: r["valor"] for r in respostas}["avaliacao_propria_halito"] == 3
+
+
+def test_deletar_anamnese_usada_em_diagnostico_retorna_409() -> None:
+    criada = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS).json()
+    _vincular_diagnostico(criada["id"])
+
+    response = client.delete(f"/api/v1/anamneses/{criada['id']}", headers=AUTH_HEADERS)
+
+    assert response.status_code == 409
+    assert client.get(f"/api/v1/anamneses/{criada['id']}", headers=AUTH_HEADERS).status_code == 200
+
+
+def test_banco_impede_apagar_anamnese_usada_mesmo_fora_da_api() -> None:
+    criada = client.post("/api/v1/anamneses", json=_payload_valido(), headers=AUTH_HEADERS).json()
+    _vincular_diagnostico(criada["id"])
+
+    async def _apagar_direto() -> None:
+        engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine)() as db:
+                await db.execute(delete(Anamnese).where(Anamnese.id == criada["id"]))
+                await db.commit()
+        finally:
+            await engine.dispose()
+
+    with pytest.raises(IntegrityError):
+        asyncio.run(_apagar_direto())

@@ -1,5 +1,5 @@
 import json
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -18,7 +18,11 @@ from app.api.deps import (
     DbSession,
     OptionalClinicalUser,
 )
-from app.schemas.diagnostico import DiagnosticoListResponse
+from app.schemas.diagnostico import (
+    DiagnosticoCriadoResponse,
+    DiagnosticoListResponse,
+    DiagnosticoPacienteDetalhe,
+)
 from app.services import consentimento_service, diagnostico_service, diagnostico_storage
 
 router = APIRouter(
@@ -98,7 +102,7 @@ async def listar_diagnosticos(
 @router.post(
     "",
     status_code=status.HTTP_202_ACCEPTED,
-    response_model=None,
+    response_model=DiagnosticoCriadoResponse,
 )
 async def criar_diagnostico(
     anamnese_id: Annotated[int, Form()],
@@ -108,7 +112,7 @@ async def criar_diagnostico(
     # sempre da anamnese, e o acesso a ela é checado no service.
     usuario: CurrentClinicalUser,
     db: DbSession,
-) -> dict[str, Any] | JSONResponse:
+) -> DiagnosticoCriadoResponse | JSONResponse:
     try:
         parametros = json.loads(parametros_captura)
 
@@ -173,12 +177,12 @@ async def criar_diagnostico(
         )
 
 
-@router.get("/{diagnostico_id}")
+@router.get("/{diagnostico_id}", response_model=DiagnosticoPacienteDetalhe)
 async def obter_diagnostico(
     diagnostico_id: int,
     usuario: CurrentClinicalUser,
     db: DbSession,
-) -> dict[str, Any]:
+) -> DiagnosticoPacienteDetalhe:
     try:
         return await diagnostico_service.obter_diagnostico(
             db=db,

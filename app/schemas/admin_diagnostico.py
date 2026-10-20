@@ -13,7 +13,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo, StatusDiagnostico
+from app.schemas.diagnostico import (
+    ClassificacaoDiagnosticoResumo,
+    OrigemResultadoInfo,
+    StatusDiagnostico,
+)
 
 MOTIVO_IMAGEM_INDISPONIVEL = "politica_de_acesso_pendente"
 MOTIVO_DATASET_INDISPONIVEL = "exportacao_fora_do_escopo"
@@ -30,6 +34,7 @@ class ClassificacaoAutomatica(BaseModel):
     classificacao: ClassificacaoDiagnosticoResumo | None
     escala_saburra: int | None
     confianca_ia: float | None
+    origem: OrigemResultadoInfo | None
 
 
 class RevisaoResumo(BaseModel):
@@ -102,6 +107,7 @@ class AdminDiagnosticoDetalhe(BaseModel):
     data: datetime
     status: StatusDiagnostico
     erro: str | None
+    erro_codigo: str | None
     automatica: ClassificacaoAutomatica
     revisao: RevisaoProfissional
     historico_revisoes: list[RevisaoHistorica]
