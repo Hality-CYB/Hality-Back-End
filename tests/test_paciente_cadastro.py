@@ -285,3 +285,67 @@ def test_profissional_nao_consegue_enviar_consentimento_em_nome_do_paciente(
     assert resposta.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     paciente, _ = _buscar_por_email(payload["email"])
     assert paciente is None
+
+
+def _token_do_convite(email: str) -> str:
+    async def _buscar(db: AsyncSession) -> IdentityAction | None:
+        return await db.scalar(
+            select(IdentityAction)
+            .join(User, User.id == IdentityAction.user_id)
+            .where(User.email == email, IdentityAction.purpose == INVITATION)
+        )
+
+    acao = executar_no_banco(_buscar)
+    assert acao is not None
+    return _token_for(acao.id, acao.purpose)
+
+
+@pytest.mark.parametrize(
+    ("consentimentos", "status_esperado", "detalhe"),
+    [
+        (
+            [
+                {"finalidade": "health_data", "versao": "v1", "aceito": True},
+                {"finalidade": "health_data", "versao": "v1", "aceito": True},
+            ],
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "finalidade de consentimento repetida",
+        ),
+        (
+            [{"finalidade": "health_data", "versao": "v0", "aceito": True}],
+            status.HTTP_409_CONFLICT,
+            "versão do termo desatualizada; versão vigente: v1",
+        ),
+    ],
+    ids=["finalidade_repetida", "versao_desatualizada"],
+)
+def test_aceite_com_consentimento_invalido_nao_consome_o_convite(
+    cenario_admin: CenarioAdmin,
+    consentimentos: list[dict[str, Any]],
+    status_esperado: int,
+    detalhe: str,
+) -> None:
+    autenticar_como(cenario_admin.profissional)
+    payload = _payload(cenario_admin)
+    assert client.post(PACIENTES_URL, json=payload, headers=AUTH_HEADERS).status_code == 201
+    token = _token_do_convite(payload["email"])
+
+    recusado = client.post(
+        "/api/v1/auth/invitation/confirm",
+        json={"token": token, "senha": "SenhaForte!2026", "consentimentos": consentimentos},
+    )
+    assert recusado.status_code == status_esperado
+    assert recusado.json()["detail"] == detalhe
+
+    # O convite segue válido: a pessoa corrige o consentimento e aceita.
+    aceito = client.post(
+        "/api/v1/auth/invitation/confirm",
+        json={
+            "token": token,
+            "senha": "SenhaForte!2026",
+            "consentimentos": [{"finalidade": "health_data", "versao": "v1", "aceito": True}],
+        },
+    )
+    assert aceito.status_code == status.HTTP_204_NO_CONTENT
+    usuario, _ = _buscar_por_email(payload["email"])
+    assert usuario is not None and usuario.is_active

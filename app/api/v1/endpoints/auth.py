@@ -250,8 +250,19 @@ async def invitation_confirm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="TOKEN_DE_CONVITE_INVALIDO",
         ) from exc
+    # Mesmas respostas do `/auth/register`: sem isso as duas últimas viram 500.
     except consentimento_service.TratamentoObrigatorioError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="o consentimento para tratamento de dados de saúde é obrigatório",
+        ) from exc
+    except consentimento_service.DecisaoDuplicadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="finalidade de consentimento repetida",
+        ) from exc
+    except consentimento_service.VersaoDesatualizadaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"versão do termo desatualizada; versão vigente: {exc.versao_vigente}",
         ) from exc
