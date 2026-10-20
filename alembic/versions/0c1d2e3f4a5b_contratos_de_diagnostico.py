@@ -1,7 +1,7 @@
 """contratos de estado, erro, rastreabilidade e persistência do diagnóstico (DELTA-12)
 
 Revision ID: 0c1d2e3f4a5b
-Revises: 9b0c1d2e3f4a
+Revises: f2b3c4d5e6a7
 """
 
 import json
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0c1d2e3f4a5b"
-down_revision: str | None = "9b0c1d2e3f4a"
+down_revision: str | None = "f2b3c4d5e6a7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
