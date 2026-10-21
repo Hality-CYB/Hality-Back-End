@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     anamnese,
     auth,
     auth_google,
+    classificacoes,
     consentimentos,
     conteudo,
     conteudo_admin,
@@ -26,6 +27,7 @@ api_router = APIRouter()
 # Rotas de saúde, anamnese e diagnóstico (existentes)
 api_router.include_router(health.router)
 api_router.include_router(anamnese.router)
+api_router.include_router(classificacoes.router)
 api_router.include_router(conteudo_admin.router)
 api_router.include_router(conteudo.router)
 api_router.include_router(conteudo_publico.router)
