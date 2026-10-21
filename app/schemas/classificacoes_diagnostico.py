@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ClassificacaoDiagnosticoCreate(BaseModel):
@@ -14,6 +14,8 @@ class ClassificacaoDiagnosticoDetail(BaseModel):
     'halitose_intima', 'mau_halito_social'); `nome_exibicao` é o label amigável
     mostrado na UI; `ordem` é o nível de severidade (1 a 3).
     """
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     codigo: str
