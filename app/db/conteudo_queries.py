@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
@@ -175,3 +175,17 @@ async def deletar(
     conteudo: Conteudo,
 ) -> None:
     await db.delete(conteudo)
+
+
+async def midia_em_uso(
+    db: AsyncSession,
+    nome_arquivo: str,
+) -> bool:
+    """Algum conteúdo ainda aponta para esse arquivo de mídia?"""
+    resultado = await db.execute(
+        select(func.count())
+        .select_from(Conteudo)
+        .where(cast(Conteudo.conteudo, String).contains(nome_arquivo))
+    )
+
+    return resultado.scalar_one() > 0

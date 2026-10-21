@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -244,6 +244,14 @@ class ConteudoDetail(ConteudoCreate):
     publicado_por_id: uuid.UUID | None
 
     publicado_em: datetime | None
+
+
+class MidiaEnviadaResponse(BaseModel):
+    """URL que o bloco de imagem ou vídeo do conteúdo passa a usar."""
+
+    url: str
+
+    tipo: Literal["imagem", "video"]
 
 
 class ConteudoListResponse(BaseModel):

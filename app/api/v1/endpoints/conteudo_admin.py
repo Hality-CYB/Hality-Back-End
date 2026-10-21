@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 
 from app.api.deps import (
     CurrentAdminDep,
@@ -9,6 +10,7 @@ from app.api.deps import (
     LimiteQuery,
     PaginaQuery,
 )
+from app.core.config import get_settings
 from app.schemas.conteudo import (
     CategoriaConteudo,
     ConteudoCreate,
@@ -16,10 +18,11 @@ from app.schemas.conteudo import (
     ConteudoListResponse,
     ConteudoUpdate,
     DestinoConteudo,
+    MidiaEnviadaResponse,
     OrdemConteudo,
     StatusConteudo,
 )
-from app.services import conteudo_service
+from app.services import conteudo_service, conteudo_storage
 
 router = APIRouter(
     prefix="/admin/conteudos",
@@ -86,6 +89,42 @@ async def criar_conteudo(
         conteudo_service.ConteudoInvalidoError,
     ) as exc:
         raise _traduzir_erro(exc) from exc
+
+
+@router.post(
+    "/midias",
+    status_code=status.HTTP_201_CREATED,
+    response_model=MidiaEnviadaResponse,
+)
+async def enviar_midia(
+    arquivo: Annotated[UploadFile, File()],
+    admin: CurrentAdminMutationDep,
+) -> MidiaEnviadaResponse | JSONResponse:
+    """Grava a imagem ou o vídeo de um conteúdo e devolve a URL para o bloco.
+
+    Mesmo esquema das fotos de diagnóstico. O arquivo só passa a ser usado
+    quando um conteúdo salvo aponta para a URL.
+    """
+    content_type = arquivo.content_type or ""
+    # Lê um byte além do limite: basta para saber se passou, sem ler o resto.
+    dados = await arquivo.read(conteudo_storage.MAX_MIDIA_BYTES + 1)
+
+    try:
+        tipo = conteudo_storage.validar(dados, content_type)
+    except conteudo_storage.MidiaInvalidaError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"motivo": exc.motivo},
+        )
+    except conteudo_storage.MidiaMuitoGrandeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="arquivo acima do tamanho máximo permitido",
+        ) from exc
+
+    url = await conteudo_storage.salvar(dados, content_type, get_settings().api_v1_prefix)
+
+    return MidiaEnviadaResponse(url=url, tipo=tipo)
 
 
 @router.get(

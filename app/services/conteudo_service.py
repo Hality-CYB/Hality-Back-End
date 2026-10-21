@@ -19,6 +19,7 @@ from app.schemas.conteudo import (
     _validar_conteudo_publico,
     _validar_destinos_classificacoes,
 )
+from app.services import conteudo_storage
 
 LIMITE_MAXIMO = 50
 TAMANHO_MAXIMO_BUSCA = 100
@@ -251,6 +252,8 @@ async def atualizar(
     if conteudo is None:
         raise ConteudoNaoEncontradoError
 
+    midias_antes = conteudo_storage.nomes_no_conteudo(conteudo.conteudo)
+
     alteracoes = payload.model_dump(
         mode="json",
         exclude_unset=True,
@@ -323,6 +326,11 @@ async def atualizar(
         )
         await db.commit()
 
+    await _remover_midias_orfas(
+        db,
+        midias_antes - conteudo_storage.nomes_no_conteudo(atualizado.conteudo),
+    )
+
     return _para_detalhe(atualizado)
 
 
@@ -339,6 +347,8 @@ async def deletar(
 
     if conteudo is None:
         raise ConteudoNaoEncontradoError
+
+    midias = conteudo_storage.nomes_no_conteudo(conteudo.conteudo)
 
     if actor is not None:
         await auditoria_queries.validar_chave_operacao(
@@ -365,3 +375,15 @@ async def deletar(
             operation_key=operation_key,
         )
         await db.commit()
+
+    await _remover_midias_orfas(db, midias)
+
+
+async def _remover_midias_orfas(db: AsyncSession, nomes: set[str]) -> None:
+    """Apaga os arquivos que saíram do conteúdo, se nenhum outro ainda os usa.
+
+    Roda depois do commit: se a gravação falhar, nenhum arquivo é perdido.
+    """
+    for nome in nomes:
+        if not await conteudo_queries.midia_em_uso(db, nome):
+            await conteudo_storage.remover(nome)
