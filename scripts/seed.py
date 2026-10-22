@@ -16,7 +16,7 @@ para esse id.
 import asyncio
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from dotenv import load_dotenv
 from fastapi_users.db import SQLAlchemyUserDatabase
@@ -133,6 +133,7 @@ async def seed() -> None:
             phone="51999990001",
             hashed_password=senha_hash,
             role="paciente",
+            data_nascimento=date(1988, 4, 12),
         )
         paciente2 = User(
             name="Diego Fontana",
@@ -140,12 +141,14 @@ async def seed() -> None:
             phone="51999990002",
             hashed_password=senha_hash,
             role="paciente",
+            data_nascimento=date(1975, 9, 3),
         )
         paciente3 = User(
             name="Elisa Prado",
             email="elisa.prado@example.com",
             hashed_password=senha_hash,
             role="paciente",
+            data_nascimento=date(1996, 1, 27),
         )
         paciente4 = User(
             name="Nina Sem Histórico",
@@ -153,6 +156,7 @@ async def seed() -> None:
             phone="51999990004",
             hashed_password=senha_hash,
             role="paciente",
+            data_nascimento=date(2001, 6, 15),
         )
         db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3, paciente4])
         await db.flush()
@@ -298,7 +302,15 @@ async def seed() -> None:
             ],
             criado_em=datetime(2026, 8, 1, tzinfo=UTC),
         )
-        db.add_all([questionario_fallback, questionario])
+        questionario.criado_em = datetime(2026, 9, 1, tzinfo=UTC)
+        # Vigente: a mesma 2026-09-v1 sem a pergunta de idade, que agora vem da
+        # data de nascimento do cadastro (mesma versão que a migration 3f4a5b6c7d8e publica).
+        questionario_sem_idade = Questionario(
+            versao="2026-10-v1",
+            perguntas=[p for p in questionario.perguntas if p["id"] != "idade"],
+            criado_em=datetime(2026, 10, 1, tzinfo=UTC),
+        )
+        db.add_all([questionario_fallback, questionario, questionario_sem_idade])
 
         profissional1 = Profissional(
             usuario_id=dentista1.id,
@@ -616,7 +628,7 @@ async def seed() -> None:
     print(
         "Seed concluído: 7 usuarios, 2 profissionais, 3 classificacoes, "
         "6 conteudos, 6 anamneses, 6 diagnosticos, sem imagens externas, "
-        "2 questionarios (fallback 2026-08-v1 e vigente 2026-09-v1).\n"
+        "3 questionarios (fallback 2026-08-v1, 2026-09-v1 e vigente 2026-10-v1, sem idade).\n"
     )
     print("Credenciais:")
     for email, role in (

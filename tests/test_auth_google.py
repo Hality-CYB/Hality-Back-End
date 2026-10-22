@@ -148,6 +148,7 @@ async def _registrar_com_senha(
         json={
             "email": email,
             "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
             "name": "Conta Existente",
             "consentimentos": CONSENTIMENTOS_CADASTRO,
         },

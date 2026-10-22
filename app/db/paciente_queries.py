@@ -28,7 +28,7 @@ class PacientesPaginados:
 
 
 def _colunas_paciente() -> tuple:
-    return (User.id, User.name, User.email, User.phone, User.is_active)
+    return (User.id, User.name, User.email, User.phone, User.data_nascimento, User.is_active)
 
 
 def _filtros_escopo(profissional_id: uuid.UUID | None) -> list:

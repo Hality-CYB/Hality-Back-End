@@ -39,6 +39,7 @@ async def _registrar_e_logar(
         json={
             "email": email,
             "password": SENHA,
+            "data_nascimento": "1990-01-01",
             "name": "Nome Original",
             "phone": "1111",
             "consentimentos": CONSENTIMENTOS_CADASTRO,

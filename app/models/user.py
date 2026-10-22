@@ -1,9 +1,9 @@
 """Modelo de usuário — entidade persistida no banco de dados via SQLAlchemy."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import Date, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,6 +24,8 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         name: Nome completo do usuário.
         phone: Telefone opcional.
         role: Papel do usuário (``paciente``, ``profissional``, ``admin``).
+        data_nascimento: Obrigatória no cadastro de paciente; vazia em
+            profissional e admin.
         created_at: Timestamp de criação da conta.
     """
 
@@ -32,6 +34,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     role: Mapped[str] = mapped_column(String(20), default="paciente", nullable=False)
+    data_nascimento: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

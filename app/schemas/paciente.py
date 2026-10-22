@@ -1,8 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.data_nascimento import DataNascimento
 from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO, SENHAS_PADRAO_PROIBIDAS
 from app.schemas.diagnostico import DiagnosticoListResponse
 from app.schemas.usuario import TipoUsuario
@@ -15,6 +16,7 @@ class PacienteListItem(BaseModel):
     nome: str
     email: str
     telefone: str | None
+    data_nascimento: date | None
     ativo: bool
     total_diagnosticos: int
     ultimo_diagnostico_em: datetime | None
@@ -55,6 +57,7 @@ class PacienteCreate(BaseModel):
     nome: str = Field(..., min_length=2, max_length=255)
     email: EmailStr
     telefone: str | None = Field(None, max_length=20)
+    data_nascimento: DataNascimento
     senha: str | None = Field(None, min_length=SENHA_TAMANHO_MINIMO)
 
     @field_validator("senha", mode="after")

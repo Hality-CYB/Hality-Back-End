@@ -30,7 +30,12 @@ TREINO_RECUSADO = {"finalidade": "image_training", "versao": "v1", "aceito": Fal
 
 
 def _cadastro(email: str, consentimentos: list[dict] | None) -> dict:
-    corpo = {"email": email, "password": SENHA, "name": "Titular Teste"}
+    corpo = {
+        "email": email,
+        "password": SENHA,
+        "name": "Titular Teste",
+        "data_nascimento": "1990-01-01",
+    }
     if consentimentos is not None:
         corpo["consentimentos"] = consentimentos
     return corpo

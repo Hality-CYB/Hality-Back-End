@@ -38,6 +38,7 @@ async def registrar_paciente(
             name=dados.name,
             email=dados.email,
             phone=dados.phone,
+            data_nascimento=dados.data_nascimento,
             role=TipoUsuario.PACIENTE.value,
             hashed_password=password_helper.hash(dados.password),
         )

@@ -416,6 +416,7 @@ def test_query_de_vinculo_so_considera_vinculo_ativo(cenario: Cenario) -> None:
 _USUARIO = {
     "email": "rbac@hality.com",
     "password": "SenhaSegura123!",
+    "data_nascimento": "1990-01-01",
     "name": "Usuário RBAC",
     "consentimentos": CONSENTIMENTOS_CADASTRO,
 }
