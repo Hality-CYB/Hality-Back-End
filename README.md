@@ -151,26 +151,34 @@ Passo a passo para subir tudo e testar pela interface, com o modelo de inferênc
 real. Pré-requisitos: Docker (Desktop aberto) e Node 20+ para o front.
 
 ```bash
-# 1. carregar a imagem do modelo (uma vez; não está em registry)
+# 1. baixar a imagem do modelo do release (não está em registry) — com gh CLI:
+gh release download v0.2.0 --repo Hality-CYB/Hality-Back-End --pattern "hality-ai.tar"
+```
+
+Sem o `gh`, pela web: abra `https://github.com/Hality-CYB/Hality-Back-End/releases`,
+baixe o `hality-ai.tar` e coloque-o na pasta do projeto. (Ou `curl -L -o hality-ai.tar <URL-do-asset>`.)
+
+```bash
+# 2. carregar a imagem no Docker (uma vez)
 docker load -i hality-ai.tar
 ```
 
 ```bash
-# 2. subir back + banco + modelo (perfil "modelo"); a API espera o modelo aquecer (~40s)
+# 3. subir back + banco + modelo (perfil "modelo"); a API espera o modelo aquecer (~40s)
 HALITY_AI_URL=http://hality-ai:8000 docker compose --profile modelo up -d --build
 ```
 
 ```bash
-# 3. popular o banco com os dados de exemplo (usuários, classificações, conteúdos…)
+# 4. popular o banco com os dados de exemplo (usuários, classificações, conteúdos…)
 docker compose exec api python -m scripts.seed
 ```
 
 ```bash
-# 4. subir o front (em outro terminal), apontando para o back real
+# 5. subir o front (em outro terminal), apontando para o back real
 cd ../hality-front && npm install && npm run dev
 ```
 
-5. Abrir `http://localhost:3000` e entrar com um usuário do seed (senha `hality123`):
+6. Abrir `http://localhost:3000` e entrar com um usuário do seed (senha `hality123`):
    - paciente: `carla.mendes@example.com` — faz o diagnóstico (anamnese → foto da língua → resultado)
    - profissional: `ana.souza@hality.com` · admin: `admin@hality.com`
 
@@ -179,8 +187,9 @@ cd ../hality-front && npm install && npm run dev
 docker compose ps && curl -s http://localhost:8000/api/v1/health
 ```
 
-> Sem o modelo: para testar só o fluxo (sem a imagem `hality-ai`), troque o passo 2 por
-> `docker compose up -d --build` — a API usa o mock e os passos 3–5 seguem iguais.
+> Sem o modelo: para testar só o fluxo (sem baixar/carregar a imagem `hality-ai`), pule os
+> passos 1–2 e troque o passo 3 por `docker compose up -d --build` — a API usa o mock e os
+> passos 4–6 seguem iguais.
 
 
 ### Volumes
