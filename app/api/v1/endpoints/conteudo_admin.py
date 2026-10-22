@@ -99,6 +99,7 @@ async def criar_conteudo(
 async def enviar_midia(
     arquivo: Annotated[UploadFile, File()],
     admin: CurrentAdminMutationDep,
+    db: DbSession,
 ) -> MidiaEnviadaResponse | JSONResponse:
     """Grava a imagem ou o vídeo de um conteúdo e devolve a URL para o bloco.
 
@@ -123,6 +124,9 @@ async def enviar_midia(
         ) from exc
 
     url = await conteudo_storage.salvar(dados, content_type, get_settings().api_v1_prefix)
+
+    # Cada upload aproveita para varrer arquivos órfãos antigos (best effort).
+    await conteudo_service.limpar_midias_orfas(db)
 
     return MidiaEnviadaResponse(url=url, tipo=tipo)
 

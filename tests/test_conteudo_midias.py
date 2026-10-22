@@ -4,6 +4,9 @@ Mesmo esquema das fotos de diagnóstico: o arquivo vai para o storage local e o
 conteúdo guarda a URL. O diretório é trocado por um temporário em cada teste.
 """
 
+import logging
+import os
+import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -15,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.db import conteudo_queries
 from app.db.session import get_db
 from app.main import app
 from app.models import Conteudo
@@ -152,3 +156,67 @@ async def test_arquivo_usado_por_outro_conteudo_nao_e_apagado(http, storage_temp
 
     assert len(list(storage_temporario.iterdir())) == 1
     assert (await http.get(url)).status_code == 200
+
+
+def _nome(url: str) -> str:
+    return url.rsplit("/", 1)[1]
+
+
+async def test_falha_do_storage_depois_do_commit_nao_vira_erro(
+    http, storage_temporario, monkeypatch, caplog
+):
+    primeira = (await _enviar(http)).json()["url"]
+    criado = (await http.post(CONTEUDOS, headers=AUTH, json=_com_midia(primeira))).json()
+    segunda = (await _enviar(http)).json()["url"]
+
+    async def storage_fora(_nome_arquivo: str) -> None:
+        raise OSError("disco indisponível")
+
+    monkeypatch.setattr(conteudo_storage, "remover", storage_fora)
+    caplog.set_level(logging.WARNING, logger="app.services.conteudo_service")
+
+    # A alteração foi gravada: a resposta é a de sucesso, mesmo sem apagar o arquivo.
+    atualizado = await http.patch(
+        f"{CONTEUDOS}/{criado['id']}",
+        headers=AUTH,
+        json={"conteudo": _com_midia(segunda)["conteudo"]},
+    )
+    assert atualizado.status_code == 200
+    assert atualizado.json()["conteudo"]["itens"][0]["url"] == segunda
+    assert (await http.delete(f"{CONTEUDOS}/{criado['id']}", headers=AUTH)).status_code == 204
+
+    # Os arquivos ficaram para a varredura, e a falha foi registrada com o nome.
+    assert {p.name for p in storage_temporario.iterdir()} == {_nome(primeira), _nome(segunda)}
+    assert _nome(primeira) in caplog.text
+
+
+async def test_falha_na_consulta_depois_do_commit_nao_vira_erro(http, monkeypatch):
+    url = (await _enviar(http)).json()["url"]
+    criado = (await http.post(CONTEUDOS, headers=AUTH, json=_com_midia(url))).json()
+
+    async def banco_fora(_db, _nome_arquivo: str) -> bool:
+        raise RuntimeError("conexão perdida")
+
+    monkeypatch.setattr(conteudo_queries, "midia_em_uso", banco_fora)
+
+    assert (await http.delete(f"{CONTEUDOS}/{criado['id']}", headers=AUTH)).status_code == 204
+    assert (await http.get(f"{CONTEUDOS}/{criado['id']}", headers=AUTH)).status_code == 404
+
+
+async def test_varredura_no_upload_apaga_so_orfao_antigo(http, storage_temporario):
+    orfao_antigo = _nome((await _enviar(http)).json()["url"])
+    orfao_recente = _nome((await _enviar(http)).json()["url"])
+    em_uso = (await _enviar(http)).json()["url"]
+    await http.post(CONTEUDOS, headers=AUTH, json=_com_midia(em_uso))
+
+    dois_dias_atras = time.time() - 2 * 24 * 60 * 60
+    for nome in (orfao_antigo, _nome(em_uso)):
+        os.utime(storage_temporario / nome, (dois_dias_atras, dois_dias_atras))
+
+    novo = _nome((await _enviar(http)).json()["url"])
+
+    assert {p.name for p in storage_temporario.iterdir()} == {
+        orfao_recente,
+        _nome(em_uso),
+        novo,
+    }

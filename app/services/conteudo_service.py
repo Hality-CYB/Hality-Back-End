@@ -1,5 +1,6 @@
+import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +22,12 @@ from app.schemas.conteudo import (
 )
 from app.services import conteudo_storage
 
+logger = logging.getLogger(__name__)
+
 LIMITE_MAXIMO = 50
+# Arquivo sem conteúdo apontando só sai na varredura depois deste tempo, para
+# não apagar o upload de quem ainda está preenchendo o formulário.
+IDADE_MINIMA_MIDIA_ORFA = timedelta(hours=24)
 TAMANHO_MAXIMO_BUSCA = 100
 ORDENS_LISTAGEM = set(OrdemConteudo)
 
@@ -382,8 +388,35 @@ async def deletar(
 async def _remover_midias_orfas(db: AsyncSession, nomes: set[str]) -> None:
     """Apaga os arquivos que saíram do conteúdo, se nenhum outro ainda os usa.
 
-    Roda depois do commit: se a gravação falhar, nenhum arquivo é perdido.
+    Roda depois do commit: se a gravação falhar, nenhum arquivo é perdido. É
+    best effort: a alteração já está gravada, então uma falha aqui (consulta ou
+    storage) não pode virar erro para o cliente. O arquivo fica no disco e sai
+    na próxima varredura (`limpar_midias_orfas`).
     """
     for nome in nomes:
-        if not await conteudo_queries.midia_em_uso(db, nome):
-            await conteudo_storage.remover(nome)
+        try:
+            if not await conteudo_queries.midia_em_uso(db, nome):
+                await conteudo_storage.remover(nome)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "falha ao remover mídia órfã de conteúdo arquivo=%s; fica para a próxima varredura",
+                nome,
+                exc_info=True,
+            )
+
+
+async def limpar_midias_orfas(db: AsyncSession) -> None:
+    """Varredura: apaga arquivos que nenhum conteúdo usa, com mais de 24 h.
+
+    Pega o que uma limpeza anterior não conseguiu apagar e os uploads que
+    nunca chegaram a ser salvos num conteúdo. Também é best effort.
+    """
+    try:
+        nomes = await conteudo_storage.arquivos_anteriores_a(
+            datetime.now(UTC) - IDADE_MINIMA_MIDIA_ORFA
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("falha ao listar mídias de conteúdo para a varredura", exc_info=True)
+        return
+
+    await _remover_midias_orfas(db, set(nomes))

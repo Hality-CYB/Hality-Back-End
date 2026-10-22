@@ -7,6 +7,7 @@ feita aqui e no `diagnostico_storage`, sem mudar as URLs.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -121,6 +122,21 @@ def nomes_no_conteudo(conteudo: dict[str, Any] | None) -> set[str]:
             nomes.add(nome)
 
     return nomes
+
+
+async def arquivos_anteriores_a(limite: datetime) -> list[str]:
+    """Nomes dos arquivos gravados antes de `limite` (pela data de modificação)."""
+
+    def _listar() -> list[str]:
+        if not _STORAGE_DIR.is_dir():
+            return []
+        return [
+            caminho.name
+            for caminho in _STORAGE_DIR.iterdir()
+            if caminho.is_file() and datetime.fromtimestamp(caminho.stat().st_mtime, UTC) < limite
+        ]
+
+    return await asyncio.to_thread(_listar)
 
 
 async def remover(nome_arquivo: str) -> None:
