@@ -1,8 +1,9 @@
 """data de nascimento do paciente
 
 A coluna fica opcional no banco (profissional e admin não têm), mas é
-obrigatória no cadastro de paciente. Usuários que já existem recebem uma data
-qualquer (1990-01-01), a pedido do time, para não ficarem sem o dado.
+obrigatória no cadastro de paciente. Usuários que já existem ficam sem a data:
+uma data inventada seria indistinguível de uma real e viraria a única idade do
+paciente. O paciente antigo informa a data pelo perfil.
 
 Revision ID: 2e3f4a5b6c7d
 Revises: 1d2e3f4a5b6c
@@ -22,7 +23,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column("users", sa.Column("data_nascimento", sa.Date(), nullable=True))
-    op.execute("UPDATE users SET data_nascimento = DATE '1990-01-01' WHERE data_nascimento IS NULL")
 
 
 def downgrade() -> None:
