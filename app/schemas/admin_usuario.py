@@ -6,12 +6,8 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.core.senha import SenhaNova
 from app.schemas.usuario import TipoUsuario
-
-SENHA_TAMANHO_MINIMO = 8
-SENHAS_PADRAO_PROIBIDAS: frozenset[str] = frozenset(
-    {"hality1234", "senha123", "12345678", "password", "admin123"}
-)
 
 
 class _PayloadAdmin(BaseModel):
@@ -29,18 +25,9 @@ class AdminUsuarioCreate(_PayloadAdmin):
     email: EmailStr
     telefone: str | None = Field(None, max_length=20)
     role: TipoUsuario
-    senha: str | None = Field(None, min_length=SENHA_TAMANHO_MINIMO)
+    senha: SenhaNova | None = None
     enviar_convite: bool = True
     profissional: ProfissionalDados | None = None
-
-    @field_validator("senha", mode="after")
-    @classmethod
-    def _validar_senha(cls, valor: str | None) -> str | None:
-        if valor is None:
-            return None
-        if valor.strip().lower() in SENHAS_PADRAO_PROIBIDAS:
-            raise ValueError("senha padrão não é permitida")
-        return valor
 
     @model_validator(mode="after")
     def _profissional_so_para_role_profissional(self) -> Self:
