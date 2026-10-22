@@ -1,6 +1,8 @@
+from email.utils import parseaddr
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-from pydantic import SecretStr, ValidationInfo, field_validator
+from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BOOLEANOS_VERDADEIROS = {"1", "true", "yes", "on"}
@@ -62,9 +64,56 @@ class Settings(BaseSettings):
     identity_token_expire_minutes: int = 60
     identity_token_base_url: str = "http://localhost:3000"
     email_provider: str = "noop"
+    resend_api_key: SecretStr | None = None
+    resend_from_email: str | None = None
+    resend_test_recipient: str | None = None
     identity_recovery_rate_limit: int = 5
     identity_recovery_rate_window_seconds: int = 60
     identity_worker_poll_seconds: int = 5
+
+    @model_validator(mode="after")
+    def validar_entrega_de_email(self) -> "Settings":
+        if self.environment not in {"development", "test", "production"}:
+            raise ValueError("ENVIRONMENT deve ser development, test ou production")
+        if self.email_provider not in {"noop", "resend"}:
+            raise ValueError("EMAIL_PROVIDER deve ser noop ou resend")
+        if self.environment == "production":
+            if self.email_provider != "resend":
+                raise ValueError("EMAIL_PROVIDER deve ser resend em production")
+            url = urlsplit(self.identity_token_base_url)
+            if (
+                url.scheme != "https"
+                or not url.hostname
+                or url.hostname in {"localhost", "127.0.0.1", "::1"}
+            ):
+                raise ValueError("IDENTITY_TOKEN_BASE_URL deve ser HTTPS público em production")
+            if url.path not in {"", "/"} or url.query or url.fragment or url.username:
+                raise ValueError("IDENTITY_TOKEN_BASE_URL deve apontar para a raiz do frontend")
+            if self.resend_test_recipient:
+                raise ValueError("RESEND_TEST_RECIPIENT não pode ser definido em production")
+            if self.resend_from_email and parseaddr(self.resend_from_email)[1].lower().endswith(
+                "@resend.dev"
+            ):
+                raise ValueError("RESEND_FROM_EMAIL precisa usar domínio verificado em production")
+        if self.email_provider == "resend":
+            if not self.resend_api_key or not self.resend_api_key.get_secret_value():
+                raise ValueError("RESEND_API_KEY é obrigatória para EMAIL_PROVIDER=resend")
+            if not self.resend_from_email or "@" not in parseaddr(self.resend_from_email)[1]:
+                raise ValueError("RESEND_FROM_EMAIL é obrigatório para EMAIL_PROVIDER=resend")
+            sandbox_sender = parseaddr(self.resend_from_email)[1].lower().endswith("@resend.dev")
+            if sandbox_sender and not self.resend_test_recipient:
+                raise ValueError("RESEND_TEST_RECIPIENT é obrigatório com remetente de testes")
+        else:
+            sandbox_sender = False
+        if self.resend_test_recipient and (
+            self.environment != "development"
+            or self.email_provider != "resend"
+            or not sandbox_sender
+        ):
+            raise ValueError(
+                "RESEND_TEST_RECIPIENT só é permitido em development com remetente de testes"
+            )
+        return self
 
     # Login com Google (US-012). Tudo opcional: sem as quatro variáveis o fluxo
     # fica desligado (503) e o restante da API não é afetado. O client secret

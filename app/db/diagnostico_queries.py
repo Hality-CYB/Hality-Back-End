@@ -844,9 +844,6 @@ async def inserir_revisao(
     # Revisado por um profissional: é o status que diz isso nos payloads.
     diagnostico.status = "concluido"
 
-    await db.commit()
-    await db.refresh(revisao)
-
     return revisao
 
 

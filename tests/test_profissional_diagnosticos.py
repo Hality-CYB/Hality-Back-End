@@ -31,6 +31,9 @@ from app.models import (
     ClassificacaoDiagnostico,
     Diagnostico,
     DiagnosticoRevisao,
+    EmailOutbox,
+    IdentityAction,
+    IdentityRateLimit,
     Imagem,
     PacienteProfissional,
     Profissional,
@@ -70,6 +73,9 @@ DATA_BASE = datetime(
 
 TABELAS = [
     User.__table__,
+    IdentityAction.__table__,
+    EmailOutbox.__table__,
+    IdentityRateLimit.__table__,
     Profissional.__table__,
     PacienteProfissional.__table__,
     Anamnese.__table__,
@@ -971,6 +977,10 @@ async def test_revisao_marca_diagnostico_como_concluido(
         atual = await db.get(Diagnostico, d2.id)
 
         assert atual.status == "concluido"
+        notificacao = await db.scalar(select(EmailOutbox).where(EmailOutbox.review_id.is_not(None)))
+        assert notificacao is not None
+        assert notificacao.recipient_email == "paciente.a@hality.local"
+        assert notificacao.status == "queued"
 
     detalhe = await http.get(f"{BASE}/{d2.id}")
 
@@ -1074,6 +1084,27 @@ async def test_segunda_revisao_preserva_historico(
     ]
 
     assert corpo["revisao"]["classificacao"]["codigo"] == "mau_halito_social"
+
+    from app.services.identity_token_service import EXPIRED, dispatch_pending_emails
+
+    mensagens = []
+
+    class Provider:
+        async def send(self, message) -> None:
+            mensagens.append(message)
+
+    async with session_factory() as db:
+        assert await dispatch_pending_emails(db, Provider()) == 1
+        notificacoes = list(
+            await db.scalars(select(EmailOutbox).order_by(EmailOutbox.created_at, EmailOutbox.id))
+        )
+        assert len(notificacoes) == 2
+        assert {item.status for item in notificacoes} == {"sent", EXPIRED}
+    assert mensagens[0].review_result == "Social"
+    assert mensagens[0].professional_name == "Profissional A"
+    assert mensagens[0].professional_specialty == "Periodontia"
+    assert mensagens[0].recipient == "paciente.a@hality.local"
+    assert mensagens[0].token_url.endswith(f"/paciente/diagnosticos/{d1.id}")
 
 
 async def test_version_desatualizada_retorna_409(

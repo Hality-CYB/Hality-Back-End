@@ -17,6 +17,7 @@ from app.core.erros_diagnostico import erro_publico
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
+from app.models.identity_action import EmailOutbox
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
     AdminDiagnosticoDetalhe,
@@ -1020,6 +1021,21 @@ async def revisar_diagnostico_profissional(
     if revisao is None:
         await db.rollback()
         raise DiagnosticoRevisaoConflitoError
+
+    paciente = await db.get(User, diagnostico.paciente_id)
+    if paciente is None:
+        await db.rollback()
+        raise RuntimeError("paciente da revisão não encontrado")
+    db.add(
+        EmailOutbox(
+            review_id=revisao.id,
+            recipient_email=paciente.email,
+            purpose="diagnostic_review",
+            status="queued",
+            correlation_id=uuid.uuid4().hex,
+        )
+    )
+    await db.commit()
 
     detalhe = await diagnostico_queries.buscar_ultima_revisao(
         db,
