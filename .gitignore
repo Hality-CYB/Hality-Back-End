@@ -46,3 +46,6 @@ htmlcov/
 
 # Local storage (uploaded images)
 .data/
+
+# Imagem Docker do modelo de inferência (grande; carregada com `docker load`)
+hality-ai.tar

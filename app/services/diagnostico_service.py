@@ -60,7 +60,7 @@ from app.schemas.profissional_diagnostico import (
     RevisaoProfissionalResponse,
     RevisaoProfissionalResumo,
 )
-from app.services import consentimento_service, diagnostico_mock, diagnostico_storage
+from app.services import consentimento_service, diagnostico_provider, diagnostico_storage
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
@@ -563,7 +563,7 @@ async def obter_diagnostico(
     ):
         raise DiagnosticoAcessoNegadoError
 
-    diagnostico = await diagnostico_mock.processar_se_necessario(
+    diagnostico = await diagnostico_provider.processar_se_necessario(
         db,
         diagnostico,
     )

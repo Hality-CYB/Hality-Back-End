@@ -871,6 +871,32 @@ async def concluir_mock(
     return diagnostico
 
 
+async def concluir_modelo(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    classificacao_id: int,
+    escala_saburra: int | None,
+    confianca_ia: float | None,
+    provider: str,
+    versao: str | None,
+) -> Diagnostico:
+    diagnostico.classificacao_id = classificacao_id
+    diagnostico.escala_saburra = escala_saburra
+    diagnostico.confianca_ia = confianca_ia
+    diagnostico.origem_resultado = OrigemResultado.MODELO.value
+    diagnostico.modelo_provider = provider
+    diagnostico.modelo_versao = versao
+    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
+    diagnostico.status = StatusDiagnostico.AGUARDANDO_REVISAO.value
+    diagnostico.erro_codigo = None
+    diagnostico.erro = None
+
+    await db.commit()
+    await db.refresh(diagnostico)
+
+    return diagnostico
+
+
 async def marcar_falha(
     db: AsyncSession,
     diagnostico: Diagnostico,

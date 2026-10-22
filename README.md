@@ -182,8 +182,20 @@ O `docker-compose.yml` sobe **banco + API** juntos: o Postgres (`db`) e a API bu
 
 ```bash
 # buildar e subir banco + API (mesmo comando em qualquer SO)
+# Sem o modelo de inferência: a API usa o mock de desenvolvimento.
 docker compose up -d --build
 ```
+
+```bash
+# (opcional) subir TAMBÉM o modelo de inferência real (serviço hality-ai).
+# Precisa da imagem carregada uma vez (não está em registry):
+docker load -i hality-ai.tar
+HALITY_AI_URL=http://hality-ai:8000 docker compose --profile modelo up -d --build
+```
+
+> O serviço `hality-ai` é opcional (perfil `modelo`): sem ele, `docker compose up`
+> normal sobe só banco + API e o diagnóstico usa o mock. Com o perfil e a variável
+> `HALITY_AI_URL`, a API passa a chamar o modelo real e aguarda ele ficar pronto.
 
 ```bash
 # acompanhar os logs da API (ex.: conferir se as migrations rodaram)
@@ -199,6 +211,53 @@ docker compose exec api python -m scripts.seed
 # derrubar os containers (adicione -v para também apagar os volumes: banco e imagens enviadas)
 docker compose down
 ```
+
+### Rodar a aplicação completa (back + front) para testar
+
+Passo a passo para subir tudo e testar pela interface, com o modelo de inferência
+real. Pré-requisitos: Docker (Desktop aberto) e Node 20+ para o front.
+
+```bash
+# 1. baixar a imagem do modelo do release (não está em registry) — com gh CLI:
+gh release download v0.2.0 --repo Hality-CYB/Hality-Back-End --pattern "hality-ai.tar"
+```
+
+Sem o `gh`, pela web: abra `https://github.com/Hality-CYB/Hality-Back-End/releases`,
+baixe o `hality-ai.tar` e coloque-o na pasta do projeto. (Ou `curl -L -o hality-ai.tar <URL-do-asset>`.)
+
+```bash
+# 2. carregar a imagem no Docker (uma vez)
+docker load -i hality-ai.tar
+```
+
+```bash
+# 3. subir back + banco + modelo (perfil "modelo"); a API espera o modelo aquecer (~40s)
+HALITY_AI_URL=http://hality-ai:8000 docker compose --profile modelo up -d --build
+```
+
+```bash
+# 4. popular o banco com os dados de exemplo (usuários, classificações, conteúdos…)
+docker compose exec api python -m scripts.seed
+```
+
+```bash
+# 5. subir o front (em outro terminal), apontando para o back real
+cd ../hality-front && npm install && npm run dev
+```
+
+6. Abrir `http://localhost:3000` e entrar com um usuário do seed (senha `hality123`):
+   - paciente: `carla.mendes@example.com` — faz o diagnóstico (anamnese → foto da língua → resultado)
+   - profissional: `ana.souza@hality.com` · admin: `admin@hality.com`
+
+```bash
+# conferir a saúde do back e dos serviços
+docker compose ps && curl -s http://localhost:8000/api/v1/health
+```
+
+> Sem o modelo: para testar só o fluxo (sem baixar/carregar a imagem `hality-ai`), pule os
+> passos 1–2 e troque o passo 3 por `docker compose up -d --build` — a API usa o mock e os
+> passos 4–6 seguem iguais.
+
 
 ### Volumes
 
