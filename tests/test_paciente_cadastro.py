@@ -142,6 +142,15 @@ def test_paciente_aceita_convite_com_nova_senha_e_consentimentos(
     )
     assert resp_padrao.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
+    # Sem decidir os consentimentos: código estável para o front mostrar os termos,
+    # e o convite continua valendo.
+    sem_consentimento = client.post(
+        "/api/v1/auth/invitation/confirm",
+        json={"token": token, "senha": "NovaSenhaSegura123!"},
+    )
+    assert sem_consentimento.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert sem_consentimento.json()["detail"] == "CONSENTIMENTO_OBRIGATORIO"
+
     # Aceite válido com consentimento obrigatório de dados de saúde
     aceite = client.post(
         "/api/v1/auth/invitation/confirm",

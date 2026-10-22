@@ -1,10 +1,10 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.core.data_nascimento import DataNascimento
-from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO, SENHAS_PADRAO_PROIBIDAS
+from app.core.senha import SenhaNova
 from app.schemas.diagnostico import DiagnosticoListResponse
 from app.schemas.usuario import TipoUsuario
 
@@ -58,16 +58,7 @@ class PacienteCreate(BaseModel):
     email: EmailStr
     telefone: str | None = Field(None, max_length=20)
     data_nascimento: DataNascimento
-    senha: str | None = Field(None, min_length=SENHA_TAMANHO_MINIMO)
-
-    @field_validator("senha", mode="after")
-    @classmethod
-    def _validar_senha(cls, valor: str | None) -> str | None:
-        if valor is None:
-            return None
-        if valor.strip().lower() in SENHAS_PADRAO_PROIBIDAS:
-            raise ValueError("senha padrão não é permitida")
-        return valor
+    senha: SenhaNova | None = None
 
 
 class PacienteCreateResponse(BaseModel):
