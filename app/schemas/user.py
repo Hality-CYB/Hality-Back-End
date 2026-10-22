@@ -6,7 +6,7 @@ from fastapi_users import schemas
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.consentimentos import Finalidade
-from app.schemas.admin_usuario import SENHA_TAMANHO_MINIMO
+from app.core.senha import SenhaNova
 from app.schemas.consentimento import DecisaoConsentimento
 from app.schemas.profissionais import ProfissionalPerfilRead, ProfissionalPerfilUpdate
 
@@ -27,6 +27,7 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
 class UserCreate(schemas.BaseUserCreate):
     """Dados enviados no cadastro de um novo usuário."""
 
+    password: SenhaNova
     name: str = Field(..., min_length=2, max_length=255, examples=["Maria Silva"])
     phone: str | None = Field(None, max_length=20, examples=["(11) 99999-9999"])
 
@@ -70,4 +71,4 @@ class PasswordUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     senha_atual: str = Field(..., min_length=1)
-    nova_senha: str = Field(..., min_length=SENHA_TAMANHO_MINIMO)
+    nova_senha: SenhaNova

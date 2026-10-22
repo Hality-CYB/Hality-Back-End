@@ -252,9 +252,11 @@ async def invitation_confirm(
         ) from exc
     # Mesmas respostas do `/auth/register`: sem isso as duas últimas viram 500.
     except consentimento_service.TratamentoObrigatorioError as exc:
+        # Código estável (como TOKEN_DE_CONVITE_INVALIDO): o front mostra os termos ao
+        # receber este código, sem depender do texto da mensagem.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="o consentimento para tratamento de dados de saúde é obrigatório",
+            detail="CONSENTIMENTO_OBRIGATORIO",
         ) from exc
     except consentimento_service.DecisaoDuplicadaError as exc:
         raise HTTPException(
