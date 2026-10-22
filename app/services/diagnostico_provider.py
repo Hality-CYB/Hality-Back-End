@@ -153,9 +153,7 @@ async def processar_se_necessario(
             diagnostico,
             origem=OrigemResultado.MODELO,
             erro_codigo=CodigoErroDiagnostico.CLASSIFICACAO_NAO_CONFIGURADA,
-            erro_interno=(
-                f"classificação '{mapeado.classificacao_codigo}' não cadastrada"
-            ),
+            erro_interno=(f"classificação '{mapeado.classificacao_codigo}' não cadastrada"),
         )
 
     return await diagnostico_queries.concluir_modelo(

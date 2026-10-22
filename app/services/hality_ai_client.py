@@ -71,9 +71,7 @@ async def analisar(
         raise HalityAIError(f"falha de rede ao chamar hality-ai: {exc}") from exc
 
     if resposta.status_code >= 400:
-        raise HalityAIError(
-            f"hality-ai respondeu {resposta.status_code}: {resposta.text[:200]}"
-        )
+        raise HalityAIError(f"hality-ai respondeu {resposta.status_code}: {resposta.text[:200]}")
 
     try:
         corpo = resposta.json()
