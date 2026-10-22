@@ -60,6 +60,8 @@ class UserUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=2, max_length=255)
     phone: str | None = Field(None, max_length=20)
+    # Só paciente; o service recusa para os outros papéis.
+    data_nascimento: DataNascimento | None = None
     profissional: ProfissionalPerfilUpdate | None = None
 
     @model_validator(mode="after")
@@ -68,6 +70,9 @@ class UserUpdate(BaseModel):
         # a coluna é NOT NULL.
         if "name" in self.model_fields_set and self.name is None:
             raise ValueError("name não pode ser nulo")
+        # Obrigatória para paciente: dá para trocar, não para apagar.
+        if "data_nascimento" in self.model_fields_set and self.data_nascimento is None:
+            raise ValueError("data_nascimento não pode ser nula")
         return self
 
 

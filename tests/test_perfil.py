@@ -345,3 +345,43 @@ async def test_token_expirado_retorna_401_e_nao_altera(
 async def test_patch_me_sem_token_retorna_401(client: AsyncClient) -> None:
     response = await client.patch(ME_URL, json={"name": "Nome Novo"})
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Data de nascimento — só paciente edita, e não pode apagar
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_paciente_altera_a_propria_data_de_nascimento(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _registrar_e_logar(client, db_session, "nasc@hality.com")
+
+    response = await client.patch(ME_URL, headers=headers, json={"data_nascimento": "1985-02-10"})
+
+    assert response.status_code == 200
+    assert response.json()["data_nascimento"] == "1985-02-10"
+    assert (await client.get(ME_URL, headers=headers)).json()["data_nascimento"] == "1985-02-10"
+
+
+@pytest.mark.asyncio
+async def test_data_de_nascimento_nao_pode_ser_apagada_nem_futura(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _registrar_e_logar(client, db_session, "nasc2@hality.com")
+
+    for valor in (None, "2999-01-01"):
+        response = await client.patch(ME_URL, headers=headers, json={"data_nascimento": valor})
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_profissional_nao_envia_data_de_nascimento(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await _registrar_e_logar(client, db_session, "nasc3@hality.com", role="profissional")
+
+    response = await client.patch(ME_URL, headers=headers, json={"data_nascimento": "1985-02-10"})
+
+    assert response.status_code == 403
