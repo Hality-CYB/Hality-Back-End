@@ -1,5 +1,6 @@
+import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,8 +20,14 @@ from app.schemas.conteudo import (
     _validar_conteudo_publico,
     _validar_destinos_classificacoes,
 )
+from app.services import conteudo_storage
+
+logger = logging.getLogger(__name__)
 
 LIMITE_MAXIMO = 50
+# Arquivo sem conteúdo apontando só sai na varredura depois deste tempo, para
+# não apagar o upload de quem ainda está preenchendo o formulário.
+IDADE_MINIMA_MIDIA_ORFA = timedelta(hours=24)
 TAMANHO_MAXIMO_BUSCA = 100
 ORDENS_LISTAGEM = set(OrdemConteudo)
 
@@ -251,6 +258,8 @@ async def atualizar(
     if conteudo is None:
         raise ConteudoNaoEncontradoError
 
+    midias_antes = conteudo_storage.nomes_no_conteudo(conteudo.conteudo)
+
     alteracoes = payload.model_dump(
         mode="json",
         exclude_unset=True,
@@ -323,6 +332,11 @@ async def atualizar(
         )
         await db.commit()
 
+    await _remover_midias_orfas(
+        db,
+        midias_antes - conteudo_storage.nomes_no_conteudo(atualizado.conteudo),
+    )
+
     return _para_detalhe(atualizado)
 
 
@@ -339,6 +353,8 @@ async def deletar(
 
     if conteudo is None:
         raise ConteudoNaoEncontradoError
+
+    midias = conteudo_storage.nomes_no_conteudo(conteudo.conteudo)
 
     if actor is not None:
         await auditoria_queries.validar_chave_operacao(
@@ -365,3 +381,42 @@ async def deletar(
             operation_key=operation_key,
         )
         await db.commit()
+
+    await _remover_midias_orfas(db, midias)
+
+
+async def _remover_midias_orfas(db: AsyncSession, nomes: set[str]) -> None:
+    """Apaga os arquivos que saíram do conteúdo, se nenhum outro ainda os usa.
+
+    Roda depois do commit: se a gravação falhar, nenhum arquivo é perdido. É
+    best effort: a alteração já está gravada, então uma falha aqui (consulta ou
+    storage) não pode virar erro para o cliente. O arquivo fica no disco e sai
+    na próxima varredura (`limpar_midias_orfas`).
+    """
+    for nome in nomes:
+        try:
+            if not await conteudo_queries.midia_em_uso(db, nome):
+                await conteudo_storage.remover(nome)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "falha ao remover mídia órfã de conteúdo arquivo=%s; fica para a próxima varredura",
+                nome,
+                exc_info=True,
+            )
+
+
+async def limpar_midias_orfas(db: AsyncSession) -> None:
+    """Varredura: apaga arquivos que nenhum conteúdo usa, com mais de 24 h.
+
+    Pega o que uma limpeza anterior não conseguiu apagar e os uploads que
+    nunca chegaram a ser salvos num conteúdo. Também é best effort.
+    """
+    try:
+        nomes = await conteudo_storage.arquivos_anteriores_a(
+            datetime.now(UTC) - IDADE_MINIMA_MIDIA_ORFA
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("falha ao listar mídias de conteúdo para a varredura", exc_info=True)
+        return
+
+    await _remover_midias_orfas(db, set(nomes))
