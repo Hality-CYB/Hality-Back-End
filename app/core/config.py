@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     identity_recovery_rate_window_seconds: int = 60
     identity_worker_poll_seconds: int = 5
 
+    # Modelo de inferência (API hality-ai). Vazio/None = usa o mock de
+    # desenvolvimento (diagnostico_mock). No compose é o nome do serviço na rede
+    # interna (http://hality-ai:8000); fora do Docker, http://localhost:8000.
+    hality_ai_url: str | None = None
+    # A API carrega os modelos e roda 5 passagens por foto; dá folga ao timeout.
+    hality_ai_timeout_seconds: float = 30.0
+
     # Login com Google (US-012). Tudo opcional: sem as quatro variáveis o fluxo
     # fica desligado (503) e o restante da API não é afetado. O client secret
     # só existe aqui, no backend — nunca vai para o frontend.
