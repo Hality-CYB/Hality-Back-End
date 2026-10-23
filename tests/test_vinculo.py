@@ -357,6 +357,7 @@ def test_paciente_do_registro_publico_pode_ser_vinculado(cenario_admin: CenarioA
         json={
             "email": email,
             "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
             "name": "Paciente Registrado",
             "consentimentos": CONSENTIMENTOS_CADASTRO,
         },

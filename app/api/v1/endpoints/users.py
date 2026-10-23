@@ -34,6 +34,12 @@ async def atualizar_perfil(dados: UserUpdate, user: CurrentUser, db: DbSession) 
             detail="dados profissionais restritos a profissionais",
         ) from exc
 
+    except perfil_service.DataNascimentoNaoPermitidaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="data de nascimento restrita a pacientes",
+        ) from exc
+
 
 @router.patch("/me/senha", status_code=status.HTTP_204_NO_CONTENT, name="users:change_password")
 async def atualizar_senha(dados: PasswordUpdate, user: CurrentUser, db: DbSession) -> None:

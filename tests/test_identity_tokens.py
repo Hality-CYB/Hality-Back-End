@@ -38,6 +38,7 @@ async def test_recovery_has_resposta_uniforme_e_enfileira_apenas_hash(
     payload = {
         "email": "recuperacao@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Pessoa",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -65,6 +66,7 @@ async def test_recovery_rate_limit_mantem_resposta_publica(client: AsyncClient) 
         json={
             "email": email,
             "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
             "name": "Pessoa",
             "consentimentos": CONSENTIMENTOS_CADASTRO,
         },
@@ -83,6 +85,7 @@ async def test_confirmacao_consume_uma_vez_e_invalida_refresh(
     payload = {
         "email": "reset@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Pessoa",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -119,6 +122,7 @@ async def test_confirmacao_de_convite_publica(
         json={
             "email": email,
             "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
             "name": "Pessoa",
             "consentimentos": CONSENTIMENTOS_CADASTRO,
         },
@@ -155,6 +159,7 @@ async def test_convite_bloqueia_login_e_recuperacao_ate_confirmacao(
         json={
             "email": email,
             "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
             "name": "Pessoa",
             "consentimentos": CONSENTIMENTOS_CADASTRO,
         },

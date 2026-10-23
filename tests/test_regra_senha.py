@@ -34,7 +34,7 @@ def test_aceita_senha_com_maiuscula_minuscula_e_numero() -> None:
 # Um construtor por ponto de entrada que define senha nova.
 PONTOS_DE_ENTRADA = {
     "cadastro público": lambda senha: RegistroCreate(
-        email="a@hality.com", password=senha, name="Ana"
+        email="a@hality.com", password=senha, name="Ana", data_nascimento="1990-01-01"
     ),
     "troca no perfil": lambda senha: PasswordUpdate(senha_atual="x", nova_senha=senha),
     "redefinição": lambda senha: PasswordRecoveryConfirm(token=TOKEN, senha=senha),
@@ -43,7 +43,7 @@ PONTOS_DE_ENTRADA = {
         nome="Ana", email="a@hality.com", role="paciente", senha=senha
     ),
     "cadastro pelo profissional": lambda senha: PacienteCreate(
-        nome="Ana", email="a@hality.com", senha=senha
+        nome="Ana", email="a@hality.com", senha=senha, data_nascimento="1990-01-01"
     ),
 }
 
@@ -59,4 +59,6 @@ def test_todo_ponto_de_entrada_aplica_a_regra(ponto: str) -> None:
 
 def test_senha_continua_opcional_onde_o_convite_substitui() -> None:
     assert AdminUsuarioCreate(nome="Ana", email="a@hality.com", role="paciente").senha is None
-    assert PacienteCreate(nome="Ana", email="a@hality.com").senha is None
+    assert (
+        PacienteCreate(nome="Ana", email="a@hality.com", data_nascimento="1990-01-01").senha is None
+    )

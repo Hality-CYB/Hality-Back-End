@@ -47,9 +47,9 @@ services:
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
-      # Vazio = usa o mock (padrão). Preenchido = usa o modelo real. A var de
-      # ambiente HALITY_AI_URL (ver comando no serviço hality-ai) controla isso,
-      # e sobrepõe o valor do .env mesmo quando ausente, mantendo o padrão seguro.
+      # Vazio = usa o mock (padrão). Preenchido = usa o modelo real. Vem da var
+      # de ambiente HALITY_AI_URL ou, na falta dela, do HALITY_AI_URL do .env
+      # (ver comando no serviço hality-ai). Sem nenhum dos dois, fica vazio.
       HALITY_AI_URL: ${HALITY_AI_URL:-}
     ports:
       - "8000:8000"
