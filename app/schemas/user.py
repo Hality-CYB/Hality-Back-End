@@ -1,11 +1,13 @@
 """Schemas Pydantic para autenticação e dados de usuário."""
 
 import uuid
+from datetime import date
 
 from fastapi_users import schemas
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.consentimentos import Finalidade
+from app.core.data_nascimento import DataNascimento
 from app.core.senha import SenhaNova
 from app.schemas.consentimento import DecisaoConsentimento
 from app.schemas.profissionais import ProfissionalPerfilRead, ProfissionalPerfilUpdate
@@ -21,6 +23,7 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     name: str
     phone: str | None = None
     role: str
+    data_nascimento: date | None = None
     profissional: ProfissionalPerfilRead | None = None
 
 
@@ -39,6 +42,7 @@ class RegistroCreate(UserCreate):
     exige o aceite do tratamento de dados de saúde na versão vigente do termo.
     """
 
+    data_nascimento: DataNascimento
     consentimentos: list[DecisaoConsentimento] = Field(
         default_factory=list, max_length=len(Finalidade)
     )
@@ -56,6 +60,8 @@ class UserUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=2, max_length=255)
     phone: str | None = Field(None, max_length=20)
+    # Só paciente; o service recusa para os outros papéis.
+    data_nascimento: DataNascimento | None = None
     profissional: ProfissionalPerfilUpdate | None = None
 
     @model_validator(mode="after")
@@ -64,6 +70,9 @@ class UserUpdate(BaseModel):
         # a coluna é NOT NULL.
         if "name" in self.model_fields_set and self.name is None:
             raise ValueError("name não pode ser nulo")
+        # Obrigatória para paciente: dá para trocar, não para apagar.
+        if "data_nascimento" in self.model_fields_set and self.data_nascimento is None:
+            raise ValueError("data_nascimento não pode ser nula")
         return self
 
 

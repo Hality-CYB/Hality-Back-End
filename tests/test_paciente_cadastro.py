@@ -26,6 +26,7 @@ def _payload(cenario: CenarioAdmin, **extras: Any) -> dict[str, Any]:
         "nome": "Paciente Novo",
         "email": cenario.email("novo"),
         "telefone": "(51) 98888-7777",
+        "data_nascimento": "1990-01-01",
         **extras,
     }
 

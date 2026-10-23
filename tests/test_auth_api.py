@@ -25,6 +25,7 @@ REFRESH_COOKIE_NAME = "refresh_token"
 _DEFAULT_USER = {
     "email": "mariana@hality.com",
     "password": "SenhaSegura123!",
+    "data_nascimento": "1990-01-01",
     "name": "Mariana Oliveira",
     "phone": "(11) 97777-6666",
     "consentimentos": CONSENTIMENTOS_CADASTRO,
@@ -72,6 +73,7 @@ async def test_register_patient_duplicate_email(client: AsyncClient) -> None:
     payload = {
         "email": "dup@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Dup User",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -99,6 +101,7 @@ async def test_login_success(client: AsyncClient) -> None:
     user = {
         "email": "lucas@hality.com",
         "password": "SenhaCorreta123!",
+        "data_nascimento": "1990-01-01",
         "name": "Lucas Santos",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -147,6 +150,7 @@ async def test_get_me_success(client: AsyncClient) -> None:
     user = {
         "email": "renata@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Renata Costa",
         "phone": "(11) 95555-4444",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
@@ -229,6 +233,7 @@ async def test_refresh_success(client: AsyncClient) -> None:
     user = {
         "email": "paulo@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Paulo Reis",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -253,6 +258,7 @@ async def test_refresh_rotacao_invalida_cookie_antigo(client: AsyncClient) -> No
     user = {
         "email": "sofia@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Sofia Lima",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
@@ -290,6 +296,7 @@ async def test_logout_invalida_refresh_token(client: AsyncClient) -> None:
     user = {
         "email": "bianca@hality.com",
         "password": "SenhaSegura123!",
+        "data_nascimento": "1990-01-01",
         "name": "Bianca Alves",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }

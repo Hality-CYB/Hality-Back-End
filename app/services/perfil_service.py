@@ -21,6 +21,10 @@ class DadosProfissionaisNaoPermitidosError(Exception):
     pass
 
 
+class DataNascimentoNaoPermitidaError(Exception):
+    pass
+
+
 class SenhaAtualInvalidaError(Exception):
     pass
 
@@ -56,6 +60,9 @@ async def atualizar_perfil(db: AsyncSession, user: User, dados: UserUpdate) -> U
 
     if alteracoes_profissional and not tem_papel(user, TipoUsuario.PROFISSIONAL):
         raise DadosProfissionaisNaoPermitidosError
+
+    if "data_nascimento" in alteracoes and not tem_papel(user, TipoUsuario.PACIENTE):
+        raise DataNascimentoNaoPermitidaError
 
     for campo, valor in alteracoes.items():
         setattr(user, campo, valor)
