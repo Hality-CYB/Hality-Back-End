@@ -49,6 +49,73 @@ curl http://localhost:8000/api/v1/health/db  # {"status":"ok",...}      — API 
 
 O `/health/db` executa um `SELECT 1` de verdade no Postgres. Se ele responder `503 database unavailable`, o problema é conexão com o banco (container no ar? `.env` correto?), não a API.
 
+### E-mails transacionais (Resend)
+
+Convites, redefinição de senha e aviso de revisão profissional são gravados na
+`email_outbox`. Para entregá-los, aplique as migrations e execute o worker em
+outro terminal com `uv run python -m scripts.identity_worker` (ou use o serviço
+`identity-worker` do Docker Compose). O `PATCH` de revisão grava o aviso na
+mesma transação; uma falha de envio não desfaz a revisão.
+
+#### Configuração individual para desenvolvimento local
+
+Enquanto o projeto não tiver um domínio oficial de envio verificado, **cada dev
+que quiser testar a entrega real de emails deve usar sua própria conta Resend,
+sua própria chave de API e seu próprio endereço de teste**. Não é necessário
+cadastrar um domínio no Resend para usar o remetente de testes.
+
+1. Crie uma conta em [Resend](https://resend.com/) com um email ao qual você
+   tenha acesso. No painel, abra [API Keys](https://resend.com/api-keys), crie
+   uma chave com permissão de envio (*Sending access*) e copie-a para o seu
+   `.env` local do **backend**. Não compartilhe a chave nem a coloque no
+   frontend, em código, prints ou commits; se for exposta, revogue-a e crie
+   outra.
+2. Copie `.env.example` para `.env` no backend, mantenha a configuração do
+   Postgres e defina as variáveis abaixo com **a sua** chave e **o email da sua
+   conta Resend**. O `.env` é ignorado pelo Git.
+
+   ```dotenv
+   ENVIRONMENT=development
+   EMAIL_PROVIDER=resend
+   RESEND_API_KEY=<sua-chave-de-envio>
+   RESEND_FROM_EMAIL="CYB <onboarding@resend.dev>"
+   RESEND_TEST_RECIPIENT=<email-da-sua-conta-resend>
+   IDENTITY_TOKEN_BASE_URL=http://localhost:3000
+   ```
+
+3. Suba o banco (`docker compose up -d db`), aplique as migrations
+   (`uv run alembic upgrade head`), inicie a API (`uv run fastapi dev app/main.py`)
+   e, em outro terminal, o worker (`uv run python -m scripts.identity_worker`).
+   Inicie também o frontend em `http://localhost:3000`, com
+   `NEXT_PUBLIC_API_URL=http://localhost:8000` e o mock da API desabilitado.
+   Se usar Docker Compose para a API e o worker, recrie esses serviços após
+   alterar o `.env` (`docker compose up -d --force-recreate api identity-worker`).
+4. Para receber um convite, cadastre pelo admin um usuário **com o mesmo email
+   de `RESEND_TEST_RECIPIENT`**. Para testar redefinição ou aviso de revisão,
+   a conta destinatária desses fluxos também precisa ter esse email. Abra os
+   links `localhost` no computador onde o frontend está rodando.
+
+O remetente de testes entrega apenas ao endereço da conta Resend. Destinatários
+diferentes ficam em `held` na outbox, sem troca silenciosa de destinatário, e
+são retomados quando a restrição de teste for removida. Portanto, cadastrar
+outro email no admin **não** envia uma cópia do convite ao email de teste. Se
+o convite vencer enquanto estiver em `held`, será necessário reenviá-lo pelo
+admin depois de habilitar o domínio verificado. As logos são incluídas no
+email como imagens inline e não dependem do acesso público ao frontend.
+`RESEND_TEST_RECIPIENT` só é aceito em `development` com o remetente de testes;
+com domínio verificado, deixe-o vazio para entregar ao endereço real de cada usuário.
+
+Para produção, configure `ENVIRONMENT=production`, `EMAIL_PROVIDER=resend`,
+`RESEND_API_KEY` de produção, `RESEND_FROM_EMAIL` de um domínio verificado e
+`IDENTITY_TOKEN_BASE_URL` na raiz HTTPS pública do frontend. Deixe
+`RESEND_TEST_RECIPIENT` vazio. A inicialização rejeita provedor simulado,
+remetente de testes ou URL local em produção. Mantenha o worker em execução e
+monitore `queued`, `failed`, `held`, `blocked`, `expired` e `sent` na outbox. Itens
+antigos já marcados `sent` pelo provedor simulado não são reenviados
+automaticamente; use o reenvio de convite do admin quando necessário.
+
+As chaves ficam apenas nas variáveis do backend e nunca no repositório.
+
 ### Gerenciando dependências
 
 ```bash

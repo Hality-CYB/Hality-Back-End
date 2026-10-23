@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.policies import tem_papel
 from app.auth.users import password_helper
 from app.core.config import get_settings
+from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
+from app.models.diagnostico import Diagnostico
+from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.identity_action import EmailOutbox, IdentityAction, IdentityRateLimit
+from app.models.profissional import Profissional
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -32,6 +36,9 @@ FAILED = "failed"
 PROCESSING = "processing"
 EXPIRED = "expired"
 CONSUMED = "consumed"
+BLOCKED = "blocked"
+HELD = "held"
+DIAGNOSTIC_REVIEW = "diagnostic_review"
 
 
 class InvalidIdentityTokenError(Exception):
@@ -45,6 +52,10 @@ class EmailMessage:
     token: str
     token_url: str
     correlation_id: str
+    review_result: str | None = None
+    professional_name: str | None = None
+    professional_specialty: str | None = None
+    professional_registration: str | None = None
 
 
 class EmailProvider(Protocol):
@@ -60,10 +71,49 @@ class NoopEmailProvider:
 
 
 def get_email_provider() -> EmailProvider:
-    """Resolve o adapter configurado; adapters reais podem ser registrados aqui."""
-    if get_settings().email_provider.lower() == "noop":
+    """Resolve o adapter configurado para o worker."""
+    if get_settings().email_provider == "noop":
         return NoopEmailProvider()
+    if get_settings().email_provider == "resend":
+        from app.services.resend_email_provider import ResendEmailProvider
+
+        return ResendEmailProvider()
     raise RuntimeError("EMAIL_PROVIDER não suportado")
+
+
+async def _review_message(db: AsyncSession, outbox: EmailOutbox) -> EmailMessage | None:
+    """Busca a revisão atual sem copiar dados clínicos para a outbox."""
+    review = await db.get(DiagnosticoRevisao, outbox.review_id)
+    if review is None:
+        return None
+    latest_id = await db.scalar(
+        select(DiagnosticoRevisao.id)
+        .where(DiagnosticoRevisao.diagnostico_id == review.diagnostico_id)
+        .order_by(DiagnosticoRevisao.versao.desc(), DiagnosticoRevisao.id.desc())
+        .limit(1)
+    )
+    if latest_id != review.id:
+        return None
+    diagnostico = await db.get(Diagnostico, review.diagnostico_id)
+    classificacao = await db.get(ClassificacaoDiagnostico, review.classificacao_id)
+    profissional = await db.get(User, review.profissional_id)
+    perfil = await db.get(Profissional, review.profissional_id)
+    if diagnostico is None or classificacao is None or profissional is None:
+        return None
+    return EmailMessage(
+        recipient=outbox.recipient_email,
+        purpose=DIAGNOSTIC_REVIEW,
+        token="",
+        token_url=(
+            f"{get_settings().identity_token_base_url.rstrip('/')}"
+            f"/paciente/diagnosticos/{diagnostico.id}"
+        ),
+        correlation_id=outbox.correlation_id,
+        review_result=classificacao.nome_exibicao,
+        professional_name=profissional.name,
+        professional_specialty=perfil.especialidade if perfil else None,
+        professional_registration=perfil.registro_profissional if perfil else None,
+    )
 
 
 def _token_for(action_id: uuid.UUID, purpose: str) -> str:
@@ -326,11 +376,14 @@ async def dispatch_pending_emails(
         )
     )
     await db.commit()
+    eligible_statuses = (QUEUED, FAILED, PROCESSING)
+    if not settings.resend_test_recipient:
+        eligible_statuses += (HELD,)
     rows: Sequence[EmailOutbox] = (
         await db.scalars(
             select(EmailOutbox)
             .where(
-                EmailOutbox.status.in_((QUEUED, FAILED, PROCESSING)),
+                EmailOutbox.status.in_(eligible_statuses),
                 EmailOutbox.available_at <= now,
             )
             .order_by(EmailOutbox.created_at)
@@ -344,35 +397,65 @@ async def dispatch_pending_emails(
     await db.commit()
     delivered = 0
     for outbox in rows:
-        action = await db.get(IdentityAction, outbox.action_id)
-        if action is None or action.used_at is not None:
-            outbox.status = CONSUMED
-            await db.commit()
-            continue
-        if action.revoked_at is not None or _utc(action.expires_at) <= now:
-            outbox.status = EXPIRED
-            await db.commit()
-            continue
+        if outbox.review_id is not None:
+            message = await _review_message(db, outbox)
+            if message is None:
+                outbox.status = EXPIRED
+                await db.commit()
+                continue
+        else:
+            action = await db.get(IdentityAction, outbox.action_id)
+            if action is None or action.used_at is not None:
+                outbox.status = CONSUMED
+                await db.commit()
+                continue
+            if action.revoked_at is not None or _utc(action.expires_at) <= now:
+                outbox.status = EXPIRED
+                await db.commit()
+                continue
+            token = _token_for(action.id, action.purpose)
+            message = EmailMessage(
+                recipient=outbox.recipient_email,
+                purpose=outbox.purpose,
+                token=token,
+                token_url=(
+                    f"{settings.identity_token_base_url.rstrip('/')}"
+                    f"?purpose={quote(action.purpose)}&token={quote(token)}"
+                ),
+                correlation_id=outbox.correlation_id,
+            )
         outbox.attempts += 1
         try:
-            token = _token_for(action.id, action.purpose)
-            await provider.send(
-                EmailMessage(
-                    recipient=outbox.recipient_email,
-                    purpose=outbox.purpose,
-                    token=token,
-                    token_url=(
-                        f"{settings.identity_token_base_url.rstrip('/')}"
-                        f"?purpose={quote(action.purpose)}&token={quote(token)}"
-                    ),
-                    correlation_id=outbox.correlation_id,
-                )
-            )
+            await provider.send(message)
         except Exception as exc:  # noqa: BLE001
-            outbox.status = FAILED
+            from app.services.resend_email_provider import (
+                PermanentEmailError,
+                RetryableEmailError,
+                SandboxRecipientError,
+            )
+
+            if isinstance(exc, SandboxRecipientError):
+                outbox.status = HELD
+                outbox.available_at = now
+            elif isinstance(exc, RetryableEmailError):
+                outbox.status = FAILED
+                outbox.available_at = now + timedelta(hours=1)
+            elif isinstance(exc, PermanentEmailError):
+                outbox.status = BLOCKED
+            else:
+                outbox.status = FAILED
+                outbox.available_at = now + timedelta(minutes=min(outbox.attempts, 60))
             outbox.failed_at = now
-            outbox.available_at = now + timedelta(minutes=min(outbox.attempts, 60))
             outbox.last_error = type(exc).__name__[:255]
+            status_code = getattr(exc, "status_code", None)
+            logger.warning(
+                "Falha na entrega de email transacional correlation_id=%s purpose=%s "
+                "status=%s error=%s",
+                outbox.correlation_id,
+                outbox.purpose,
+                status_code or "n/a",
+                type(exc).__name__,
+            )
             await db.commit()
             continue
         outbox.status = SENT

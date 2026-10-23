@@ -3,7 +3,17 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -48,12 +58,18 @@ class EmailOutbox(Base):
     __table_args__ = (
         Index("ix_email_outbox_status_available_at", "status", "available_at"),
         Index("ix_email_outbox_correlation_id", "correlation_id"),
+        UniqueConstraint("review_id", name="uq_email_outbox_review_id"),
+        CheckConstraint(
+            "(action_id IS NOT NULL) != (review_id IS NOT NULL)",
+            name="ck_email_outbox_one_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    action_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("identity_actions.id", ondelete="CASCADE"), nullable=False
+    action_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("identity_actions.id", ondelete="CASCADE"), nullable=True
     )
+    review_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
     purpose: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")

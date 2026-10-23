@@ -1,4 +1,4 @@
-"""Worker contínuo para entrega da outbox de e-mails de identidade."""
+"""Worker contínuo para entrega da outbox de e-mails transacionais."""
 
 import asyncio
 import logging
@@ -19,7 +19,7 @@ async def run() -> None:
             async with async_session_factory() as db:
                 delivered = await dispatch_pending_emails(db, provider)
                 if delivered:
-                    logger.info("identity outbox delivered count=%s", delivered)
+                    logger.info("email outbox delivered count=%s", delivered)
         except Exception:  # noqa: BLE001
             logger.exception("identity outbox cycle failed")
         await asyncio.sleep(settings.identity_worker_poll_seconds)
