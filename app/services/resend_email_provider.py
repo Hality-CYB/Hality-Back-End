@@ -22,6 +22,14 @@ class PermanentEmailError(Exception):
     """Erro de configuração ou destinatário que não deve consumir novos retries."""
 
 
+class RetryableEmailError(Exception):
+    """Erro recuperável do provedor que deve ser tentado novamente com backoff longo."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Resend requer atenção de configuração (HTTP {status_code})")
+
+
 class SandboxRecipientError(PermanentEmailError):
     """Destinatário aguarda a troca do remetente de testes por um domínio verificado."""
 
@@ -144,7 +152,9 @@ class ResendEmailProvider:
                 },
                 json=payload,
             )
-        if response.status_code in {400, 401, 403, 422}:
+        if response.status_code in {401, 403}:
+            raise RetryableEmailError(response.status_code)
+        if response.status_code in {400, 422}:
             raise PermanentEmailError(f"Resend rejeitou o envio (HTTP {response.status_code})")
         response.raise_for_status()
         if not response.json().get("id"):

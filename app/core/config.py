@@ -114,6 +114,7 @@ class Settings(BaseSettings):
                 "RESEND_TEST_RECIPIENT só é permitido em development com remetente de testes"
             )
         return self
+
     # Modelo de inferência (API hality-ai). Vazio/None = usa o mock de
     # desenvolvimento (diagnostico_mock). No compose é o nome do serviço na rede
     # interna (http://hality-ai:8000); fora do Docker, http://localhost:8000.

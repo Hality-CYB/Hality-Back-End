@@ -1,5 +1,6 @@
 """Testes do fluxo de recuperação e da outbox de identidade."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -22,7 +23,7 @@ from app.services.identity_token_service import (
     create_invitation,
     dispatch_pending_emails,
 )
-from app.services.resend_email_provider import SandboxRecipientError
+from app.services.resend_email_provider import RetryableEmailError, SandboxRecipientError
 from tests.conftest import CONSENTIMENTOS_CADASTRO
 
 RECOVERY_URL = "/api/v1/auth/password-recovery"
@@ -201,6 +202,37 @@ async def test_outbox_retry_e_marca_falha_sem_token_no_erro(db_session: AsyncSes
         else outbox.available_at
     )
     assert datetime.now(UTC) + timedelta(minutes=1) >= available_at
+
+
+@pytest.mark.asyncio
+async def test_outbox_reagenda_erro_de_configuracao_com_backoff_e_aviso(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    user = User(email="provider@hality.com", hashed_password="hash", name="Pessoa")
+    db_session.add(user)
+    await db_session.flush()
+    await create_invitation(db_session, user)
+    caplog.set_level(logging.WARNING, logger="app.services.identity_token_service")
+
+    class Provider:
+        async def send(self, message) -> None:
+            raise RetryableEmailError(403)
+
+    antes = datetime.now(UTC)
+    await dispatch_pending_emails(db_session, Provider())
+    outbox = await db_session.scalar(select(EmailOutbox))
+
+    assert outbox is not None
+    assert outbox.status == "failed"
+    assert outbox.last_error == "RetryableEmailError"
+    available_at = (
+        outbox.available_at.replace(tzinfo=UTC)
+        if outbox.available_at.tzinfo is None
+        else outbox.available_at
+    )
+    assert available_at >= antes + timedelta(minutes=59)
+    assert "status=403" in caplog.text
+    assert user.email not in caplog.text
 
 
 @pytest.mark.asyncio

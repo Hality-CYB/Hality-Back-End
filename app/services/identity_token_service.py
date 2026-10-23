@@ -430,12 +430,16 @@ async def dispatch_pending_emails(
         except Exception as exc:  # noqa: BLE001
             from app.services.resend_email_provider import (
                 PermanentEmailError,
+                RetryableEmailError,
                 SandboxRecipientError,
             )
 
             if isinstance(exc, SandboxRecipientError):
                 outbox.status = HELD
                 outbox.available_at = now
+            elif isinstance(exc, RetryableEmailError):
+                outbox.status = FAILED
+                outbox.available_at = now + timedelta(hours=1)
             elif isinstance(exc, PermanentEmailError):
                 outbox.status = BLOCKED
             else:
@@ -443,6 +447,15 @@ async def dispatch_pending_emails(
                 outbox.available_at = now + timedelta(minutes=min(outbox.attempts, 60))
             outbox.failed_at = now
             outbox.last_error = type(exc).__name__[:255]
+            status_code = getattr(exc, "status_code", None)
+            logger.warning(
+                "Falha na entrega de email transacional correlation_id=%s purpose=%s "
+                "status=%s error=%s",
+                outbox.correlation_id,
+                outbox.purpose,
+                status_code or "n/a",
+                type(exc).__name__,
+            )
             await db.commit()
             continue
         outbox.status = SENT

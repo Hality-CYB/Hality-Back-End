@@ -7,7 +7,11 @@ import pytest
 
 from app.core.config import Settings
 from app.services.identity_token_service import EmailMessage
-from app.services.resend_email_provider import PermanentEmailError, ResendEmailProvider
+from app.services.resend_email_provider import (
+    PermanentEmailError,
+    ResendEmailProvider,
+    RetryableEmailError,
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -132,3 +136,42 @@ async def test_dominio_verificado_envia_cada_fluxo_ao_destinatario_real(purpose:
     )
 
     assert payloads[0]["to"] == ["destinatario.real@example.com"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [401, 403])
+async def test_erro_de_autenticacao_ou_permissao_e_recuperavel(status_code: int) -> None:
+    provider = ResendEmailProvider(
+        _settings(),
+        httpx.MockTransport(lambda request: httpx.Response(status_code, json={"error": "denied"})),
+    )
+    with pytest.raises(RetryableEmailError) as erro:
+        await provider.send(
+            EmailMessage(
+                recipient="pessoa@example.com",
+                purpose="password_reset",
+                token="segredo",
+                token_url="http://localhost:3000/reset",
+                correlation_id="reset-retry",
+            )
+        )
+    assert erro.value.status_code == status_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 422])
+async def test_erro_de_requisicao_permanece_permanente(status_code: int) -> None:
+    provider = ResendEmailProvider(
+        _settings(),
+        httpx.MockTransport(lambda request: httpx.Response(status_code, json={"error": "invalid"})),
+    )
+    with pytest.raises(PermanentEmailError):
+        await provider.send(
+            EmailMessage(
+                recipient="pessoa@example.com",
+                purpose="password_reset",
+                token="segredo",
+                token_url="http://localhost:3000/reset",
+                correlation_id="reset-invalid",
+            )
+        )
