@@ -61,6 +61,17 @@ async def calcular_sha256(
     )
 
 
+async def ler(
+    url_arquivo: str,
+) -> bytes:
+    """Le um objeto privado sem transformar sua URL em acesso público."""
+    nome_arquivo = Path(url_arquivo).name
+    caminho = resolver_caminho(nome_arquivo)
+    if caminho is None:
+        raise FileNotFoundError(nome_arquivo)
+    return await asyncio.to_thread(caminho.read_bytes)
+
+
 async def remover(
     url_arquivo: str,
 ) -> None:

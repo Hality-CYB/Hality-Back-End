@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     postgres_db: str
     db_echo: bool = False
 
-    @field_validator("debug", "db_echo", mode="before")
+    @field_validator("debug", "db_echo", "dataset_export_enabled", mode="before")
     @classmethod
     def validar_booleanos_de_ambiente(cls, valor: object, info: ValidationInfo) -> bool:
         """Aceita somente representações booleanas documentadas nas variáveis de ambiente."""
@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     identity_recovery_rate_limit: int = 5
     identity_recovery_rate_window_seconds: int = 60
     identity_worker_poll_seconds: int = 5
+    dataset_export_enabled: bool = False
+    dataset_export_max_records: int = 1000
+    dataset_export_max_bytes: int = 500 * 1024 * 1024
 
     @model_validator(mode="after")
     def validar_entrega_de_email(self) -> "Settings":
