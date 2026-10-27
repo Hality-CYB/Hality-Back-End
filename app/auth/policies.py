@@ -112,6 +112,10 @@ def definir_correlation_id(recebido: str | None) -> str:
     return correlation_id
 
 
+def obter_correlation_id() -> str | None:
+    return _correlation_id.get()
+
+
 def registrar_decisao(
     *,
     permitido: bool,
