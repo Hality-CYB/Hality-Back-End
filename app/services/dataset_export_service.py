@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from PIL import Image as PillowImage
+from PIL import ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,10 +78,16 @@ def _sanitizar_imagem(conteudo: bytes, content_type: str | None) -> bytes:
         raise DatasetExportError("tipo de imagem não suportado", status_code=500)
     try:
         with PillowImage.open(io.BytesIO(conteudo)) as original:
-            original.load()
-            pixels = original.copy()
+            pixels = ImageOps.exif_transpose(original)
+            pixels.load()
+            pixels = pixels.copy()
             saida = io.BytesIO()
-            pixels.save(saida, format=formato[1])
+            opcoes = {}
+            if formato[1] == "JPEG":
+                opcoes = {"quality": 95}
+            elif formato[1] == "WEBP":
+                opcoes = {"lossless": True}
+            pixels.save(saida, format=formato[1], **opcoes)
             return saida.getvalue()
     except Exception as exc:
         raise DatasetExportError("arquivo de imagem corrompido", status_code=500) from exc
@@ -121,7 +128,7 @@ async def exportar(db: AsyncSession, admin, diagnostico_ids: list[int]) -> Datas
         revisao = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico_id)
         if revisao is not None:
             classificacao = revisao.classificacao
-            fonte, versao = "hality", revisao.revisao.versao
+            fonte, versao = "profissional", revisao.revisao.versao
         elif diagnostico.profissional_revisor_id and diagnostico.classificacao_id:
             classificacao = await diagnostico_queries.buscar_classificacao(
                 db, diagnostico.classificacao_id

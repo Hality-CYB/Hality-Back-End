@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class DatasetExportRequest(BaseModel):
-    diagnostico_ids: list[int] = Field(min_length=1, max_length=1000)
+    diagnostico_ids: list[int] = Field(min_length=1, max_length=100)
 
     @field_validator("diagnostico_ids")
     @classmethod

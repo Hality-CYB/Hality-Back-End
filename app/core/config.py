@@ -73,7 +73,7 @@ class Settings(BaseSettings):
 
     dataset_export_enabled: bool = False
     dataset_export_max_records: int = 100
-    dataset_export_max_bytes: int = 500 * 1024 * 1024
+    dataset_export_max_bytes: int = 250 * 1024 * 1024
 
     @model_validator(mode="after")
     def validar_entrega_de_email(self) -> "Settings":
