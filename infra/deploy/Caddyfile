@@ -1,0 +1,15 @@
+# DOMAIN vem do .env: um domínio (ex.: app.hality.com.br) liga HTTPS
+# automático; ":80" serve só HTTP pelo IP, para teste.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API e documentação vão para o FastAPI; o resto é o front.
+	@api path /api/* /docs /docs/* /redoc /openapi.json
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy front:3000
+	}
+}
