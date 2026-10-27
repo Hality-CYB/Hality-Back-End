@@ -34,6 +34,7 @@ from app.models import (
     Diagnostico,
     DiagnosticoRevisao,
     Imagem,
+    RotuloDataset,
     User,
 )
 
@@ -61,6 +62,7 @@ TABELAS = [
     Imagem.__table__,
     DiagnosticoRevisao.__table__,
     AuditoriaAcesso.__table__,
+    RotuloDataset.__table__,
 ]
 
 
@@ -209,6 +211,7 @@ def como() -> ComoUsuario:
     def _como(role: str) -> None:
         app.dependency_overrides[current_active_user] = lambda: SimpleNamespace(
             id=ADMIN_ID if role == "admin" else PROFISSIONAL_ID,
+            name="Admin" if role == "admin" else "Prof",
             role=role,
             is_active=True,
         )
@@ -462,6 +465,13 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["dataset"] == {
         "disponivel": False,
         "motivo": "exportacao_fora_do_escopo",
+    }
+    assert corpo["rotulo_dataset"] == {
+        "atual": None,
+        "historico": [],
+        "fonte_efetiva": "profissional",
+        "exportavel": True,
+        "motivo": None,
     }
     assert corpo["imagem"] == {
         "disponivel": False,
@@ -760,7 +770,11 @@ async def test_nenhum_papel_consegue_mutar(
         await _contar(session_factory, AuditoriaAcesso),
     )
 
-    r = await http.request(metodo.upper(), f"{BASE}{sufixo}", json={"rotulo": "x"})
+    r = await http.request(
+        metodo.upper(),
+        f"{BASE}{sufixo}",
+        json={"rotulo": "x", "classificacao": "halito_normal", "version": 0},
+    )
 
     assert r.status_code in (403, 404, 405)
     depois = (
@@ -775,11 +789,75 @@ async def test_nenhum_papel_consegue_mutar(
         assert d1.classificacao_id is not None
 
 
-async def test_openapi_admin_expoe_apenas_get() -> None:
-    """Contrato: sob /admin/diagnosticos só existe leitura (sem rótulo, sem download/importação)."""
+async def test_openapi_admin_expoe_rotulagem_sem_exportacao() -> None:
+    """Contrato: leitura + rotulagem Hality, sem exportação neste escopo."""
     paths = {p: v for p, v in app.openapi()["paths"].items() if "/admin/diagnosticos" in p}
 
     assert paths, "rotas admin não registradas"
     for path, operacoes in paths.items():
-        assert set(operacoes) == {"get"}, path
-        assert not any(t in path for t in ("export", "download", "import", "rotulo", "label"))
+        esperadas = {"get"} if path == BASE or path == f"{BASE}/{{diagnostico_id}}" else {"post"}
+        assert set(operacoes) == esperadas, path
+        assert not any(t in path for t in ("export", "download", "import"))
+
+
+# ---------------------------------------------------------------------------
+# Rótulo Hality: histórico append-only
+# ---------------------------------------------------------------------------
+
+
+async def test_admin_cria_rotulo_e_precede_revisao_profissional(http, dados, como) -> None:
+    como("admin")
+    diagnostico_id = dados["d"]["d1"].id
+
+    resposta = await http.post(
+        f"{BASE}/{diagnostico_id}/rotulos-dataset",
+        json={"classificacao": "halitose_intima", "version": 0},
+    )
+
+    assert resposta.status_code == 201
+    corpo = resposta.json()
+    assert corpo["diagnostico_id"] == diagnostico_id
+    assert corpo["version"] == 1
+    assert corpo["classificacao"]["codigo"] == "halitose_intima"
+    assert corpo["autor"] == {"papel": "admin", "nome": "Admin"}
+
+    detalhe = (await http.get(f"{BASE}/{diagnostico_id}")).json()["rotulo_dataset"]
+    assert detalhe["atual"]["version"] == 1
+    assert detalhe["fonte_efetiva"] == "hality"
+    assert detalhe["exportavel"] is True
+
+
+async def test_rotulo_exige_versao_atual_e_preserva_historico(http, dados, como) -> None:
+    como("admin")
+    diagnostico_id = dados["d"]["d1"].id
+    rota = f"{BASE}/{diagnostico_id}/rotulos-dataset"
+
+    assert (
+        await http.post(rota, json={"classificacao": "halito_normal", "version": 0})
+    ).status_code == 201
+    conflito = await http.post(rota, json={"classificacao": "halitose_intima", "version": 0})
+    assert conflito.status_code == 409
+
+    segunda = await http.post(rota, json={"classificacao": "halitose_intima", "version": 1})
+    assert segunda.status_code == 201
+    detalhe = (await http.get(f"{BASE}/{diagnostico_id}")).json()["rotulo_dataset"]
+    assert detalhe["atual"]["version"] == 2
+    assert [item["version"] for item in detalhe["historico"]] == [1]
+
+
+async def test_rotulo_exige_imagem_e_admin(http, dados, como) -> None:
+    diagnostico_sem_imagem = dados["d"]["d2"].id
+
+    como("admin")
+    sem_imagem = await http.post(
+        f"{BASE}/{diagnostico_sem_imagem}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+    assert sem_imagem.status_code == 409
+
+    como("profissional")
+    sem_permissao = await http.post(
+        f"{BASE}/{dados['d']['d1'].id}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+    assert sem_permissao.status_code == 403

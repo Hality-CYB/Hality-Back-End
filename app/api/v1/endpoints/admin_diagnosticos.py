@@ -1,8 +1,9 @@
 """Consulta administrativa de diagnósticos (US-120 / DELTA-08).
 
-Somente leitura. Não há (e não deve haver, até DEC-04/DEC-07) rota de
-mutation de rótulo nem de exportação. O guard de admin fica no router para
-valer automaticamente para qualquer rota adicionada aqui no futuro.
+As rotas deste módulo são somente leitura; a mutation de rótulo Hality fica em
+`admin_rotulos_dataset` e não há rota de exportação neste escopo. O guard de
+admin fica no router para valer automaticamente para qualquer rota adicionada
+aqui no futuro.
 """
 
 import uuid

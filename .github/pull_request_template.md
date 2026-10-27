@@ -10,7 +10,7 @@
 <!-- Use "Closes #123" para fechar a issue automaticamente no merge.
      Se a demanda estiver no GitLab da AGES, informe o link ou ID do card. -->
 
-Closes #
+Closes #177
 
 ## Resumo da mudança
 

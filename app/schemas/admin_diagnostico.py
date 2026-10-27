@@ -18,6 +18,7 @@ from app.schemas.diagnostico import (
     OrigemResultadoInfo,
     StatusDiagnostico,
 )
+from app.schemas.rotulo_dataset import RotuloDatasetInfo
 
 MOTIVO_IMAGEM_INDISPONIVEL = "politica_de_acesso_pendente"
 MOTIVO_DATASET_INDISPONIVEL = "exportacao_fora_do_escopo"
@@ -85,10 +86,10 @@ class RevisaoProfissional(BaseModel):
 
 
 class DatasetInfo(BaseModel):
-    """Situação do diagnóstico frente a um futuro dataset.
+    """Situação do diagnóstico frente à exportação de dataset.
 
-    Fixo em "indisponível" até DEC-04/DEC-07: não há rótulo, curadoria
-    mutável nem exportação.
+    A exportação não faz parte deste recurso; os rótulos Hality ficam em
+    ``rotulo_dataset``.
     """
 
     disponivel: bool = False
@@ -112,6 +113,7 @@ class AdminDiagnosticoDetalhe(BaseModel):
     revisao: RevisaoProfissional
     historico_revisoes: list[RevisaoHistorica]
     dataset: DatasetInfo
+    rotulo_dataset: RotuloDatasetInfo
     anamnese_id: int | None
     qtd_imagens: int
     imagem: ImagemInfo
