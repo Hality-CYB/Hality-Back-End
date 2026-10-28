@@ -945,4 +945,3 @@ async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano
     assert rotulo["fonte_efetiva"] == "ia"
     assert rotulo["exportavel"] is False
     assert rotulo["motivo"] == "sem_rotulo_humano"
-
