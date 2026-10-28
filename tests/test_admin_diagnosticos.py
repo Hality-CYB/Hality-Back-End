@@ -8,7 +8,10 @@ teste; produção continua JSONB).
 então `require_admin` roda de verdade — só a validação do JWT é substituída.
 """
 
+import csv
+import io
 import uuid
+import zipfile
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -16,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -34,8 +38,11 @@ from app.models import (
     Diagnostico,
     DiagnosticoRevisao,
     Imagem,
+    RotuloDataset,
     User,
 )
+from app.models.consentimento import ConsentimentoEvento
+from app.services import dataset_export_service, diagnostico_storage
 
 
 @compiles(JSONB, "sqlite")
@@ -61,6 +68,8 @@ TABELAS = [
     Imagem.__table__,
     DiagnosticoRevisao.__table__,
     AuditoriaAcesso.__table__,
+    ConsentimentoEvento.__table__,
+    RotuloDataset.__table__,
 ]
 
 
@@ -184,6 +193,9 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
                 url_arquivo="/api/v1/diagnosticos/imagens/segredo.jpg",
                 ordem=1,
                 parametros_captura={"iso": 100},
+                content_type="image/png",
+                sha256="0" * 64,
+                tamanho_bytes=1,
             )
         )
         db.add(
@@ -230,6 +242,116 @@ async def _contar(session_factory, model) -> int:
 async def _auditorias(session_factory) -> list[AuditoriaAcesso]:
     async with session_factory() as db:
         return list((await db.execute(select(AuditoriaAcesso))).scalars().all())
+
+
+def _habilitar_exportacao(monkeypatch, *, enabled: bool = True, max_records: int = 100):
+    monkeypatch.setattr(
+        dataset_export_service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            dataset_export_enabled=enabled,
+            dataset_export_max_records=max_records,
+            dataset_export_max_bytes=1024 * 1024,
+        ),
+    )
+
+
+async def _aceitar_treino(session_factory, titular_id: uuid.UUID) -> None:
+    async with session_factory() as db:
+        db.add(
+            ConsentimentoEvento(
+                titular_id=titular_id,
+                finalidade="image_training",
+                versao="v1",
+                aceito=True,
+                origem="teste",
+            )
+        )
+        await db.commit()
+
+
+async def _imagem_de_teste(monkeypatch, tmp_path):
+    caminho = tmp_path / "segredo.jpg"
+    imagem = Image.new("RGB", (2, 2), "red")
+    imagem.save(caminho, format="JPEG")
+    monkeypatch.setattr(diagnostico_storage, "resolver_caminho", lambda _: caminho)
+
+
+async def test_exportacao_sem_consentimento_retorna_409(http, dados, como, monkeypatch) -> None:
+    como("admin")
+    _habilitar_exportacao(monkeypatch)
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [1]})
+    assert resposta.status_code == 409
+
+
+async def test_exportacao_so_rotulo_de_ia_retorna_409(
+    http, dados, como, session_factory, monkeypatch
+) -> None:
+    como("admin")
+    _habilitar_exportacao(monkeypatch)
+    await _aceitar_treino(session_factory, PACIENTE_A)
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [2]})
+    assert resposta.status_code == 409
+
+
+async def test_exportacao_desabilitada_retorna_404(http, como, monkeypatch) -> None:
+    como("admin")
+    _habilitar_exportacao(monkeypatch, enabled=False)
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [1]})
+    assert resposta.status_code == 404
+
+
+async def test_exportacao_diagnostico_inexistente_retorna_404(
+    http, dados, como, monkeypatch
+) -> None:
+    como("admin")
+    _habilitar_exportacao(monkeypatch)
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [99999]})
+    assert resposta.status_code == 404
+
+
+async def test_exportacao_nao_admin_retorna_403(http, dados, como, monkeypatch) -> None:
+    como("profissional")
+    _habilitar_exportacao(monkeypatch)
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [1]})
+    assert resposta.status_code == 403
+
+
+async def test_exportacao_gera_zip_com_manifest_e_rotulo_hality(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+) -> None:
+    como("admin")
+    _habilitar_exportacao(monkeypatch)
+    await _aceitar_treino(session_factory, PACIENTE_A)
+    await _imagem_de_teste(monkeypatch, tmp_path)
+    async with session_factory() as db:
+        classificacao = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halitose_intima"
+            )
+        )
+        db.add(
+            RotuloDataset(
+                diagnostico_id=dados["d"]["d1"].id,
+                admin_id=ADMIN_ID,
+                classificacao_id=classificacao.id,
+                version=3,
+            )
+        )
+        await db.commit()
+
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [1]})
+
+    assert resposta.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as pacote:
+        nomes = pacote.namelist()
+        assert "manifest.csv" in nomes
+        assert any(nome.startswith("images/halitose_intima/") for nome in nomes)
+        manifest = list(csv.DictReader(io.StringIO(pacote.read("manifest.csv").decode())))
+        assert manifest[0]["label_source"] == "hality"
+        assert manifest[0]["label_version"] == "3"
+        assert len(manifest[0]["checksum_sha256"]) == 64
+        assert str(PACIENTE_A) not in pacote.read("manifest.csv").decode()
 
 
 # ---------------------------------------------------------------------------

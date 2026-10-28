@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     identity_recovery_rate_window_seconds: int = 60
     identity_worker_poll_seconds: int = 5
 
+    dataset_export_enabled: bool = False
+    dataset_export_max_records: int = 100
+    dataset_export_max_bytes: int = 250 * 1024 * 1024
+
     @model_validator(mode="after")
     def validar_entrega_de_email(self) -> "Settings":
         if self.environment not in {"development", "test", "production"}:
