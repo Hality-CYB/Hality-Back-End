@@ -17,11 +17,17 @@ Closes #
 <!-- Descreva em 2 a 5 itens o que mudou e por quê. Inclua as rotas, serviços,
      modelos ou integrações afetados quando isso ajudar na revisão. -->
 
+-
 
 ## Tipo de mudança
 
 <!-- Marque todas as opções aplicáveis. -->
 
+- [ ] `feature` — adiciona comportamento ou endpoint novo
+- [ ] `fix` — corrige um comportamento existente
+- [ ] `refactor` — reorganiza o código sem alterar o comportamento esperado
+- [ ] `db` — altera modelos, schema ou migrations do banco
+- [ ] `chore` — dependências, configuração, CI/CD, documentação ou manutenção
 
 ## Impacto na API
 
@@ -29,12 +35,17 @@ Closes #
      status e eventuais mudanças incompatíveis. Se não houver impacto, escreva
      "não se aplica". -->
 
+- Endpoints/contratos afetados:
+- Compatibilidade ou breaking change:
 
 ## Banco de dados e configuração
 
 <!-- Explique migrations, alterações de dados, novas variáveis de ambiente,
      seeds ou passos especiais de deploy. Nunca inclua segredos. -->
 
+- Migration necessária: não se aplica
+- Variáveis de ambiente/configuração: não se aplica
+- Seed ou procedimento adicional: não se aplica
 
 ## Como testar
 
@@ -49,14 +60,20 @@ uv run pytest
 
 Cenários adicionais:
 
-1. Exportação válida por administrador: retorna `200` e um ZIP contendo as imagens elegíveis, `manifest.csv` e `README.md`.
-2. Seleção duplicada ou vazia: retorna `400`.
-3. Diagnóstico inexistente: retorna `404`; item sem consentimento, sem imagem, não concluído ou sem rótulo elegível: retorna `409`.
-4. Exportação desabilitada ou alteração de elegibilidade durante o processamento: retorna `409`; excesso de registros ou bytes: retorna `413`.
-5. Acesso sem permissão administrativa: permanece bloqueado pelo guard de admin.
+1.
 
 ## Checklist
 
+- [ ] Branch criada a partir de `develop` e nomeada como `<tipo>/<descrição-em-kebab-case>`
+- [ ] `uv.lock` foi atualizado quando houve alteração de dependências
+- [ ] Migrations foram criadas e testadas quando houve mudança no banco
+- [ ] `uv run ruff check .` passa
+- [ ] `uv run ruff format --check .` passa
+- [ ] `uv run pytest` passa
+- [ ] Testei os endpoints ou fluxos afetados, incluindo erros e validações relevantes
+- [ ] Revisei meu próprio diff e removi debug, código morto e arquivos acidentais
+- [ ] Não incluí segredos, credenciais ou dados sensíveis
+- [ ] Issue vinculada e impacto descrito acima
 
 ## Observações para o time
 

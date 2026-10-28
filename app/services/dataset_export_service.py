@@ -19,8 +19,10 @@ from app.auth.policies import obter_correlation_id
 from app.core.config import get_settings
 from app.core.consentimentos import Finalidade
 from app.db import auditoria_queries, diagnostico_queries
+from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
 from app.models.imagem import Imagem
+from app.models.rotulo_dataset import RotuloDataset
 from app.services import consentimento_service, diagnostico_storage
 
 TAXONOMY_VERSION = "classificacoes_diagnostico_v1"
@@ -106,6 +108,26 @@ async def _auditar(db: AsyncSession, admin, resultado: str, metadata: dict) -> N
     await db.commit()
 
 
+async def _buscar_rotulo_hality(
+    db: AsyncSession, diagnostico_id: int
+) -> tuple[ClassificacaoDiagnostico, int] | None:
+    result = await db.execute(
+        select(RotuloDataset, ClassificacaoDiagnostico)
+        .join(
+            ClassificacaoDiagnostico,
+            ClassificacaoDiagnostico.id == RotuloDataset.classificacao_id,
+        )
+        .where(RotuloDataset.diagnostico_id == diagnostico_id)
+        .order_by(RotuloDataset.version.desc())
+        .limit(1)
+    )
+    item = result.first()
+    if item is None:
+        return None
+    rotulo, classificacao = item
+    return classificacao, rotulo.version
+
+
 async def exportar(db: AsyncSession, admin, diagnostico_ids: list[int]) -> DatasetExportArtifact:
     settings = get_settings()
     metadata = {"solicitados": len(diagnostico_ids), "incluidos": 0, "excluidos": 0}
@@ -125,17 +147,22 @@ async def exportar(db: AsyncSession, admin, diagnostico_ids: list[int]) -> Datas
     selecionados: list[tuple[Diagnostico, Imagem, object, str, int]] = []
     for diagnostico_id in diagnostico_ids:
         diagnostico = diagnosticos[diagnostico_id]
-        revisao = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico_id)
-        if revisao is not None:
-            classificacao = revisao.classificacao
-            fonte, versao = "profissional", revisao.revisao.versao
-        elif diagnostico.profissional_revisor_id and diagnostico.classificacao_id:
-            classificacao = await diagnostico_queries.buscar_classificacao(
-                db, diagnostico.classificacao_id
-            )
-            fonte, versao = "profissional", 0
+        rotulo_hality = await _buscar_rotulo_hality(db, diagnostico_id)
+        if rotulo_hality is not None:
+            classificacao, versao = rotulo_hality
+            fonte = "hality"
         else:
-            classificacao, fonte, versao = None, "ia", 0
+            revisao = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico_id)
+            if revisao is not None:
+                classificacao = revisao.classificacao
+                fonte, versao = "profissional", revisao.revisao.versao
+            elif diagnostico.profissional_revisor_id and diagnostico.classificacao_id:
+                classificacao = await diagnostico_queries.buscar_classificacao(
+                    db, diagnostico.classificacao_id
+                )
+                fonte, versao = "profissional", 0
+            else:
+                classificacao, fonte, versao = None, "ia", 0
         imagens = await diagnostico_queries.listar_imagens(db, diagnostico_id)
         consentido = await consentimento_service.finalidade_vigente(
             db, diagnostico.paciente_id, Finalidade.IMAGE_TRAINING
