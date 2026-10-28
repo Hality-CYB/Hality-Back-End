@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.consentimentos import Finalidade
 from app.db import auditoria_queries
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
@@ -15,6 +16,7 @@ from app.schemas.rotulo_dataset import (
     RotuloDatasetInfo,
     RotuloDatasetItem,
 )
+from app.services import consentimento_service
 
 
 class RotuloDatasetError(Exception):
@@ -141,25 +143,32 @@ async def criar(
 async def obter_info(
     db: AsyncSession,
     diagnostico: Diagnostico,
-    classificacao_ia: ClassificacaoDiagnostico | None,
     tem_revisao_profissional: bool,
 ) -> RotuloDatasetInfo:
     historico = await _historico(db, diagnostico.id)
     itens = [_para_item(item) for item in historico]
     atual = itens[-1] if itens else None
-    if atual is not None:
-        fonte = "hality"
-        exportavel = True
-    elif tem_revisao_profissional:
-        fonte = "profissional"
-        exportavel = True
-    else:
-        fonte = "ia"
+    tem_rotulo_humano = atual is not None or tem_revisao_profissional
+    fonte = (
+        "hality" if atual is not None else ("profissional" if tem_revisao_profissional else "ia")
+    )
+    consentido = await consentimento_service.finalidade_vigente(
+        db, diagnostico.paciente_id, Finalidade.IMAGE_TRAINING
+    )
+    if not tem_rotulo_humano:
         exportavel = False
+        motivo = "sem_rotulo_humano"
+    elif not consentido:
+        exportavel = False
+        motivo = "sem_consentimento"
+    else:
+        exportavel = True
+        motivo = None
+
     return RotuloDatasetInfo(
         atual=atual,
         historico=list(reversed(itens[:-1])) if itens else [],
         fonte_efetiva=fonte,
         exportavel=exportavel,
-        motivo=None if exportavel else "sem_rotulo_humano",
+        motivo=motivo,
     )

@@ -23,6 +23,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from app.auth.users import current_active_user
+from app.core.consentimentos import TERMOS, Finalidade
 from app.core.erros_diagnostico import MENSAGENS, CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.db.base import Base
@@ -37,6 +38,7 @@ from app.models import (
     RotuloDataset,
     User,
 )
+from app.models.consentimento import ConsentimentoEvento
 
 
 @compiles(JSONB, "sqlite")
@@ -63,6 +65,7 @@ TABELAS = [
     DiagnosticoRevisao.__table__,
     AuditoriaAcesso.__table__,
     RotuloDataset.__table__,
+    ConsentimentoEvento.__table__,
 ]
 
 
@@ -128,6 +131,17 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
             codigo="mau_halito_social", nome_exibicao="Social", ordem=3
         )
         db.add_all([normal, intima, social])
+        db.add(
+            ConsentimentoEvento(
+                titular_id=PACIENTE_A,
+                finalidade=Finalidade.IMAGE_TRAINING.value,
+                versao=TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                aceito=True,
+                origem="perfil",
+                ator_id=PACIENTE_A,
+                ator_papel="paciente",
+            )
+        )
         await db.flush()
 
         def _d(n, paciente, status, cls, dia, **extra):
@@ -462,10 +476,7 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["revisao"]["classificacao"]["codigo"] == "halito_normal"
     assert corpo["revisao"]["observacoes"] == "ok"
 
-    assert corpo["dataset"] == {
-        "disponivel": False,
-        "motivo": "exportacao_fora_do_escopo",
-    }
+    assert "dataset" not in corpo
     assert corpo["rotulo_dataset"] == {
         "atual": None,
         "historico": [],
@@ -861,3 +872,150 @@ async def test_rotulo_exige_imagem_e_admin(http, dados, como) -> None:
         json={"classificacao": "halito_normal", "version": 0},
     )
     assert sem_permissao.status_code == 403
+
+
+async def test_detalhe_rotulo_dataset_sem_consentimento_treino_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente com rótulo humano mas consentimento revogado fica exportavel=False."""
+    como("admin")
+    d1 = dados["d"]["d1"]
+
+    async with session_factory() as db:
+        db.add(
+            ConsentimentoEvento(
+                titular_id=PACIENTE_A,
+                finalidade=Finalidade.IMAGE_TRAINING.value,
+                versao=TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                aceito=False,
+                origem="perfil",
+                ator_id=PACIENTE_A,
+                ator_papel="paciente",
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d1.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_decisao_consentimento_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente sem nenhuma decisão de consentimento não pode ter dados exportáveis."""
+    como("admin")
+    d3 = dados["d"]["d3"]  # PACIENTE_B não tem consentimento
+
+    async with session_factory() as db:
+        normal = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halito_normal"
+            )
+        )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d3.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=normal.id,
+                observacao="revisado",
+                versao=1,
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d3.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano(
+    http, dados, como
+) -> None:
+    """Paciente consentiu, mas diagnóstico não tem rótulo humano (só IA)."""
+    como("admin")
+    d2 = dados["d"]["d2"]  # PACIENTE_A tem consentimento, d2 só tem IA
+
+    corpo = (await http.get(f"{BASE}/{d2.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "ia"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_rotulo_humano"
+
+
+async def test_detalhe_rotulo_dataset_sem_consentimento_treino_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente com rótulo humano mas consentimento revogado fica exportavel=False."""
+    como("admin")
+    d1 = dados["d"]["d1"]
+
+    async with session_factory() as db:
+        db.add(
+            ConsentimentoEvento(
+                titular_id=PACIENTE_A,
+                finalidade=Finalidade.IMAGE_TRAINING.value,
+                versao=TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                aceito=False,
+                origem="perfil",
+                ator_id=PACIENTE_A,
+                ator_papel="paciente",
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d1.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_decisao_consentimento_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente sem nenhuma decisão de consentimento não pode ter dados exportáveis."""
+    como("admin")
+    d3 = dados["d"]["d3"]  # PACIENTE_B não tem consentimento
+
+    async with session_factory() as db:
+        normal = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halito_normal"
+            )
+        )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d3.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=normal.id,
+                observacao="revisado",
+                versao=1,
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d3.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano(
+    http, dados, como
+) -> None:
+    """Paciente consentiu, mas diagnóstico não tem rótulo humano (só IA)."""
+    como("admin")
+    d2 = dados["d"]["d2"]  # PACIENTE_A tem consentimento, d2 só tem IA
+
+    corpo = (await http.get(f"{BASE}/{d2.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "ia"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_rotulo_humano"
+
