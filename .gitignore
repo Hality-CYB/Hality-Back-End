@@ -49,3 +49,12 @@ htmlcov/
 
 # Imagem Docker do modelo de inferência (grande; carregada com `docker load`)
 hality-ai.tar
+
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+*.tfplan
