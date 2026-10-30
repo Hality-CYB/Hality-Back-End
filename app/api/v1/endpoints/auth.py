@@ -29,6 +29,9 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.identity import (
+    EmailVerificationConfirm,
+    EmailVerificationResend,
+    EmailVerificationResendResponse,
     InvitationConfirmRequest,
     PasswordRecoveryConfirm,
     PasswordRecoveryRequest,
@@ -38,9 +41,12 @@ from app.schemas.user import RegistroCreate, UserRead
 from app.services import consentimento_service, registro_service
 from app.services.identity_token_service import (
     InvalidIdentityTokenError,
+    confirm_email_verification,
+    consume_email_verification_rate_limit,
     consume_invitation,
     consume_password_reset,
     consume_recovery_rate_limit,
+    request_email_verification_resend,
     request_password_recovery,
 )
 
@@ -51,6 +57,10 @@ REFRESH_COOKIE_NAME = "refresh_token"
 # /anamneses, /diagnosticos, /users/me etc.
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 PASSWORD_RECOVERY_MESSAGE = "Se o endereço estiver cadastrado, enviaremos instruções."
+EMAIL_VERIFICATION_RESEND_MESSAGE = (
+    "Se o endereço estiver cadastrado e pendente de confirmação, enviaremos um novo link."
+)
+EMAIL_NOT_VERIFIED = "EMAIL_NOT_VERIFIED"
 
 
 class AccessTokenResponse(BaseModel):
@@ -75,6 +85,12 @@ def _definir_cookie_refresh(response: Response, refresh_token: str) -> None:
 
 def _limpar_cookie_refresh(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
+
+
+def _cabecalhos_sem_cookie_refresh() -> dict[str, str]:
+    resposta = Response()
+    _limpar_cookie_refresh(resposta)
+    return {"set-cookie": resposta.headers["set-cookie"]}
 
 
 async def emitir_sessao(
@@ -151,6 +167,12 @@ async def login(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ErrorCode.LOGIN_BAD_CREDENTIALS,
         )
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=EMAIL_NOT_VERIFIED,
+            headers=_cabecalhos_sem_cookie_refresh(),
+        )
     return await emitir_sessao(user, response, jwt_strategy, refresh_strategy)
 
 
@@ -167,9 +189,14 @@ async def refresh(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="INVALID_REFRESH_TOKEN")
 
     user = await refresh_strategy.read_token(refresh_token, user_manager)
-    if user is None or not user.is_active:
-        _limpar_cookie_refresh(response)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="INVALID_REFRESH_TOKEN")
+    if user is None or not user.is_active or not user.is_verified:
+        if user is not None:
+            await refresh_strategy.destroy_token(refresh_token, user)
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail="INVALID_REFRESH_TOKEN",
+            headers=_cabecalhos_sem_cookie_refresh(),
+        )
 
     # Rotação: o cookie usado morre aqui. Se o mesmo valor for reapresentado
     # depois (ex.: um atacante que roubou uma cópia antiga), a checagem
@@ -268,3 +295,38 @@ async def invitation_confirm(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"versão do termo desatualizada; versão vigente: {exc.versao_vigente}",
         ) from exc
+
+
+@router.post(
+    "/email-verification/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    name="auth:email-verification-confirm",
+)
+async def email_verification_confirm(
+    payload: EmailVerificationConfirm,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    try:
+        await confirm_email_verification(db, payload.token)
+    except InvalidIdentityTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TOKEN_DE_VERIFICACAO_INVALIDO",
+        ) from exc
+
+
+@router.post(
+    "/email-verification/resend",
+    response_model=EmailVerificationResendResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    name="auth:email-verification-resend",
+)
+async def email_verification_resend(
+    payload: EmailVerificationResend,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> EmailVerificationResendResponse:
+    client_host = request.client.host if request.client else "unknown"
+    if not await consume_email_verification_rate_limit(db, f"{client_host}:{payload.email}"):
+        await request_email_verification_resend(db, str(payload.email))
+    return EmailVerificationResendResponse(message=EMAIL_VERIFICATION_RESEND_MESSAGE)
