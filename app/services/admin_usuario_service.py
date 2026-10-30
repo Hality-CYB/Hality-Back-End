@@ -167,6 +167,7 @@ async def criar_usuario(
             phone=dados.telefone,
             role=dados.role,
             hashed_password=password_helper.hash(dados.senha or secrets.token_urlsafe(32)),
+            is_verified=not dados.enviar_convite,
         )
         profissional = None
         if dados.role == TipoUsuario.PROFISSIONAL:

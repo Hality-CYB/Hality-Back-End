@@ -349,6 +349,7 @@ async def _trocar_para_conta_existente(db: AsyncSession, fluxo: OAuthFluxo) -> U
     )
     if identidade is not None:
         identidade.ultimo_login_em = _agora()
+    usuario.is_verified = True
     fluxo.email = None
     fluxo.nome = None
     await _auditar(db, "auth.google.trocar", fluxo.id, "sucesso", usuario=usuario)

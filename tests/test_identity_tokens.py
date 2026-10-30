@@ -24,7 +24,7 @@ from app.services.identity_token_service import (
     dispatch_pending_emails,
 )
 from app.services.resend_email_provider import RetryableEmailError, SandboxRecipientError
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 RECOVERY_URL = "/api/v1/auth/password-recovery"
 CONFIRM_URL = "/api/v1/auth/password-recovery/confirm"
@@ -49,8 +49,12 @@ async def test_recovery_has_resposta_uniforme_e_enfileira_apenas_hash(
 
     assert existente.status_code == inexistente.status_code == 202
     assert existente.json() == inexistente.json()
-    action = await db_session.scalar(select(IdentityAction))
-    outbox = await db_session.scalar(select(EmailOutbox))
+    action = await db_session.scalar(
+        select(IdentityAction).where(IdentityAction.purpose == PASSWORD_RESET)
+    )
+    outbox = await db_session.scalar(
+        select(EmailOutbox).where(EmailOutbox.purpose == PASSWORD_RESET)
+    )
     assert action is not None
     assert outbox is not None
     assert action.purpose == PASSWORD_RESET
@@ -90,11 +94,14 @@ async def test_confirmacao_consume_uma_vez_e_invalida_refresh(
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
     await client.post("/api/v1/auth/register", json=payload)
+    await confirmar_email_cadastrado(client, db_session, payload["email"])
     await client.post(
         "/api/v1/auth/login", data={"username": payload["email"], "password": payload["password"]}
     )
     await client.post(RECOVERY_URL, json={"email": payload["email"]})
-    action = await db_session.scalar(select(IdentityAction))
+    action = await db_session.scalar(
+        select(IdentityAction).where(IdentityAction.purpose == PASSWORD_RESET)
+    )
     assert action is not None
 
     token = _token_for(action.id, action.purpose)
@@ -147,6 +154,7 @@ async def test_confirmacao_de_convite_publica(
     assert response.status_code == 204
     await db_session.refresh(user)
     assert user.is_active is True
+    assert user.is_verified is True
 
 
 @pytest.mark.asyncio

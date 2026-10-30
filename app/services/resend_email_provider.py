@@ -10,6 +10,7 @@ import httpx
 from app.core.config import Settings, get_settings
 from app.services.identity_token_service import (
     DIAGNOSTIC_REVIEW,
+    EMAIL_VERIFICATION,
     INVITATION,
     PASSWORD_RESET,
     EmailMessage,
@@ -74,6 +75,18 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
         detail = (
             f"O link expira em {token_expiry_minutes} minutos. "
             "Se não fez a solicitação, ignore a mensagem."
+        )
+    elif message.purpose == EMAIL_VERIFICATION:
+        subject = "Confirme seu e-mail no Check Your Breath"
+        title = "Confirme seu e-mail"
+        description = (
+            "Recebemos seu cadastro no Check Your Breath. "
+            "Confirme seu endereço de e-mail para conseguir entrar."
+        )
+        button = "Confirmar e-mail"
+        detail = (
+            f"O link expira em {token_expiry_minutes} minutos. "
+            "Se não criou esta conta, ignore a mensagem."
         )
     elif message.purpose == DIAGNOSTIC_REVIEW:
         subject = "Sua análise foi revisada no Check Your Breath"

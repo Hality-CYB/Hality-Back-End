@@ -112,18 +112,21 @@ async def seed() -> None:
             name="Admin Hality",
             email="admin@hality.com",
             hashed_password=senha_hash,
+            is_verified=True,
             role="admin",
         )
         dentista1 = User(
             name="Dra. Ana Souza",
             email="ana.souza@hality.com",
             hashed_password=senha_hash,
+            is_verified=True,
             role="profissional",
         )
         dentista2 = User(
             name="Dr. Bruno Lima",
             email="bruno.lima@hality.com",
             hashed_password=senha_hash,
+            is_verified=True,
             role="profissional",
         )
         paciente1 = User(
@@ -132,6 +135,7 @@ async def seed() -> None:
             email="carla.mendes@example.com",
             phone="51999990001",
             hashed_password=senha_hash,
+            is_verified=True,
             role="paciente",
             data_nascimento=date(1988, 4, 12),
         )
@@ -140,6 +144,7 @@ async def seed() -> None:
             email="diego.fontana@example.com",
             phone="51999990002",
             hashed_password=senha_hash,
+            is_verified=True,
             role="paciente",
             data_nascimento=date(1975, 9, 3),
         )
@@ -147,6 +152,7 @@ async def seed() -> None:
             name="Elisa Prado",
             email="elisa.prado@example.com",
             hashed_password=senha_hash,
+            is_verified=True,
             role="paciente",
             data_nascimento=date(1996, 1, 27),
         )
@@ -155,6 +161,7 @@ async def seed() -> None:
             email="nina.sem.historico@example.com",
             phone="51999990004",
             hashed_password=senha_hash,
+            is_verified=True,
             role="paciente",
             data_nascimento=date(2001, 6, 15),
         )

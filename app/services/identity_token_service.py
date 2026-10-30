@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 PASSWORD_RESET = "password_reset"
 INVITATION = "invitation"
+EMAIL_VERIFICATION = "email_verification"
 QUEUED = "queued"
 SENT = "sent"
 FAILED = "failed"
@@ -188,6 +189,16 @@ async def consume_recovery_rate_limit(db: AsyncSession, key: str) -> bool:
     )
 
 
+async def consume_email_verification_rate_limit(db: AsyncSession, key: str) -> bool:
+    settings = get_settings()
+    return await consume_rate_limit(
+        db,
+        f"email_verification:{key}",
+        limit=settings.email_verification_rate_limit,
+        window_seconds=settings.email_verification_rate_window_seconds,
+    )
+
+
 async def _create_action(
     db: AsyncSession,
     user: User,
@@ -265,6 +276,51 @@ async def create_invitation(db: AsyncSession, user: User, *, commit: bool = True
     return await _create_action(db, user, INVITATION, commit=commit)
 
 
+async def create_email_verification(db: AsyncSession, user: User, *, commit: bool = True) -> str:
+    return await _create_action(db, user, EMAIL_VERIFICATION, commit=commit)
+
+
+async def request_email_verification_resend(db: AsyncSession, email: str) -> None:
+    user = await db.scalar(select(User).where(func.lower(User.email) == email.lower()))
+    if user is not None and user.is_active and not user.is_verified:
+        await create_email_verification(db, user)
+
+
+async def confirm_email_verification(db: AsyncSession, token: str) -> None:
+    action = await db.scalar(
+        select(IdentityAction)
+        .where(
+            IdentityAction.token_hash == _hash_token(token),
+            IdentityAction.purpose == EMAIL_VERIFICATION,
+        )
+        .with_for_update()
+    )
+    now = _now()
+    if action is None or action.used_at is not None or action.revoked_at is not None:
+        raise InvalidIdentityTokenError
+    if _utc(action.expires_at) <= now:
+        await db.execute(
+            update(EmailOutbox)
+            .where(EmailOutbox.action_id == action.id, EmailOutbox.status != CONSUMED)
+            .values(status=EXPIRED)
+        )
+        await db.commit()
+        raise InvalidIdentityTokenError
+
+    user = await db.get(User, action.user_id)
+    if user is None or not user.is_active:
+        raise InvalidIdentityTokenError
+
+    action.used_at = now
+    user.is_verified = True
+    await db.execute(
+        update(EmailOutbox)
+        .where(EmailOutbox.action_id == action.id, EmailOutbox.status != EXPIRED)
+        .values(status=CONSUMED)
+    )
+    await db.commit()
+
+
 async def consume_identity_action(
     db: AsyncSession,
     token: str,
@@ -316,6 +372,7 @@ async def consume_identity_action(
     user.hashed_password = password_helper.hash(new_password)
     if purpose == INVITATION:
         user.is_active = True
+        user.is_verified = True
         if decisoes:
             await consentimento_service.gravar_decisoes(
                 db,
@@ -369,6 +426,7 @@ async def dispatch_pending_emails(
     retention_seconds = max(
         settings.identity_recovery_rate_window_seconds,
         settings.google_authorize_rate_window_seconds,
+        settings.email_verification_rate_window_seconds,
     )
     await db.execute(
         delete(IdentityRateLimit).where(
