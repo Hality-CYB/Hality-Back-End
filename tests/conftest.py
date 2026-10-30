@@ -46,7 +46,7 @@ from fastapi import HTTPException, Request, status
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -73,6 +73,27 @@ from app.models import (
 
 # Decisões mínimas para um cadastro público válido (só o tratamento é obrigatório).
 CONSENTIMENTOS_CADASTRO = [{"finalidade": "health_data", "versao": "v1", "aceito": True}]
+
+
+async def confirmar_email_cadastrado(client: AsyncClient, db: AsyncSession, email: str) -> None:
+    from app.services.identity_token_service import EMAIL_VERIFICATION, _token_for
+
+    acao = await db.scalar(
+        select(IdentityAction)
+        .join(User, User.id == IdentityAction.user_id)
+        .where(
+            func.lower(User.email) == email.lower(),
+            IdentityAction.purpose == EMAIL_VERIFICATION,
+            IdentityAction.used_at.is_(None),
+            IdentityAction.revoked_at.is_(None),
+        )
+    )
+    resposta = await client.post(
+        "/api/v1/auth/email-verification/confirm",
+        json={"token": _token_for(acao.id, acao.purpose)},
+    )
+    assert resposta.status_code == 204
+
 
 # Paciente fixo usado pela suíte de anamnese (Postgres real).
 PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
