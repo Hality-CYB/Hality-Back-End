@@ -476,7 +476,10 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["revisao"]["classificacao"]["codigo"] == "halito_normal"
     assert corpo["revisao"]["observacoes"] == "ok"
 
-    assert "dataset" not in corpo
+    assert corpo["dataset"] == {
+        "disponivel": True,
+        "motivo": None,
+    }
     assert corpo["rotulo_dataset"] == {
         "atual": None,
         "historico": [],
