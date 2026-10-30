@@ -24,6 +24,7 @@ from app.schemas.admin_diagnostico import (
     AdminDiagnosticoItem,
     AdminDiagnosticoListResponse,
     ClassificacaoAutomatica,
+    DatasetInfo,
     ImagemInfo,
     PacienteAdminResumo,
     RevisaoHistorica,
@@ -1236,6 +1237,10 @@ async def obter_diagnostico_admin(
             )
             for registro in historico
         ],
+        dataset=DatasetInfo(
+            disponivel=rotulo_dataset.exportavel,
+            motivo=rotulo_dataset.motivo,
+        ),
         rotulo_dataset=rotulo_dataset,
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
