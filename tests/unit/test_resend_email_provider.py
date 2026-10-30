@@ -110,7 +110,9 @@ async def test_sandbox_rejeita_destinatario_diferente_sem_chamada_http() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("purpose", ["invitation", "password_reset", "diagnostic_review"])
+@pytest.mark.parametrize(
+    "purpose", ["invitation", "password_reset", "email_verification", "diagnostic_review"]
+)
 async def test_dominio_verificado_envia_cada_fluxo_ao_destinatario_real(purpose: str) -> None:
     payloads = []
 
