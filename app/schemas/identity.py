@@ -27,3 +27,17 @@ class InvitationConfirmRequest(BaseModel):
     token: str = Field(..., min_length=20)
     senha: SenhaNova
     consentimentos: list[DecisaoConsentimento] = Field(default_factory=list)
+
+
+class EmailVerificationConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(..., min_length=20)
+
+
+class EmailVerificationResend(BaseModel):
+    email: EmailStr
+
+
+class EmailVerificationResendResponse(BaseModel):
+    message: str
