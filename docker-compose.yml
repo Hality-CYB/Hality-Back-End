@@ -1,0 +1,85 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Modelo de inferência (triagem de indício de halitose pela foto da língua).
+  # OPCIONAL: só sobe com o perfil "modelo", porque depende de uma imagem
+  # pré-pronta que não está em nenhum registry. Sem o perfil, `docker compose up`
+  # sobe só o resto e a API cai no mock. Para usar o modelo de verdade, carregue
+  # a imagem uma vez e suba com o perfil e a URL:
+  #   docker load -i hality-ai.tar
+  #   HALITY_AI_URL=http://hality-ai:8000 docker compose --profile modelo up -d
+  hality-ai:
+    image: hality-ai:latest
+    profiles: ["modelo"]
+    expose:
+      - "8000"
+    healthcheck:
+      # A imagem roda python:3.12-slim (sem curl); valida /saude por urllib.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/saude').status==200 else 1)"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s  # os modelos carregam e aquecem na subida
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      # Vazio = usa o mock (padrão). Preenchido = usa o modelo real. Vem da var
+      # de ambiente HALITY_AI_URL ou, na falta dela, do HALITY_AI_URL do .env
+      # (ver comando no serviço hality-ai). Sem nenhum dos dois, fica vazio.
+      HALITY_AI_URL: ${HALITY_AI_URL:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      # required: false -> só espera o modelo quando ele faz parte da subida
+      # (perfil "modelo"); sem o perfil, a API sobe sem ele e usa o mock.
+      hality-ai:
+        condition: service_healthy
+        required: false
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - diagnosticos_data:/app/.data
+    restart: unless-stopped
+
+  identity-worker:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m scripts.identity_worker
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: hality_postgres_data
+  diagnosticos_data:
+    name: hality_diagnosticos_data

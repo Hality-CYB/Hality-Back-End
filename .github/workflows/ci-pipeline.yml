@@ -1,0 +1,102 @@
+name: CI Pipeline - hality-back
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & Code Style
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run Ruff check
+        run: uv run ruff check .
+
+      - name: Run Ruff format check
+        run: uv run ruff format --check .
+
+      # Migrations criadas em paralelo a partir do mesmo down_revision geram
+      # mais de um head e quebram `alembic upgrade head` (o git não acusa
+      # conflito porque são arquivos diferentes).
+      - name: Check single Alembic head
+        run: |
+          heads=$(uv run alembic heads | grep -c "(head)")
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Alembic tem $heads heads. Faça rebase na develop e aponte o down_revision da sua migration para o head atual."
+            uv run alembic heads
+            exit 1
+          fi
+
+  test:
+    name: Tests with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: hality
+      POSTGRES_PASSWORD: hality
+      POSTGRES_DB: hality
+      SECRET_KEY: ci-only-secret-with-at-least-32-bytes
+      DEBUG: "false"
+      DB_ECHO: "false"
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hality
+          POSTGRES_PASSWORD: hality
+          POSTGRES_DB: hality
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hality -d hality"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run migrations
+        run: uv run alembic upgrade head
+
+      # Falha se models e migrations divergirem (ex.: índice ou constraint criados
+      # só na migration), antes que um `--autogenerate` proponha removê-los.
+      - name: Check models match migrations
+        run: uv run alembic check
+
+      - name: Run tests
+        run: uv run pytest

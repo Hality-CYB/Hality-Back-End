@@ -1,0 +1,92 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.api.deps import CurrentClinicalUser, CurrentPatient, CurrentPatientDep, DbSession
+from app.schemas.anamnese import AnamneseCreate, AnamneseCreated, AnamneseDetail, Questionario
+from app.services import anamnese_service
+from app.services.anamnese_questionary import get_questionario_ativo
+from app.services.anamnese_store import AnamneseRepository, get_anamnese_repository
+
+router = APIRouter(prefix="/anamneses", tags=["anamnese"])
+AnamneseRepoDep = Annotated[AnamneseRepository, Depends(get_anamnese_repository)]
+
+DETALHE_ANAMNESE_EM_USO = "anamnese já vinculada a um diagnóstico e não pode ser alterada"
+
+
+@router.get("/questionario", response_model=Questionario)
+async def obter_questionario(db: DbSession) -> Questionario:
+    return await get_questionario_ativo(db)
+
+
+@router.post("", response_model=AnamneseCreated, status_code=status.HTTP_201_CREATED)
+async def criar_anamnese(
+    payload: AnamneseCreate,
+    paciente_id: CurrentPatientDep,
+    repo: AnamneseRepoDep,
+) -> AnamneseCreated:
+    # TODO(admin): no futuro, criação deve ser restrita a admin. Hoje qualquer
+    # paciente autenticado cria a própria anamnese, como pede a issue #18—
+    # a regra de acesso final fica pra quando papéis/admin existirem.
+    try:
+        return await anamnese_service.criar_anamnese(repo, paciente_id, payload)
+    except anamnese_service.AnamneseValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.erros) from exc
+
+
+@router.get("", response_model=list[AnamneseDetail])
+async def listar_anamneses(
+    paciente_id: CurrentPatientDep, repo: AnamneseRepoDep
+) -> list[AnamneseDetail]:
+    return await anamnese_service.listar_anamneses(repo, paciente_id)
+
+
+@router.get("/{anamnese_id}", response_model=AnamneseDetail)
+async def obter_anamnese(
+    anamnese_id: int, usuario: CurrentClinicalUser, repo: AnamneseRepoDep
+) -> AnamneseDetail:
+    try:
+        return await anamnese_service.obter_anamnese(repo, usuario, anamnese_id)
+    except anamnese_service.AnamneseNaoEncontradaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
+        ) from exc
+
+
+@router.put("/{anamnese_id}", response_model=AnamneseDetail)
+async def atualizar_anamnese(
+    anamnese_id: int,
+    payload: AnamneseCreate,
+    usuario: CurrentPatient,
+    repo: AnamneseRepoDep,
+) -> AnamneseDetail:
+    # TODO(admin): no futuro, edição deve ser restrita a admin. Ainda não implementado.
+    try:
+        return await anamnese_service.atualizar_anamnese(repo, usuario, anamnese_id, payload)
+    except anamnese_service.AnamneseNaoEncontradaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
+        ) from exc
+    except anamnese_service.AnamneseValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.erros) from exc
+    except anamnese_service.AnamneseEmUsoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=DETALHE_ANAMNESE_EM_USO
+        ) from exc
+
+
+@router.delete("/{anamnese_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def deletar_anamnese(
+    anamnese_id: int, usuario: CurrentPatient, repo: AnamneseRepoDep
+) -> None:
+    # TODO(admin): no futuro, deleção deve ser restrita a admin. Ainda não implementado.
+    try:
+        await anamnese_service.deletar_anamnese(repo, usuario, anamnese_id)
+    except anamnese_service.AnamneseNaoEncontradaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="anamnese não encontrada"
+        ) from exc
+    except anamnese_service.AnamneseEmUsoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=DETALHE_ANAMNESE_EM_USO
+        ) from exc

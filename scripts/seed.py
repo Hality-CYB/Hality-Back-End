@@ -1,0 +1,651 @@
+"""Popula o banco local com dados de exemplo para desenvolvimento.
+
+Uso: uv run python -m scripts.seed
+
+Idempotente: apaga os dados das tabelas de negócio (na ordem reversa das
+FKs) antes de inserir, então pode ser rodado quantas vezes for preciso.
+Nunca rode contra produção.
+
+O paciente principal (Carla) é criado com o id fixo `PACIENTE_STUB_ID`, o
+mesmo que `app/api/deps.py:get_current_patient` devolve enquanto a auth da
+anamnese não é unificada. Sem isso, os endpoints de anamnese e diagnóstico
+não funcionam no Swagger: eles ignoram o usuário logado e sempre resolvem
+para esse id.
+"""
+
+import asyncio
+import os
+import uuid
+from datetime import UTC, date, datetime, timedelta
+
+from dotenv import load_dotenv
+from fastapi_users.db import SQLAlchemyUserDatabase
+from sqlalchemy import delete
+
+from app.auth.users import UserManager
+from app.core.erros_diagnostico import CodigoErroDiagnostico
+from app.db.session import async_session_factory
+from app.models import (
+    Anamnese,
+    ClassificacaoDiagnostico,
+    ConsentimentoEvento,
+    Conteudo,
+    Diagnostico,
+    Imagem,
+    PacienteProfissional,
+    Profissional,
+    Questionario,
+    User,
+)
+from app.schemas.diagnostico import OrigemResultado
+from app.services.anamnese_questionary import _QUESTIONARIO_FALLBACK
+
+load_dotenv()
+
+SEED_PASSWORD = os.getenv("SEED_PASSWORD")
+
+# Mesmo id fixo usado pelas suítes de teste (tests/conftest.py, tests/test_diagnostico.py).
+PACIENTE_STUB_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+# Parâmetros de captura são um JSONB livre: o endpoint só exige "objeto JSON
+# válido" e o service repassa sem validar. Não existe schema para o campo.
+PARAMETROS_CAPTURA = {"iluminacao": "natural", "distancia_cm": 20}
+
+
+def _respostas(frequencia: str, avaliacao: int, *, mau_halito: bool) -> list[dict]:
+    """Respostas no formato de `ItemRespostaRegistrada` (já "lexadas"), no
+    formato do catálogo estático de fallback (anamnese_questionary.py,
+    versão "2026-08-v1")."""
+    return [
+        {
+            "pergunta_id": "mau_halito_ao_acordar",
+            "des_pergunta": "Você sente mau hálito ao acordar?",
+            "tipo_pergunta": "boolean",
+            "des_resposta": "Sim" if mau_halito else "Não",
+            "valor": mau_halito,
+            "tipo_resposta": "bool",
+        },
+        {
+            "pergunta_id": "frequencia_escovacao",
+            "des_pergunta": "Com que frequência você escova os dentes?",
+            "tipo_pergunta": "single_choice",
+            "des_resposta": frequencia,
+            "valor": frequencia,
+            "tipo_resposta": "str",
+        },
+        {
+            "pergunta_id": "avaliacao_propria_halito",
+            "des_pergunta": "Como você avalia o cheiro da sua respiração?",
+            "tipo_pergunta": "scale",
+            "des_resposta": str(avaliacao),
+            "valor": avaliacao,
+            "tipo_resposta": "int",
+        },
+    ]
+
+
+async def seed() -> None:
+    if not SEED_PASSWORD:
+        raise RuntimeError("SEED_PASSWORD não está definida no .env")
+
+    async with async_session_factory() as db:
+        # Mesmo hasher do endpoint de registro, para as senhas baterem no login.
+        password_helper = UserManager(SQLAlchemyUserDatabase(db, User)).password_helper
+        senha_hash = password_helper.hash(SEED_PASSWORD)
+
+        for model in (
+            Imagem,
+            Diagnostico,
+            Anamnese,
+            Conteudo,
+            PacienteProfissional,
+            Profissional,
+            ClassificacaoDiagnostico,
+            Questionario,
+            # FK RESTRICT para users: precisa sair antes dos usuários.
+            ConsentimentoEvento,
+            User,
+        ):
+            await db.execute(delete(model))
+
+        admin = User(
+            name="Admin Hality",
+            email="admin@hality.com",
+            hashed_password=senha_hash,
+            role="admin",
+        )
+        dentista1 = User(
+            name="Dra. Ana Souza",
+            email="ana.souza@hality.com",
+            hashed_password=senha_hash,
+            role="profissional",
+        )
+        dentista2 = User(
+            name="Dr. Bruno Lima",
+            email="bruno.lima@hality.com",
+            hashed_password=senha_hash,
+            role="profissional",
+        )
+        paciente1 = User(
+            id=PACIENTE_STUB_ID,
+            name="Carla Mendes",
+            email="carla.mendes@example.com",
+            phone="51999990001",
+            hashed_password=senha_hash,
+            role="paciente",
+            data_nascimento=date(1988, 4, 12),
+        )
+        paciente2 = User(
+            name="Diego Fontana",
+            email="diego.fontana@example.com",
+            phone="51999990002",
+            hashed_password=senha_hash,
+            role="paciente",
+            data_nascimento=date(1975, 9, 3),
+        )
+        paciente3 = User(
+            name="Elisa Prado",
+            email="elisa.prado@example.com",
+            hashed_password=senha_hash,
+            role="paciente",
+            data_nascimento=date(1996, 1, 27),
+        )
+        paciente4 = User(
+            name="Nina Sem Histórico",
+            email="nina.sem.historico@example.com",
+            phone="51999990004",
+            hashed_password=senha_hash,
+            role="paciente",
+            data_nascimento=date(2001, 6, 15),
+        )
+        db.add_all([admin, dentista1, dentista2, paciente1, paciente2, paciente3, paciente4])
+        await db.flush()
+
+        # Perguntas extraídas de "Tabela anamnese Hality-2.xlsx" (colunas B a L:
+        # IDADE, Q1-Q10). Tipo inferido a partir dos valores de exemplo na
+        # planilha: sim/não -> boolean; Fraco/Moderado/Forte -> single_choice
+        # (opções já vêm do próprio enunciado da coluna); IDADE é numérica e
+        # não tem um tipo dedicado no schema, então usa scale sem rótulos.
+        questionario = Questionario(
+            versao="2026-09-v1",
+            perguntas=[
+                {
+                    "id": "idade",
+                    "enunciado": "Qual a sua idade?",
+                    "tipo": "text",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": 0,
+                    "escala_max": 120,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "boca_seca",
+                    "enunciado": "Você sente/ Tem boca seca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "respira_pela_boca",
+                    "enunciado": "Você respira pela boca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "gosto_ruim_na_boca",
+                    "enunciado": "Você sente/ tem frequentemente um gosto ruim na boca?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "acha_que_tem_mau_halito",
+                    "enunciado": "Você acha que tem mau hálito?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "intensidade_mau_halito",
+                    "enunciado": "Como você avalia a intensidade do seu mau hálito?",
+                    "tipo": "single_choice",
+                    "obrigatoria": True,
+                    "opcoes": ["Fraco", "Moderado", "Forte"],
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "ja_falaram_que_tem_mau_halito",
+                    "enunciado": "Alguém já lhe falou que você tem problema com mau hálito?",  # noqa: E501
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "ja_consultou_especialista",
+                    "enunciado": "Você já consultou algum especialista sobre esse problema?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "escova_a_lingua",
+                    "enunciado": "Você costuma escovar a língua?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "se_afasta_de_pessoas",
+                    "enunciado": "Você se afasta das pessoas por causa do seu mau hálito?",
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+                {
+                    "id": "usa_algo_para_disfarcar",
+                    "enunciado": (
+                        "Você usa alguma coisa (hortelã, chicletes...) para disfarçar o mau hálito?"  # noqa: E501
+                    ),
+                    "tipo": "boolean",
+                    "obrigatoria": True,
+                    "opcoes": None,
+                    "escala_min": None,
+                    "escala_max": None,
+                    "escala_label_min": None,
+                    "escala_label_max": None,
+                },
+            ],
+        )
+        # As anamneses abaixo usam a versão do fallback.
+        questionario_fallback = Questionario(
+            versao=_QUESTIONARIO_FALLBACK.versao,
+            perguntas=[
+                pergunta.model_dump(mode="json") for pergunta in _QUESTIONARIO_FALLBACK.perguntas
+            ],
+            criado_em=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+        questionario.criado_em = datetime(2026, 9, 1, tzinfo=UTC)
+        # Vigente: a mesma 2026-09-v1 sem a pergunta de idade, que agora vem da
+        # data de nascimento do cadastro (mesma versão que a migration 3f4a5b6c7d8e publica).
+        questionario_sem_idade = Questionario(
+            versao="2026-10-v1",
+            perguntas=[p for p in questionario.perguntas if p["id"] != "idade"],
+            criado_em=datetime(2026, 10, 1, tzinfo=UTC),
+        )
+        db.add_all([questionario_fallback, questionario, questionario_sem_idade])
+
+        profissional1 = Profissional(
+            usuario_id=dentista1.id,
+            registro_profissional="CRO-RS 12345",
+            especialidade="Periodontia",
+            vinculado_hality=True,
+        )
+        profissional2 = Profissional(
+            usuario_id=dentista2.id,
+            registro_profissional="CRO-RS 54321",
+            especialidade="Clínica Geral",
+            vinculado_hality=False,
+        )
+        db.add_all([profissional1, profissional2])
+        await db.flush()
+
+        db.add_all(
+            [
+                PacienteProfissional(
+                    paciente_id=paciente1.id, profissional_id=profissional1.usuario_id
+                ),
+                PacienteProfissional(
+                    paciente_id=paciente2.id, profissional_id=profissional1.usuario_id
+                ),
+                PacienteProfissional(
+                    paciente_id=paciente3.id, profissional_id=profissional2.usuario_id
+                ),
+            ]
+        )
+
+        halito_normal = ClassificacaoDiagnostico(
+            codigo="halito_normal", nome_exibicao="Hálito Normal", ordem=1
+        )
+        halitose_intima = ClassificacaoDiagnostico(
+            codigo="halitose_intima", nome_exibicao="Halitose Íntima", ordem=2
+        )
+        mau_halito_social = ClassificacaoDiagnostico(
+            codigo="mau_halito_social", nome_exibicao="Mau Hálito Social", ordem=3
+        )
+        db.add_all([halito_normal, halitose_intima, mau_halito_social])
+        await db.flush()
+
+        db.add_all(
+            [
+                Conteudo(
+                    titulo="Orientação de higiene",
+                    categoria="higiene",
+                    conteudo={
+                        "itens": [
+                            {"tipo": "texto", "texto": "Escove os dentes após as refeições."}  # noqa: E501
+                        ]
+                    },
+                    # Halitose Íntima usa a mesma orientação do Hálito Normal até o
+                    # time definir um conteúdo próprio para ela.
+                    classificacao_ids=[halito_normal.id, halitose_intima.id],
+                    aparece_na_home=True,
+                    status="publicado",
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+                Conteudo(
+                    titulo="Protocolo periodontal",
+                    categoria="tratamento",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "protocolo_tratamento",
+                                "numero_sessoes": 4,
+                                "descricao": "Acompanhamento periodontal mensal.",
+                            }
+                        ]
+                    },
+                    classificacao_ids=[mau_halito_social.id],
+                    status="publicado",
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+            ]
+        )
+        await db.flush()
+
+        agora = datetime.now(UTC)
+
+        # Uma anamnese por diagnóstico: `diagnosticos.anamnese_id` é UNIQUE.
+        anamnese_concluido = Anamnese(
+            paciente_id=paciente1.id,
+            data_preenchimento=agora - timedelta(days=3),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("2x ao dia", 2, mau_halito=True),
+        )
+        anamnese_revisado = Anamnese(
+            paciente_id=paciente1.id,
+            data_preenchimento=agora - timedelta(days=10),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("1x ao dia", 1, mau_halito=True),
+        )
+        anamnese_processando = Anamnese(
+            paciente_id=paciente1.id,
+            data_preenchimento=agora - timedelta(hours=6),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("3x ou mais", 4, mau_halito=False),
+        )
+        anamnese_falha = Anamnese(
+            paciente_id=paciente1.id,
+            data_preenchimento=agora - timedelta(days=1),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("2x ao dia", 3, mau_halito=True),
+        )
+        anamnese_diego = Anamnese(
+            paciente_id=paciente2.id,
+            data_preenchimento=agora - timedelta(days=5),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("1x ao dia", 1, mau_halito=True),
+        )
+        anamnese_elisa = Anamnese(
+            paciente_id=paciente3.id,
+            data_preenchimento=agora - timedelta(days=2),
+            id_versao_questionario="2026-08-v1",
+            respostas=_respostas("3x ou mais", 5, mau_halito=False),
+        )
+        db.add_all(
+            [
+                anamnese_concluido,
+                anamnese_revisado,
+                anamnese_processando,
+                anamnese_falha,
+                anamnese_diego,
+                anamnese_elisa,
+            ]
+        )
+        await db.flush()
+
+        # Status conforme o código vivo (diagnostico_service/diagnostico_mock):
+        # "processando", "concluido" e "falha". Só "concluido" e
+        # "aguardando_revisao" estão em STATUS_COM_RESULTADO, ou seja, só eles
+        # devolvem classificação/escala/conteúdos no detalhe.
+        diagnostico_concluido = Diagnostico(
+            paciente_id=paciente1.id,
+            anamnese_id=anamnese_concluido.id,
+            classificacao_id=halito_normal.id,
+            escala_saburra=24,
+            confianca_ia=0.91,
+            origem_resultado=OrigemResultado.MOCK.value,
+            status="aguardando_revisao",
+            data_diagnostico=agora - timedelta(days=3),
+        )
+        diagnostico_revisado = Diagnostico(
+            paciente_id=paciente1.id,
+            anamnese_id=anamnese_revisado.id,
+            classificacao_id=halitose_intima.id,
+            escala_saburra=49,
+            confianca_ia=0.89,
+            origem_resultado=OrigemResultado.MOCK.value,
+            status="concluido",
+            data_diagnostico=agora - timedelta(days=10),
+            profissional_revisor_id=dentista1.id,
+            data_revisao=agora - timedelta(days=9),
+            observacoes_revisao="Confirmado clinicamente, paciente encaminhado para protocolo.",
+        )
+        diagnostico_processando = Diagnostico(
+            paciente_id=paciente1.id,
+            anamnese_id=anamnese_processando.id,
+            classificacao_id=None,
+            escala_saburra=None,
+            confianca_ia=None,
+            status="processando",
+            data_diagnostico=agora - timedelta(days=20),
+        )
+        diagnostico_falha = Diagnostico(
+            paciente_id=paciente1.id,
+            anamnese_id=anamnese_falha.id,
+            classificacao_id=None,
+            escala_saburra=None,
+            confianca_ia=None,
+            status="falha",
+            origem_resultado=OrigemResultado.MOCK.value,
+            erro_codigo=CodigoErroDiagnostico.FALHA_PROCESSAMENTO.value,
+            erro="Imagem fora de foco: não foi possível avaliar a saburra lingual.",
+            data_diagnostico=agora - timedelta(days=15),
+        )
+        diagnostico_diego = Diagnostico(
+            paciente_id=paciente2.id,
+            anamnese_id=anamnese_diego.id,
+            classificacao_id=mau_halito_social.id,
+            escala_saburra=68,
+            confianca_ia=0.87,
+            origem_resultado=OrigemResultado.MOCK.value,
+            status="aguardando_revisao",
+            data_diagnostico=agora - timedelta(days=5),
+        )
+        diagnostico_elisa = Diagnostico(
+            paciente_id=paciente3.id,
+            anamnese_id=anamnese_elisa.id,
+            classificacao_id=halito_normal.id,
+            escala_saburra=3,
+            confianca_ia=0.75,
+            origem_resultado=OrigemResultado.MOCK.value,
+            status="aguardando_revisao",
+            data_diagnostico=agora - timedelta(days=2),
+        )
+        db.add_all(
+            [
+                diagnostico_concluido,
+                diagnostico_revisado,
+                diagnostico_processando,
+                diagnostico_falha,
+                diagnostico_diego,
+                diagnostico_elisa,
+            ]
+        )
+        await db.flush()
+
+        db.add_all(
+            [
+                Conteudo(
+                    titulo="O que é halitose?",
+                    categoria="saude",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "Halitose é o nome dado ao mau hálito persistente. Na maioria "  # noqa: E501
+                                "dos casos ela tem origem na própria boca, em restos de comida "
+                                "e bactérias acumuladas na língua e entre os dentes.",
+                            }
+                        ]
+                    },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=4,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+                Conteudo(
+                    titulo="Limpe a língua todos os dias",
+                    categoria="higiene",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "A saburra lingual, aquela camada esbranquiçada no fundo da "  # noqa: E501
+                                "língua, é a causa mais comum de mau hálito. Use um limpador "  # noqa: E501
+                                "de língua do fundo para a frente, sem forçar, uma vez ao dia.",  # noqa: E501
+                            }
+                        ]
+                    },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=1,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+                Conteudo(
+                    titulo="Beba água ao longo do dia",
+                    categoria="rotina",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "A boca seca favorece o mau hálito porque a saliva é o que "  # noqa: E501
+                                "limpa naturalmente os resíduos. Beba água com frequência, "  # noqa: E501
+                                "principalmente ao acordar e depois de exercícios.",
+                            }
+                        ]
+                    },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=2,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+                Conteudo(
+                    titulo="Alimentos Aliados",
+                    categoria="nutricao",
+                    conteudo={
+                        "itens": [
+                            {
+                                "tipo": "texto",
+                                "texto": "Consuma maçã, cenoura, salsinha e iogurte natural. "  # noqa: E501
+                                "Esses alimentos ajudam a neutralizar os compostos causadores "
+                                "do mau hálito de forma natural.",
+                            }
+                        ]
+                    },
+                    aparece_na_home=True,
+                    status="publicado",
+                    ordem=3,
+                    criado_por_id=admin.id,
+                    atualizado_por_id=admin.id,
+                    publicado_por_id=admin.id,
+                    publicado_em=datetime.now(UTC),
+                ),
+            ]
+        )
+
+        await db.commit()
+
+        ids_carla = {
+            "concluido": diagnostico_concluido.id,
+            "concluido (revisado)": diagnostico_revisado.id,
+            "processando": diagnostico_processando.id,
+            "falha": diagnostico_falha.id,
+        }
+
+    print(
+        "Seed concluído: 7 usuarios, 2 profissionais, 3 classificacoes, "
+        "6 conteudos, 6 anamneses, 6 diagnosticos, sem imagens externas, "
+        "3 questionarios (fallback 2026-08-v1, 2026-09-v1 e vigente 2026-10-v1, sem idade).\n"
+    )
+    print("Credenciais:")
+    for email, role in (
+        ("carla.mendes@example.com", "paciente  <- use este no Swagger"),
+        ("diego.fontana@example.com", "paciente"),
+        ("elisa.prado@example.com", "paciente"),
+        ("nina.sem.historico@example.com", "paciente  <- Home vazia"),
+        ("ana.souza@hality.com", "profissional"),
+        ("bruno.lima@hality.com", "profissional"),
+        ("admin@hality.com", "admin"),
+    ):
+        print(f"  {email:<28} {role}")
+    print(f"\nCarla tem o id fixo do stub: {PACIENTE_STUB_ID}")
+    print("Diagnosticos da Carla (GET /api/v1/diagnosticos/{id}):")
+    for rotulo, diagnostico_id in ids_carla.items():
+        print(f"  id={diagnostico_id:<4} {rotulo}")
+
+
+if __name__ == "__main__":
+    asyncio.run(seed())

@@ -1,0 +1,920 @@
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from sqlalchemy import exists, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.erros_diagnostico import CodigoErroDiagnostico
+from app.db import paciente_profissional_queries
+from app.models.classificacao_diagnostico import (
+    ClassificacaoDiagnostico,
+)
+from app.models.conteudo import Conteudo, DestinoConteudo, StatusConteudo
+from app.models.diagnostico import Diagnostico
+from app.models.diagnostico_revisao import DiagnosticoRevisao
+from app.models.imagem import Imagem
+from app.models.paciente_profissional import PacienteProfissional
+from app.models.user import User
+from app.schemas.diagnostico import OrigemResultado, StatusDiagnostico
+
+
+@dataclass
+class DadosDetalheDiagnostico:
+    imagens: list[Imagem]
+    classificacao: ClassificacaoDiagnostico | None
+    conteudos: list[Conteudo]
+    tem_profissional_vinculado: bool
+    profissional_nome: str | None
+
+
+@dataclass
+class DiagnosticoListado:
+    diagnostico: Diagnostico
+    classificacao: ClassificacaoDiagnostico | None
+    paciente_nome: str | None = None
+
+
+@dataclass
+class DiagnosticosPaginados:
+    itens: list[DiagnosticoListado]
+    total: int
+
+
+@dataclass
+class DiagnosticoProfissionalListado:
+    diagnostico: Diagnostico
+    classificacao: ClassificacaoDiagnostico | None
+    paciente_nome: str
+
+
+@dataclass
+class DiagnosticosProfissionalPaginados:
+    itens: list[DiagnosticoProfissionalListado]
+    total: int
+
+
+@dataclass
+class DiagnosticoRevisaoDetalhada:
+    revisao: DiagnosticoRevisao
+    classificacao: ClassificacaoDiagnostico
+    profissional_nome: str | None
+
+
+@dataclass(frozen=True)
+class ArquivoImagem:
+    url_arquivo: str
+    sha256: str
+    content_type: str
+    tamanho_bytes: int
+
+
+def _ordenacao(ordem: str):
+    if ordem == "data_asc":
+        return (
+            Diagnostico.data_diagnostico.asc(),
+            Diagnostico.id.asc(),
+        )
+
+    # `id` como desempate garante paginação estável com datas iguais.
+    return (
+        Diagnostico.data_diagnostico.desc(),
+        Diagnostico.id.desc(),
+    )
+
+
+async def buscar_por_id(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> Diagnostico | None:
+    result = await db.execute(
+        select(Diagnostico).where(
+            Diagnostico.id == diagnostico_id,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def buscar_paciente_por_arquivo_imagem(
+    db: AsyncSession,
+    nome_arquivo: str,
+) -> uuid.UUID | None:
+    result = await db.execute(
+        select(Diagnostico.paciente_id)
+        .join(
+            Imagem,
+            Imagem.diagnostico_id == Diagnostico.id,
+        )
+        .where(
+            Imagem.url_arquivo.endswith(
+                f"/{nome_arquivo}",
+                autoescape=True,
+            )
+        )
+        .limit(1)
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def listar_por_paciente(
+    db: AsyncSession,
+    paciente_id: int,
+    data_inicio: datetime | None,
+    data_fim: datetime | None,
+    status: str | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> DiagnosticosPaginados:
+    filtros = [
+        Diagnostico.paciente_id == paciente_id,
+    ]
+
+    if data_inicio is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico >= data_inicio,
+        )
+
+    if data_fim is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico <= data_fim,
+        )
+
+    if status is not None:
+        filtros.append(
+            Diagnostico.status == status,
+        )
+
+    total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(
+            Diagnostico,
+            ClassificacaoDiagnostico,
+        )
+        .outerjoin(
+            ClassificacaoDiagnostico,
+            Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .where(*filtros)
+        .order_by(*_ordenacao(ordem))
+        .offset((pagina - 1) * limite)
+        .limit(limite)
+    )
+
+    return DiagnosticosPaginados(
+        itens=[
+            DiagnosticoListado(
+                diagnostico=diagnostico,
+                classificacao=classificacao,
+            )
+            for diagnostico, classificacao in result.all()
+        ],
+        total=total,
+    )
+
+
+async def listar_admin(
+    db: AsyncSession,
+    paciente_id: uuid.UUID | None,
+    classificacao_codigo: str | None,
+    sem_classificacao: bool,
+    status: str | None,
+    data_inicio: datetime | None,
+    data_fim: datetime | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> DiagnosticosPaginados:
+    """Listagem administrativa (todos os pacientes) com filtros opcionais.
+
+    Estende a mesma consulta/estrutura de `listar_por_paciente`: só muda o
+    conjunto de filtros. Não carrega imagens nem anamnese.
+    """
+
+    filtros = []
+
+    if paciente_id is not None:
+        filtros.append(
+            Diagnostico.paciente_id == paciente_id,
+        )
+
+    if status is not None:
+        filtros.append(
+            Diagnostico.status == status,
+        )
+
+    if data_inicio is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico >= data_inicio,
+        )
+
+    if data_fim is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico <= data_fim,
+        )
+
+    if sem_classificacao:
+        filtros.append(
+            Diagnostico.classificacao_id.is_(None),
+        )
+    elif classificacao_codigo is not None:
+        # Subquery no lugar de join: o COUNT usa os mesmos filtros
+        # sem precisar de join.
+        filtros.append(
+            Diagnostico.classificacao_id.in_(
+                select(ClassificacaoDiagnostico.id).where(
+                    ClassificacaoDiagnostico.codigo == classificacao_codigo
+                )
+            )
+        )
+
+    total_result = await db.execute(select(func.count()).select_from(Diagnostico).where(*filtros))
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(
+            Diagnostico,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .outerjoin(
+            ClassificacaoDiagnostico,
+            Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .join(User, User.id == Diagnostico.paciente_id)
+        .where(*filtros)
+        .order_by(*_ordenacao(ordem))
+        .offset((pagina - 1) * limite)
+        .limit(limite)
+    )
+
+    return DiagnosticosPaginados(
+        itens=[
+            DiagnosticoListado(
+                diagnostico=diagnostico,
+                classificacao=classificacao,
+                paciente_nome=paciente_nome,
+            )
+            for diagnostico, classificacao, paciente_nome in result.all()
+        ],
+        total=total,
+    )
+
+
+async def listar_profissional(
+    db: AsyncSession,
+    profissional_id: uuid.UUID,
+    paciente_id: uuid.UUID | None,
+    data_inicio: datetime | None,
+    data_fim: datetime | None,
+    status: str | None,
+    pagina: int,
+    limite: int,
+    ordem: str,
+) -> DiagnosticosProfissionalPaginados:
+    """Lista diagnósticos de pacientes com vínculo ativo com o profissional.
+
+    `paciente_id`, quando informado, funciona apenas como filtro adicional.
+    O vínculo ativo continua sendo obrigatório e é aplicado diretamente
+    na consulta.
+    """
+
+    filtros = [
+        PacienteProfissional.profissional_id == profissional_id,
+        PacienteProfissional.ativo.is_(True),
+    ]
+
+    if paciente_id is not None:
+        filtros.append(
+            Diagnostico.paciente_id == paciente_id,
+        )
+
+    if data_inicio is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico >= data_inicio,
+        )
+
+    if data_fim is not None:
+        filtros.append(
+            Diagnostico.data_diagnostico <= data_fim,
+        )
+
+    if status is not None:
+        filtros.append(
+            Diagnostico.status == status,
+        )
+
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(Diagnostico)
+        .join(
+            PacienteProfissional,
+            PacienteProfissional.paciente_id == Diagnostico.paciente_id,
+        )
+        .where(*filtros)
+    )
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(
+            Diagnostico,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            PacienteProfissional,
+            PacienteProfissional.paciente_id == Diagnostico.paciente_id,
+        )
+        .join(
+            User,
+            User.id == Diagnostico.paciente_id,
+        )
+        .outerjoin(
+            ClassificacaoDiagnostico,
+            Diagnostico.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .where(*filtros)
+        .order_by(*_ordenacao(ordem))
+        .offset((pagina - 1) * limite)
+        .limit(limite)
+    )
+
+    return DiagnosticosProfissionalPaginados(
+        itens=[
+            DiagnosticoProfissionalListado(
+                diagnostico=diagnostico,
+                classificacao=classificacao,
+                paciente_nome=paciente_nome,
+            )
+            for (
+                diagnostico,
+                classificacao,
+                paciente_nome,
+            ) in result.all()
+        ],
+        total=total,
+    )
+
+
+async def contar_imagens(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> int:
+    result = await db.execute(
+        select(func.count())
+        .select_from(Imagem)
+        .where(
+            Imagem.diagnostico_id == diagnostico_id,
+        )
+    )
+
+    return result.scalar_one()
+
+
+async def contar_imagens_por_diagnosticos(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, int]:
+    """Conta imagens de uma página em uma única consulta agregada."""
+    if not diagnostico_ids:
+        return {}
+
+    result = await db.execute(
+        select(Imagem.diagnostico_id, func.count())
+        .where(Imagem.diagnostico_id.in_(diagnostico_ids))
+        .group_by(Imagem.diagnostico_id)
+    )
+    return {diagnostico_id: quantidade for diagnostico_id, quantidade in result.all()}
+
+
+async def buscar_por_anamnese(
+    db: AsyncSession,
+    anamnese_id: int,
+) -> Diagnostico | None:
+    result = await db.execute(
+        select(Diagnostico).where(
+            Diagnostico.anamnese_id == anamnese_id,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def anamnese_possui_diagnostico(
+    db: AsyncSession,
+    anamnese_id: int,
+) -> bool:
+    return bool(await db.scalar(select(exists().where(Diagnostico.anamnese_id == anamnese_id))))
+
+
+async def inserir(
+    db: AsyncSession,
+    paciente_id: uuid.UUID,
+    executor_id: uuid.UUID,
+    anamnese_id: int,
+    arquivo: ArquivoImagem,
+    parametros_captura: dict,
+) -> Diagnostico:
+    # Diagnóstico e imagem entram no mesmo commit: ou os dois existem,
+    # ou nenhum (e o service remove o arquivo do storage).
+    diagnostico = Diagnostico(
+        paciente_id=paciente_id,
+        executor_id=executor_id,
+        anamnese_id=anamnese_id,
+        classificacao_id=None,
+        escala_saburra=None,
+        confianca_ia=None,
+        status="processando",
+    )
+
+    db.add(diagnostico)
+
+    await db.flush()
+
+    imagem = Imagem(
+        diagnostico_id=diagnostico.id,
+        url_arquivo=arquivo.url_arquivo,
+        ordem=1,
+        parametros_captura=parametros_captura,
+        sha256=arquivo.sha256,
+        content_type=arquivo.content_type,
+        tamanho_bytes=arquivo.tamanho_bytes,
+    )
+
+    db.add(imagem)
+
+    await db.commit()
+    await db.refresh(diagnostico)
+
+    return diagnostico
+
+
+async def listar_imagens(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> list[Imagem]:
+    result = await db.execute(
+        select(Imagem)
+        .where(
+            Imagem.diagnostico_id == diagnostico_id,
+        )
+        .order_by(
+            Imagem.ordem.asc(),
+        )
+    )
+
+    return list(result.scalars().all())
+
+
+async def buscar_classificacao(
+    db: AsyncSession,
+    classificacao_id: int,
+) -> ClassificacaoDiagnostico | None:
+    result = await db.execute(
+        select(ClassificacaoDiagnostico).where(
+            ClassificacaoDiagnostico.id == classificacao_id,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def buscar_classificacao_por_codigo(
+    db: AsyncSession,
+    codigo: str,
+) -> ClassificacaoDiagnostico | None:
+    """Busca classificação pelo código canônico usado pela API."""
+
+    result = await db.execute(
+        select(ClassificacaoDiagnostico).where(
+            ClassificacaoDiagnostico.codigo == codigo,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def buscar_classificacao_por_ordem(
+    db: AsyncSession,
+    ordem: int,
+) -> ClassificacaoDiagnostico | None:
+    result = await db.execute(
+        select(ClassificacaoDiagnostico).where(
+            ClassificacaoDiagnostico.ordem == ordem,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def listar_conteudos_por_classificacao(
+    db: AsyncSession,
+    classificacao_id: int,
+) -> list[Conteudo]:
+    result = await db.execute(
+        select(Conteudo)
+        .where(
+            Conteudo.classificacao_ids.any(classificacao_id),
+            or_(
+                Conteudo.destinos.any(DestinoConteudo.ORIENTACOES_DIAGNOSTICO.value),
+                func.cardinality(Conteudo.destinos) == 0,
+            ),
+            Conteudo.status == StatusConteudo.PUBLICADO,
+            Conteudo.criado_por_id.is_not(None),
+        )
+        .order_by(
+            Conteudo.ordem.asc(),
+            Conteudo.id.asc(),
+        )
+    )
+
+    return list(result.scalars().all())
+
+
+async def buscar_nome_usuario(
+    db: AsyncSession,
+    usuario_id: uuid.UUID,
+) -> str | None:
+    result = await db.execute(
+        select(User.name).where(
+            User.id == usuario_id,
+        )
+    )
+
+    return result.scalar_one_or_none()
+
+
+async def buscar_dados_detalhe(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+) -> DadosDetalheDiagnostico:
+    imagens = await listar_imagens(
+        db,
+        diagnostico.id,
+    )
+
+    classificacao = None
+    conteudos: list[Conteudo] = []
+
+    if diagnostico.classificacao_id is not None:
+        classificacao = await buscar_classificacao(
+            db,
+            diagnostico.classificacao_id,
+        )
+
+        conteudos = await listar_conteudos_por_classificacao(
+            db,
+            diagnostico.classificacao_id,
+        )
+
+    vinculado = await paciente_profissional_queries.paciente_tem_vinculo_ativo(
+        db,
+        diagnostico.paciente_id,
+    )
+
+    profissional_nome = None
+
+    if diagnostico.profissional_revisor_id is not None:
+        profissional_nome = await buscar_nome_usuario(
+            db,
+            diagnostico.profissional_revisor_id,
+        )
+
+    return DadosDetalheDiagnostico(
+        imagens=imagens,
+        classificacao=classificacao,
+        conteudos=conteudos,
+        tem_profissional_vinculado=vinculado,
+        profissional_nome=profissional_nome,
+    )
+
+
+async def buscar_ultima_revisao(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> DiagnosticoRevisaoDetalhada | None:
+    """Retorna a versão mais recente da revisão profissional."""
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
+        )
+        # A FK é NOT NULL, mas o usuário pode ser removido; preserve a
+        # revisão histórica mesmo sem o nome do profissional.
+        .outerjoin(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .where(
+            DiagnosticoRevisao.diagnostico_id == diagnostico_id,
+        )
+        .order_by(
+            DiagnosticoRevisao.versao.desc(),
+            DiagnosticoRevisao.id.desc(),
+        )
+        .limit(1)
+    )
+
+    linha = result.one_or_none()
+
+    if linha is None:
+        return None
+
+    revisao, classificacao, profissional_nome = linha
+
+    return DiagnosticoRevisaoDetalhada(
+        revisao=revisao,
+        classificacao=classificacao,
+        profissional_nome=profissional_nome,
+    )
+
+
+async def buscar_ultimas_revisoes(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, DiagnosticoRevisaoDetalhada]:
+    """Retorna a revisão mais recente de cada diagnóstico informado."""
+
+    if not diagnostico_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
+        )
+        .outerjoin(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .where(DiagnosticoRevisao.diagnostico_id.in_(diagnostico_ids))
+        .order_by(
+            DiagnosticoRevisao.diagnostico_id.asc(),
+            DiagnosticoRevisao.versao.desc(),
+            DiagnosticoRevisao.id.desc(),
+        )
+    )
+
+    revisoes: dict[int, DiagnosticoRevisaoDetalhada] = {}
+
+    for revisao, classificacao, profissional_nome in result.all():
+        if revisao.diagnostico_id in revisoes:
+            continue
+
+        revisoes[revisao.diagnostico_id] = DiagnosticoRevisaoDetalhada(
+            revisao=revisao,
+            classificacao=classificacao,
+            profissional_nome=profissional_nome,
+        )
+
+    return revisoes
+
+
+async def listar_revisoes(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> list[DiagnosticoRevisaoDetalhada]:
+    """Lista todo o histórico append-only de revisões do diagnóstico."""
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            ClassificacaoDiagnostico.id == DiagnosticoRevisao.classificacao_id,
+        )
+        .outerjoin(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .where(
+            DiagnosticoRevisao.diagnostico_id == diagnostico_id,
+        )
+        .order_by(
+            DiagnosticoRevisao.versao.asc(),
+            DiagnosticoRevisao.id.asc(),
+        )
+    )
+
+    return [
+        DiagnosticoRevisaoDetalhada(
+            revisao=revisao,
+            classificacao=classificacao,
+            profissional_nome=profissional_nome,
+        )
+        for (
+            revisao,
+            classificacao,
+            profissional_nome,
+        ) in result.all()
+    ]
+
+
+async def listar_ultimas_revisoes(
+    db: AsyncSession,
+    diagnostico_ids: list[int],
+) -> dict[int, DiagnosticoRevisaoDetalhada]:
+
+    if not diagnostico_ids:
+        return {}
+
+    ultimas_versoes = (
+        select(
+            DiagnosticoRevisao.diagnostico_id.label("diagnostico_id"),
+            func.max(DiagnosticoRevisao.versao).label("versao"),
+        )
+        .where(
+            DiagnosticoRevisao.diagnostico_id.in_(diagnostico_ids),
+        )
+        .group_by(
+            DiagnosticoRevisao.diagnostico_id,
+        )
+        .subquery()
+    )
+
+    result = await db.execute(
+        select(
+            DiagnosticoRevisao,
+            ClassificacaoDiagnostico,
+            User.name,
+        )
+        .join(
+            ultimas_versoes,
+            (ultimas_versoes.c.diagnostico_id == DiagnosticoRevisao.diagnostico_id)
+            & (ultimas_versoes.c.versao == DiagnosticoRevisao.versao),
+        )
+        .join(
+            ClassificacaoDiagnostico,
+            DiagnosticoRevisao.classificacao_id == ClassificacaoDiagnostico.id,
+        )
+        .outerjoin(
+            User,
+            User.id == DiagnosticoRevisao.profissional_id,
+        )
+    )
+
+    return {
+        revisao.diagnostico_id: DiagnosticoRevisaoDetalhada(
+            revisao=revisao,
+            classificacao=classificacao,
+            profissional_nome=profissional_nome,
+        )
+        for revisao, classificacao, profissional_nome in result.all()
+    }
+
+
+async def inserir_revisao(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    profissional_id: uuid.UUID,
+    classificacao_id: int,
+    observacao: str | None,
+    versao_esperada: int,
+) -> DiagnosticoRevisao | None:
+    """Cria uma nova versão append-only da revisão profissional.
+
+    `versao_esperada` é a versão que o cliente conhecia ao abrir o
+    diagnóstico.
+
+    Retorna None quando essa versão já está desatualizada.
+
+    Uma disputa real entre duas transações ainda pode ocorrer depois desta
+    verificação. Nesse caso, a UNIQUE(diagnostico_id, versao) gera
+    IntegrityError durante o flush e o service converte o conflito em 409.
+    """
+
+    ultima = await db.scalar(
+        select(DiagnosticoRevisao)
+        .where(
+            DiagnosticoRevisao.diagnostico_id == diagnostico.id,
+        )
+        .order_by(
+            DiagnosticoRevisao.versao.desc(),
+            DiagnosticoRevisao.id.desc(),
+        )
+        .limit(1)
+    )
+
+    versao_atual = ultima.versao if ultima is not None else 0
+
+    if versao_atual != versao_esperada:
+        return None
+
+    agora = datetime.now(UTC)
+
+    revisao = DiagnosticoRevisao(
+        diagnostico_id=diagnostico.id,
+        profissional_id=profissional_id,
+        classificacao_id=classificacao_id,
+        observacao=observacao,
+        versao=versao_atual + 1,
+        revisao_anterior_id=(ultima.id if ultima is not None else None),
+        criado_em=agora,
+    )
+
+    db.add(revisao)
+
+    # Força a verificação da constraint de versão antes de alterarmos
+    # o snapshot da revisão na tabela `diagnosticos`.
+    await db.flush()
+
+    # Compatibilidade com consumidores existentes:
+    # estes campos representam apenas a revisão mais recente.
+    diagnostico.profissional_revisor_id = profissional_id
+    diagnostico.data_revisao = agora
+    diagnostico.observacoes_revisao = observacao
+    # Revisado por um profissional: é o status que diz isso nos payloads.
+    diagnostico.status = "concluido"
+
+    return revisao
+
+
+async def concluir_mock(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    classificacao_id: int,
+    escala_saburra: int,
+    confianca_ia: float,
+) -> Diagnostico:
+    diagnostico.classificacao_id = classificacao_id
+    diagnostico.escala_saburra = escala_saburra
+    diagnostico.confianca_ia = confianca_ia
+    diagnostico.origem_resultado = OrigemResultado.MOCK.value
+    diagnostico.modelo_provider = None
+    diagnostico.modelo_versao = None
+    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
+    diagnostico.status = StatusDiagnostico.AGUARDANDO_REVISAO.value
+    diagnostico.erro_codigo = None
+    diagnostico.erro = None
+
+    await db.commit()
+    await db.refresh(diagnostico)
+
+    return diagnostico
+
+
+async def concluir_modelo(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    classificacao_id: int,
+    escala_saburra: int | None,
+    confianca_ia: float | None,
+    provider: str,
+    versao: str | None,
+) -> Diagnostico:
+    diagnostico.classificacao_id = classificacao_id
+    diagnostico.escala_saburra = escala_saburra
+    diagnostico.confianca_ia = confianca_ia
+    diagnostico.origem_resultado = OrigemResultado.MODELO.value
+    diagnostico.modelo_provider = provider
+    diagnostico.modelo_versao = versao
+    # A IA só sugere: o diagnóstico fica aguardando a revisão de um profissional.
+    diagnostico.status = StatusDiagnostico.AGUARDANDO_REVISAO.value
+    diagnostico.erro_codigo = None
+    diagnostico.erro = None
+
+    await db.commit()
+    await db.refresh(diagnostico)
+
+    return diagnostico
+
+
+async def marcar_falha(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    origem: OrigemResultado,
+    erro_codigo: CodigoErroDiagnostico,
+    erro_interno: str | None = None,
+) -> Diagnostico:
+    diagnostico.classificacao_id = None
+    diagnostico.escala_saburra = None
+    diagnostico.confianca_ia = None
+    diagnostico.origem_resultado = origem.value
+    diagnostico.modelo_provider = None
+    diagnostico.modelo_versao = None
+    diagnostico.status = StatusDiagnostico.FALHA.value
+    diagnostico.erro_codigo = erro_codigo.value
+    diagnostico.erro = erro_interno
+
+    await db.commit()
+    await db.refresh(diagnostico)
+
+    return diagnostico
