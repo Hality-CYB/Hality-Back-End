@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.consentimentos import Finalidade
@@ -101,7 +102,11 @@ async def criar(
     tem_imagem = await db.scalar(
         select(func.count()).select_from(Imagem).where(Imagem.diagnostico_id == diagnostico_id)
     )
-    if diagnostico.status != StatusDiagnostico.CONCLUIDO.value or not tem_imagem:
+    if (
+        diagnostico.status != StatusDiagnostico.CONCLUIDO.value
+        or diagnostico.classificacao_id is None
+        or not tem_imagem
+    ):
         raise RotuloDatasetConflitoError
 
     ultimo = await db.scalar(
@@ -133,10 +138,12 @@ async def criar(
             metadata={"version": rotulo.version, "classificacao": classificacao.codigo},
         )
         await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise RotuloDatasetConflitoError from exc
     except Exception:
         await db.rollback()
         raise
-    await db.refresh(rotulo)
     return _para_item(RotuloDatasetDetalhado(rotulo, classificacao, admin))
 
 

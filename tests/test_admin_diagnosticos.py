@@ -8,6 +8,7 @@ teste; produção continua JSONB).
 então `require_admin` roda de verdade — só a validação do JWT é substituída.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from app.models import (
     User,
 )
 from app.models.consentimento import ConsentimentoEvento
+from app.services import rotulo_dataset_service
 
 
 @compiles(JSONB, "sqlite")
@@ -859,6 +861,47 @@ async def test_rotulo_exige_versao_atual_e_preserva_historico(http, dados, como)
     assert [item["version"] for item in detalhe["historico"]] == [1]
 
 
+async def test_rotulo_concorrente_com_mesma_versao_cria_apenas_um(http, dados, como) -> None:
+    como("admin")
+    rota = f"{BASE}/{dados['d']['d1'].id}/rotulos-dataset"
+
+    respostas = await asyncio.gather(
+        http.post(rota, json={"classificacao": "halito_normal", "version": 0}),
+        http.post(rota, json={"classificacao": "halitose_intima", "version": 0}),
+    )
+
+    assert sorted(resposta.status_code for resposta in respostas) == [201, 409]
+
+
+async def test_rotulo_e_auditoria_fazem_rollback_juntos(
+    dados, session_factory, monkeypatch
+) -> None:
+    async def registrar_e_falhar(*args, **kwargs):
+        await registrar_original(*args, **kwargs)
+        raise RuntimeError("falha simulada na auditoria")
+
+    registrar_original = rotulo_dataset_service.auditoria_queries.registrar_mutacao
+    monkeypatch.setattr(
+        rotulo_dataset_service.auditoria_queries,
+        "registrar_mutacao",
+        registrar_e_falhar,
+    )
+
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        with pytest.raises(RuntimeError, match="falha simulada"):
+            await rotulo_dataset_service.criar(
+                db,
+                dados["d"]["d1"].id,
+                "halito_normal",
+                0,
+                admin,
+            )
+
+    assert await _contar(session_factory, RotuloDataset) == 0
+    assert await _contar(session_factory, AuditoriaAcesso) == 0
+
+
 async def test_rotulo_exige_imagem_e_admin(http, dados, como) -> None:
     diagnostico_sem_imagem = dados["d"]["d2"].id
 
@@ -875,6 +918,34 @@ async def test_rotulo_exige_imagem_e_admin(http, dados, como) -> None:
         json={"classificacao": "halito_normal", "version": 0},
     )
     assert sem_permissao.status_code == 403
+
+
+async def test_rotulo_exige_classificacao_no_diagnostico_concluido(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    diagnostico = dados["d"]["d4"]
+
+    async with session_factory() as db:
+        diagnostico = await db.get(Diagnostico, diagnostico.id)
+        diagnostico.status = "concluido"
+        db.add(
+            Imagem(
+                diagnostico_id=diagnostico.id,
+                url_arquivo="/api/v1/diagnosticos/imagens/sem-classificacao.jpg",
+                ordem=1,
+                parametros_captura={},
+            )
+        )
+        await db.commit()
+
+    resposta = await http.post(
+        f"{BASE}/{diagnostico.id}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+
+    assert resposta.status_code == 409
+    assert await _contar(session_factory, RotuloDataset) == 0
 
 
 async def test_detalhe_rotulo_dataset_sem_consentimento_treino_nao_e_exportavel(
