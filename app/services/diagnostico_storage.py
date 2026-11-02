@@ -61,6 +61,14 @@ async def calcular_sha256(
     )
 
 
+async def ler_privado(url_arquivo: str) -> bytes:
+    """Lê um arquivo pelo identificador interno, sem expor URL de storage."""
+    caminho = resolver_caminho(Path(url_arquivo).name)
+    if caminho is None:
+        raise FileNotFoundError("imagem não encontrada")
+    return await asyncio.to_thread(caminho.read_bytes)
+
+
 async def remover(
     url_arquivo: str,
 ) -> None:
