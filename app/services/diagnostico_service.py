@@ -20,6 +20,7 @@ from app.models.diagnostico import Diagnostico
 from app.models.identity_action import EmailOutbox
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
+    MOTIVO_DATASET_INDISPONIVEL,
     AdminDiagnosticoDetalhe,
     AdminDiagnosticoItem,
     AdminDiagnosticoListResponse,
@@ -1238,8 +1239,8 @@ async def obter_diagnostico_admin(
             for registro in historico
         ],
         dataset=DatasetInfo(
-            disponivel=rotulo_dataset.exportavel,
-            motivo=rotulo_dataset.motivo,
+            disponivel=False,
+            motivo=MOTIVO_DATASET_INDISPONIVEL,
         ),
         rotulo_dataset=rotulo_dataset,
         anamnese_id=diagnostico.anamnese_id,

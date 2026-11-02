@@ -479,8 +479,8 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["revisao"]["observacoes"] == "ok"
 
     assert corpo["dataset"] == {
-        "disponivel": True,
-        "motivo": None,
+        "disponivel": False,
+        "motivo": "exportacao_fora_do_escopo",
     }
     assert corpo["rotulo_dataset"] == {
         "atual": None,
