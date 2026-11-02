@@ -1,0 +1,96 @@
+# Produção: back + front atrás do Caddy (HTTPS automático).
+#
+# Este arquivo vai na pasta que contém os dois repositórios:
+#   ~/hality/
+#   ├── docker-compose.yml   <- cópia deste arquivo
+#   ├── Caddyfile            <- cópia de infra/deploy/Caddyfile
+#   ├── .env                 <- a partir de infra/deploy/.env.example
+#   ├── hality-back/
+#   └── hality-front/
+#
+# Subir/atualizar:  docker compose up -d --build
+#
+# O modelo hality-ai roda em outra EC2 (privada); a API fala com ele pelo
+# HALITY_AI_URL do .env. Só o Caddy publica portas: front, API e banco ficam
+# na rede interna do compose.
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - front
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: ./hality-back
+    image: hality-api:prod
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+    volumes:
+      - diagnosticos_data:/app/.data
+    restart: unless-stopped
+
+  identity-worker:
+    build: ./hality-back
+    image: hality-api:prod
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    command: python -m scripts.identity_worker
+    restart: unless-stopped
+
+  front:
+    build:
+      context: ./hality-front
+      args:
+        # Mesma origem do front: o Caddy manda /api/* para a API.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_URL:?defina PUBLIC_URL no .env}
+    image: hality-front:prod
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: hality_postgres_data
+  diagnosticos_data:
+    name: hality_diagnosticos_data
+  caddy_data:
+    name: hality_caddy_data
+  caddy_config:
+    name: hality_caddy_config

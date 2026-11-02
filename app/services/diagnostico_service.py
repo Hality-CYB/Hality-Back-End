@@ -20,6 +20,7 @@ from app.models.diagnostico import Diagnostico
 from app.models.identity_action import EmailOutbox
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
+    MOTIVO_DATASET_INDISPONIVEL,
     AdminDiagnosticoDetalhe,
     AdminDiagnosticoItem,
     AdminDiagnosticoListResponse,
@@ -60,7 +61,12 @@ from app.schemas.profissional_diagnostico import (
     RevisaoProfissionalResponse,
     RevisaoProfissionalResumo,
 )
-from app.services import consentimento_service, diagnostico_provider, diagnostico_storage
+from app.services import (
+    consentimento_service,
+    diagnostico_provider,
+    diagnostico_storage,
+    rotulo_dataset_service,
+)
 
 AVISO_LEGAL = (
     "Este é um pré-diagnóstico de apoio e não substitui a avaliação de um profissional de saúde."
@@ -1205,6 +1211,12 @@ async def obter_diagnostico_admin(
     historico = await diagnostico_queries.listar_revisoes(db, diagnostico.id)
     ultima_revisao = historico[-1] if historico else None
 
+    rotulo_dataset = await rotulo_dataset_service.obter_info(
+        db,
+        diagnostico,
+        ultima_revisao is not None,
+    )
+
     revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
 
     detalhe = AdminDiagnosticoDetalhe(
@@ -1226,7 +1238,11 @@ async def obter_diagnostico_admin(
             )
             for registro in historico
         ],
-        dataset=DatasetInfo(),
+        dataset=DatasetInfo(
+            disponivel=False,
+            motivo=MOTIVO_DATASET_INDISPONIVEL,
+        ),
+        rotulo_dataset=rotulo_dataset,
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
         imagem=ImagemInfo(),

@@ -32,8 +32,5 @@ class RotuloDataset(Base):
         ForeignKey("rotulos_dataset.id"), nullable=True
     )
     criado_em: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        server_default=func.now(),
-        nullable=False,
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

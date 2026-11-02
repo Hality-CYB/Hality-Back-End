@@ -36,4 +36,5 @@ __all__ = [
     "RotuloDataset",
     "User",
     "DiagnosticoRevisao",
+    "RotuloDataset",
 ]

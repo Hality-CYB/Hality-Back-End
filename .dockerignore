@@ -23,3 +23,6 @@ Dockerfile
 *.log
 .DS_Store
 .data
+
+# Infraestrutura (Terraform/OpenTofu) não entra na imagem
+infra/
