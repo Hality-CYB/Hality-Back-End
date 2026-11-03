@@ -51,6 +51,14 @@ def _email_html() -> str:
     )
 
 
+def _erro_de_validacao(response: httpx.Response) -> bool:
+    try:
+        corpo = response.json()
+    except ValueError:
+        return False
+    return isinstance(corpo, dict) and corpo.get("name") == "validation_error"
+
+
 def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str, str]:
     if message.purpose == INVITATION:
         subject = "Seu convite para o Check Your Breath"
@@ -165,6 +173,8 @@ class ResendEmailProvider:
                 },
                 json=payload,
             )
+        if response.status_code == 403 and _erro_de_validacao(response):
+            raise PermanentEmailError("Resend rejeitou o envio (HTTP 403 validation_error)")
         if response.status_code in {401, 403}:
             raise RetryableEmailError(response.status_code)
         if response.status_code in {400, 422}:
