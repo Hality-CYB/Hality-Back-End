@@ -1,7 +1,7 @@
 """cria histórico append-only de rótulos Hality para dataset
 
 Revision ID: b1c2d3e4f5a6
-Revises: 4a5b6c7d8e9f
+Revises: 5b6c7d8e9f0a
 """
 
 from collections.abc import Sequence
