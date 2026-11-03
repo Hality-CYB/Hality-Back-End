@@ -37,7 +37,7 @@ from app.models import (
     OAuthFluxo,
     User,
 )
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 AUTHORIZE_URL = "/api/v1/auth/google/authorize"
 CALLBACK_URL = "/api/v1/auth/google/callback"
@@ -154,6 +154,7 @@ async def _registrar_com_senha(
         },
     )
     assert resposta.status_code == 201
+    await confirmar_email_cadastrado(client, db, email)
     if role is not None:
         usuario = await _usuario(db, email)
         usuario.role = role

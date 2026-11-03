@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 # fastapi-users usa /auth/register (JSON) e /auth/login (form-data com campo 'username')
 REGISTER_URL = "/api/v1/auth/register"
@@ -32,11 +32,14 @@ _DEFAULT_USER = {
 }
 
 
-async def _register_and_login(client: AsyncClient, user: dict | None = None) -> str:
+async def _register_and_login(
+    client: AsyncClient, db: AsyncSession, user: dict | None = None
+) -> str:
     """Helper: registra um usuário, loga (cookie de refresh fica no client) e
     retorna o access_token."""
     user = user or _DEFAULT_USER
     await client.post(REGISTER_URL, json=user)
+    await confirmar_email_cadastrado(client, db, user["email"])
     # Login usa OAuth2PasswordRequestForm (form-data, campo 'username' em vez de 'email')
     response = await client.post(
         LOGIN_URL,
@@ -96,7 +99,7 @@ async def test_register_missing_name(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_success(client: AsyncClient) -> None:
+async def test_login_success(client: AsyncClient, db_session: AsyncSession) -> None:
     """Testa login bem-sucedido via form-data (status 200 + token JWT)."""
     user = {
         "email": "lucas@hality.com",
@@ -106,6 +109,7 @@ async def test_login_success(client: AsyncClient) -> None:
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
     await client.post(REGISTER_URL, json=user)
+    await confirmar_email_cadastrado(client, db_session, user["email"])
 
     # fastapi-users usa OAuth2PasswordRequestForm: campo 'username' (não 'email')
     response = await client.post(
@@ -145,7 +149,7 @@ async def test_login_invalid_credentials(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_me_success(client: AsyncClient) -> None:
+async def test_get_me_success(client: AsyncClient, db_session: AsyncSession) -> None:
     """Testa obtenção dos dados do usuário autenticado no endpoint /users/me."""
     user = {
         "email": "renata@hality.com",
@@ -155,7 +159,7 @@ async def test_get_me_success(client: AsyncClient) -> None:
         "phone": "(11) 95555-4444",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
-    token = await _register_and_login(client, user)
+    token = await _register_and_login(client, db_session, user)
 
     response = await client.get(ME_URL, headers={"Authorization": f"Bearer {token}"})
 
@@ -182,9 +186,11 @@ async def test_get_me_unauthorized_invalid_token(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_me_nao_altera_role_nem_privilegios(client: AsyncClient) -> None:
+async def test_patch_me_nao_altera_role_nem_privilegios(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     """/users/me só aceita perfil próprio: role e flags internas são rejeitadas (422)."""
-    token = await _register_and_login(client)
+    token = await _register_and_login(client, db_session)
 
     response = await client.patch(
         ME_URL,
@@ -205,7 +211,7 @@ async def test_rotas_users_por_id_nao_sao_expostas(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Nem um superuser acessa /users/{id}: administração é só em /admin/usuarios."""
-    token = await _register_and_login(client)
+    token = await _register_and_login(client, db_session)
     user = await db_session.scalar(select(User).where(User.email == _DEFAULT_USER["email"]))
     user.is_superuser = True
     await db_session.commit()
@@ -228,7 +234,7 @@ async def test_rotas_users_por_id_nao_sao_expostas(
 
 
 @pytest.mark.asyncio
-async def test_refresh_success(client: AsyncClient) -> None:
+async def test_refresh_success(client: AsyncClient, db_session: AsyncSession) -> None:
     """Refresh válido (cookie enviado automaticamente) devolve access token novo."""
     user = {
         "email": "paulo@hality.com",
@@ -237,7 +243,7 @@ async def test_refresh_success(client: AsyncClient) -> None:
         "name": "Paulo Reis",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
-    await _register_and_login(client, user)
+    await _register_and_login(client, db_session, user)
 
     response = await client.post(REFRESH_URL)
 
@@ -253,7 +259,9 @@ async def test_refresh_success(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_rotacao_invalida_cookie_antigo(client: AsyncClient) -> None:
+async def test_refresh_rotacao_invalida_cookie_antigo(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     """Depois de um refresh, o cookie antigo não pode ser reusado (rotação)."""
     user = {
         "email": "sofia@hality.com",
@@ -262,7 +270,7 @@ async def test_refresh_rotacao_invalida_cookie_antigo(client: AsyncClient) -> No
         "name": "Sofia Lima",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
-    await _register_and_login(client, user)
+    await _register_and_login(client, db_session, user)
     cookie_antigo = client.cookies.get(REFRESH_COOKIE_NAME)
 
     primeiro = await client.post(REFRESH_URL)
@@ -291,7 +299,7 @@ async def test_refresh_com_cookie_invalido(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_logout_invalida_refresh_token(client: AsyncClient) -> None:
+async def test_logout_invalida_refresh_token(client: AsyncClient, db_session: AsyncSession) -> None:
     """Logout apaga o refresh_token do banco — usar o cookie depois falha."""
     user = {
         "email": "bianca@hality.com",
@@ -300,7 +308,7 @@ async def test_logout_invalida_refresh_token(client: AsyncClient) -> None:
         "name": "Bianca Alves",
         "consentimentos": CONSENTIMENTOS_CADASTRO,
     }
-    await _register_and_login(client, user)
+    await _register_and_login(client, db_session, user)
     cookie = client.cookies.get(REFRESH_COOKIE_NAME)
 
     logout = await client.post(LOGOUT_URL)
