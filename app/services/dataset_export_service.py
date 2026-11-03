@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image, ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,7 +147,7 @@ def _sem_exif(conteudo: bytes, content_type: str) -> bytes:
         with Image.open(io.BytesIO(conteudo)) as imagem:
             imagem.load()
             saida = io.BytesIO()
-            imagem.copy().save(saida, format=formato[1], exif=b"")
+            ImageOps.exif_transpose(imagem).save(saida, format=formato[1], exif=b"")
             return saida.getvalue()
     except Exception as exc:
         raise DatasetExportStorageError from exc
@@ -223,6 +223,11 @@ def _fingerprint(candidate: _Candidate) -> tuple:
     )
 
 
+def _verificar_limite(spool: tempfile.SpooledTemporaryFile[bytes], settings: Settings) -> None:
+    if spool.tell() > settings.dataset_export_max_bytes:
+        raise DatasetExportLimitError
+
+
 async def gerar(
     db: AsyncSession,
     admin: User,
@@ -236,17 +241,14 @@ async def gerar(
             raise DatasetExportLimitError
         candidates = await _candidates(db, ids)
         artifacts = await _artifacts(candidates)
-        confirmados = await _candidates(db, ids)
-        if [_fingerprint(item) for item in candidates] != [
-            _fingerprint(item) for item in confirmados
-        ]:
-            raise DatasetExportError
         spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - response owns cleanup
             max_size=8 * 1024 * 1024, mode="w+b"
         )
         with zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.csv", _manifest(artifacts))
+            _verificar_limite(spool, settings)
             archive.writestr("README.md", _readme())
+            _verificar_limite(spool, settings)
             for artifact in artifacts:
                 path = (
                     f"images/{_label_code(artifact.candidate.label)}/"
@@ -259,9 +261,13 @@ async def gerar(
                 if hashlib.sha256(image_bytes).hexdigest() != artifact.sha256:
                     raise DatasetExportError
                 archive.writestr(path, image_bytes)
-        if spool.tell() > settings.dataset_export_max_bytes:
-            spool.close()
-            raise DatasetExportLimitError
+                _verificar_limite(spool, settings)
+        confirmados = await _candidates(db, ids)
+        if [_fingerprint(item) for item in candidates] != [
+            _fingerprint(item) for item in confirmados
+        ]:
+            raise DatasetExportError
+        _verificar_limite(spool, settings)
         spool.seek(0)
         await auditoria_queries.registrar_acesso(
             db,
