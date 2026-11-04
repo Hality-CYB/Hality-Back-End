@@ -167,6 +167,11 @@ resource "aws_instance" "app" {
     volume_size = 20
     volume_type = "gp3"
     encrypted   = true
+    tags = {
+      Project     = var.project
+      Environment = var.env
+      ManagedBy   = "terraform"
+    }
   }
 
   lifecycle {
@@ -203,6 +208,11 @@ resource "aws_instance" "ai" {
     volume_size = 12
     volume_type = "gp3"
     encrypted   = true
+    tags = {
+      Project     = var.project
+      Environment = var.env
+      ManagedBy   = "terraform"
+    }
   }
 
   lifecycle {
