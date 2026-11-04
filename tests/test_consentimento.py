@@ -16,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.consentimentos import TERMOS, Finalidade
 from app.models import AuditoriaAcesso, ConsentimentoEvento, User
 from app.services import consentimento_service
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import (
+    CONSENTIMENTOS_CADASTRO,
+    TestingSessionLocal,
+    confirmar_email_cadastrado,
+)
 
 REGISTER_URL = "/api/v1/auth/register"
 LOGIN_URL = "/api/v1/auth/login"
@@ -56,6 +60,8 @@ async def _registrar_e_logar(
         ),
     )
     assert resposta.status_code == 201, resposta.text
+    async with TestingSessionLocal() as db:
+        await confirmar_email_cadastrado(client, db, email)
     return await _login(client, email)
 
 

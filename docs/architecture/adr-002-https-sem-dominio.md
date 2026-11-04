@@ -1,6 +1,8 @@
 # INFRA-02 — Decisão técnica de HTTPS sem domínio próprio
 Data: 09/10/2026. Resultado do spike: critérios AC-I02-01, AC-I02-02 e AC-I02-03 documentados abaixo. Revisão por outra pessoa pendente, conforme Definition of Done do épico #145.
 
+**Status:** decisão de hostname substituída pela [ADR-003](adr-003-dominio-duckdns.md).
+
 ### Decisão
 Usar **Caddy como reverse proxy**, com **hostname gratuito sslip.io apontando para o Elastic IP** e **certificado público do Let's Encrypt**, com emissão e renovação automáticas. Não é necessário comprar domínio. O acesso oficial da clínica será pelo hostname HTTPS, não pelo IP literal.
 

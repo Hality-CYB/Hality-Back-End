@@ -50,7 +50,7 @@ from app.models import (
 )
 from app.schemas.usuario import TipoUsuario
 from app.services import diagnostico_storage
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
 
@@ -443,6 +443,7 @@ async def test_usuario_inativo_recebe_401_antes_da_regra_de_recurso(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     await client.post("/api/v1/auth/register", json=_USUARIO)
+    await confirmar_email_cadastrado(client, db_session, _USUARIO["email"])
     access_token = await _login(client)
 
     await db_session.execute(

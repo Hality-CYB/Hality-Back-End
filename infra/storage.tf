@@ -57,6 +57,25 @@ resource "aws_s3_bucket_lifecycle_configuration" "assets" {
     }
   }
 
+  # Objetos de backup tem chave unica. Versoes antigas sao eliminadas no
+  # primeiro dia permitido apos se tornarem nao correntes.
+  rule {
+    id     = "backups-postgres-retencao"
+    status = "Enabled"
+    filter { prefix = "backups/postgres/" }
+
+    expiration { days = 30 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "backups-postgres-marcadores"
+    status = "Enabled"
+    filter { prefix = "backups/postgres/" }
+
+    expiration { expired_object_delete_marker = true }
+  }
+
   depends_on = [aws_s3_bucket_versioning.assets]
 }
 

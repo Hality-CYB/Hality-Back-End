@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models import Profissional, User
-from tests.conftest import CONSENTIMENTOS_CADASTRO
+from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 REGISTER_URL = "/api/v1/auth/register"
 LOGIN_URL = "/api/v1/auth/login"
@@ -50,6 +50,7 @@ async def _registrar_e_logar(
         user.role = role
         await db.commit()
 
+    await confirmar_email_cadastrado(client, db, email)
     response = await client.post(LOGIN_URL, data={"username": email, "password": SENHA})
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
