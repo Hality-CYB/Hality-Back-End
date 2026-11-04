@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import hashlib
 import io
@@ -87,7 +88,10 @@ async def _candidate(db: AsyncSession, diagnostico: Diagnostico) -> _Candidate:
 
     images = tuple(
         await db.scalars(
-            select(Imagem).where(Imagem.diagnostico_id == diagnostico.id).order_by(Imagem.ordem)
+            select(Imagem)
+            .where(Imagem.diagnostico_id == diagnostico.id)
+            .order_by(Imagem.ordem, Imagem.id)
+            .execution_options(populate_existing=True)
         )
     )
     if not images:
@@ -132,7 +136,13 @@ async def _candidate(db: AsyncSession, diagnostico: Diagnostico) -> _Candidate:
 
 
 async def _candidates(db: AsyncSession, ids: list[int]) -> list[_Candidate]:
-    diagnosticos = list(await db.scalars(select(Diagnostico).where(Diagnostico.id.in_(ids))))
+    diagnosticos = list(
+        await db.scalars(
+            select(Diagnostico)
+            .where(Diagnostico.id.in_(ids))
+            .execution_options(populate_existing=True)
+        )
+    )
     por_id = {diagnostico.id: diagnostico for diagnostico in diagnosticos}
     if len(por_id) != len(ids):
         raise DatasetExportNotFoundError
@@ -147,7 +157,9 @@ def _sem_exif(conteudo: bytes, content_type: str) -> bytes:
         with Image.open(io.BytesIO(conteudo)) as imagem:
             imagem.load()
             saida = io.BytesIO()
-            ImageOps.exif_transpose(imagem).save(saida, format=formato[1], exif=b"")
+            derivada = ImageOps.exif_transpose(imagem)
+            derivada.info.clear()
+            derivada.save(saida, format=formato[1], exif=b"")
             return saida.getvalue()
     except Exception as exc:
         raise DatasetExportStorageError from exc
@@ -219,7 +231,8 @@ def _fingerprint(candidate: _Candidate) -> tuple:
     return (
         candidate.label_source,
         candidate.label_version,
-        [(image.url_arquivo, image.sha256) for image in candidate.images],
+        candidate.label.codigo,
+        tuple((image.url_arquivo, image.sha256) for image in candidate.images),
     )
 
 
@@ -237,9 +250,12 @@ async def gerar(
 ) -> tempfile.SpooledTemporaryFile[bytes]:
     spool = None
     try:
+        if not settings.dataset_export_enabled:
+            raise DatasetExportError
         if len(ids) > settings.dataset_export_max_items:
             raise DatasetExportLimitError
         candidates = await _candidates(db, ids)
+        fingerprints = [_fingerprint(item) for item in candidates]
         artifacts = await _artifacts(candidates)
         spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - response owns cleanup
             max_size=8 * 1024 * 1024, mode="w+b"
@@ -263,9 +279,7 @@ async def gerar(
                 archive.writestr(path, image_bytes)
                 _verificar_limite(spool, settings)
         confirmados = await _candidates(db, ids)
-        if [_fingerprint(item) for item in candidates] != [
-            _fingerprint(item) for item in confirmados
-        ]:
+        if fingerprints != [_fingerprint(item) for item in confirmados]:
             raise DatasetExportError
         _verificar_limite(spool, settings)
         spool.seek(0)
@@ -285,6 +299,11 @@ async def gerar(
         )
         await db.commit()
         return spool
+    except asyncio.CancelledError:
+        if spool is not None:
+            spool.close()
+        await db.rollback()
+        raise
     except DatasetExportError as exc:
         await db.rollback()
         if spool is not None:

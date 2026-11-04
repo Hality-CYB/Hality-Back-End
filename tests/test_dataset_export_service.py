@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import io
 import uuid
@@ -17,7 +18,9 @@ ADMIN = SimpleNamespace(id=uuid.uuid4())
 
 
 def _settings(max_bytes: int = 1024 * 1024) -> SimpleNamespace:
-    return SimpleNamespace(dataset_export_max_items=10, dataset_export_max_bytes=max_bytes)
+    return SimpleNamespace(
+        dataset_export_enabled=True, dataset_export_max_items=10, dataset_export_max_bytes=max_bytes
+    )
 
 
 def _candidate(*, code: str, source: str, version: int, url: str) -> object:
@@ -151,4 +154,45 @@ async def test_gerar_converte_falha_de_storage_e_audita(monkeypatch) -> None:
         await dataset_export_service.gerar(AsyncMock(), ADMIN, [1], _settings(), "corr-4")
 
     auditoria.assert_awaited_once()
+    assert auditoria.await_args.kwargs["result"] == "falha"
+
+
+async def test_cancelamento_fecha_spool_e_desfaz_transacao(monkeypatch):
+    candidato = _candidate(code="halito_normal", source="hality", version=1, url="/a.png")
+    monkeypatch.setattr(
+        dataset_export_service,
+        "_candidates",
+        AsyncMock(side_effect=[[candidato], asyncio.CancelledError()]),
+    )
+    monkeypatch.setattr(
+        dataset_export_service.diagnostico_storage,
+        "ler_privado",
+        AsyncMock(return_value=_png_bytes()),
+    )
+    spool = io.BytesIO()
+    monkeypatch.setattr(
+        dataset_export_service.tempfile, "SpooledTemporaryFile", lambda **kwargs: spool
+    )
+    db = AsyncMock()
+    with pytest.raises(asyncio.CancelledError):
+        await dataset_export_service.gerar(db, ADMIN, [1], _settings(), "cancelamento")
+    assert spool.closed
+    db.rollback.assert_awaited_once()
+
+
+async def test_relabel_durante_geracao_aborta_pacote(monkeypatch):
+    anterior = _candidate(code="halito_normal", source="hality", version=1, url="/a.png")
+    atual = _candidate(code="halitose_intima", source="hality", version=2, url="/a.png")
+    monkeypatch.setattr(
+        dataset_export_service, "_candidates", AsyncMock(side_effect=[[anterior], [atual]])
+    )
+    monkeypatch.setattr(
+        dataset_export_service.diagnostico_storage,
+        "ler_privado",
+        AsyncMock(return_value=_png_bytes()),
+    )
+    auditoria = AsyncMock()
+    monkeypatch.setattr(dataset_export_service.auditoria_queries, "registrar_acesso", auditoria)
+    with pytest.raises(dataset_export_service.DatasetExportError):
+        await dataset_export_service.gerar(AsyncMock(), ADMIN, [1], _settings(), "relabel")
     assert auditoria.await_args.kwargs["result"] == "falha"

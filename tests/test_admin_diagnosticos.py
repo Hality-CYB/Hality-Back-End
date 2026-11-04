@@ -40,7 +40,7 @@ from app.models import (
     User,
 )
 from app.models.consentimento import ConsentimentoEvento
-from app.services import rotulo_dataset_service
+from app.services import dataset_export_service, rotulo_dataset_service
 
 
 @compiles(JSONB, "sqlite")
@@ -49,6 +49,148 @@ def _jsonb_como_json_no_sqlite(type_, compiler, **kw):
 
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.mark.parametrize("decisao", ["ausente", "recusado", "revogado", "antigo", "aceito"])
+async def test_exportacao_consulta_consentimento_real(dados, session_factory, decisao):
+    from sqlalchemy import delete
+
+    async with session_factory() as db:
+        await db.execute(delete(ConsentimentoEvento))
+        if decisao == "revogado":
+            db.add(
+                ConsentimentoEvento(
+                    titular_id=PACIENTE_A,
+                    finalidade="image_training",
+                    versao="v1",
+                    aceito=True,
+                    origem="perfil",
+                )
+            )
+            await db.flush()
+        if decisao != "ausente":
+            db.add(
+                ConsentimentoEvento(
+                    titular_id=PACIENTE_A,
+                    finalidade="image_training",
+                    versao="antiga"
+                    if decisao == "antigo"
+                    else TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                    aceito=decisao in ("aceito", "antigo"),
+                    origem="perfil",
+                )
+            )
+        await db.commit()
+        if decisao == "aceito":
+            candidatos = await dataset_export_service._candidates(db, [dados["d"]["d1"].id])
+            assert candidatos[0].label_source == "profissional"
+        else:
+            with pytest.raises(dataset_export_service.DatasetExportError):
+                await dataset_export_service._candidates(db, [dados["d"]["d1"].id])
+
+
+async def test_exportacao_preferencia_hality_com_fontes_no_banco(dados, session_factory):
+    async with session_factory() as db:
+        diagnostico_id = dados["d"]["d1"].id
+        social = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "mau_halito_social"
+            )
+        )
+        db.add(
+            RotuloDataset(
+                diagnostico_id=diagnostico_id,
+                admin_id=ADMIN_ID,
+                classificacao_id=social.id,
+                version=1,
+            )
+        )
+        await db.commit()
+        candidato = (await dataset_export_service._candidates(db, [diagnostico_id]))[0]
+        assert candidato.label_source == "hality"
+        assert candidato.label.codigo == "mau_halito_social"
+
+
+@pytest.mark.parametrize("caso", ["ia", "sem_imagem", "falha", "inexistente"])
+async def test_exportacao_rejeita_selecao_inelegivel(dados, session_factory, caso):
+    from sqlalchemy import delete
+
+    async with session_factory() as db:
+        diagnostico_id = dados["d"]["d1"].id
+        if caso == "ia":
+            await db.execute(delete(DiagnosticoRevisao))
+        elif caso == "sem_imagem":
+            await db.execute(delete(Imagem))
+        elif caso == "falha":
+            diagnostico = await db.get(Diagnostico, diagnostico_id)
+            diagnostico.status = "falha"
+        else:
+            diagnostico_id = 999999
+        await db.commit()
+        with pytest.raises(dataset_export_service.DatasetExportError):
+            await dataset_export_service._candidates(db, [diagnostico_id])
+
+
+async def test_exportacao_rota_storage_manifesto_e_auditoria(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    import csv
+    import hashlib
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    from app.core.config import get_settings
+    from app.services import diagnostico_storage
+
+    como("admin")
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+    original = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(original, format="PNG")
+    url = await diagnostico_storage.salvar(original.getvalue(), "image/png", "/api/v1")
+    async with session_factory() as db:
+        imagem = await db.scalar(select(Imagem))
+        imagem.url_arquivo = url
+        imagem.content_type = "image/png"
+        await db.commit()
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == 200
+    assert resposta.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
+        manifesto = arquivo.read("manifest.csv").decode()
+        linhas = list(csv.DictReader(io.StringIO(manifesto)))
+        assert len(linhas) == 1
+        assert linhas[0]["label_source"] == "profissional"
+        assert (
+            hashlib.sha256(arquivo.read(linhas[0]["image_path"])).hexdigest() == linhas[0]["sha256"]
+        )
+        assert str(PACIENTE_A) not in manifesto
+        assert url not in manifesto
+    assert await diagnostico_storage.ler_privado(url) == original.getvalue()
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+        assert evento.ator_id == ADMIN_ID
+        assert evento.resultado == "sucesso"
+        assert evento.metadados["contagem_exportada"] == 1
+
+
+@pytest.mark.parametrize("role,status", [("paciente", 403), ("profissional", 403), ("admin", 409)])
+async def test_exportacao_rota_autorizacao_e_flag(http, dados, como, role, status, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", False)
+    como(role)
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == status
+
 
 BASE = "/api/v1/admin/diagnosticos"
 
