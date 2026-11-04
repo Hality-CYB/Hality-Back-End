@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup diario do PostgreSQL Hality
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
