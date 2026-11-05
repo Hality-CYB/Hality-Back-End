@@ -1161,3 +1161,105 @@ async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano
     assert rotulo["fonte_efetiva"] == "ia"
     assert rotulo["exportavel"] is False
     assert rotulo["motivo"] == "sem_rotulo_humano"
+
+
+# ---------------------------------------------------------------------------
+# Exportação: mensagens, ids inelegíveis, limite e imagem sem content_type
+# ---------------------------------------------------------------------------
+
+
+async def _foto_do_d1(session_factory, monkeypatch, tmp_path, *, content_type=None) -> None:
+    """Grava a foto do d1 com EXIF de orientação e GPS, como sai da câmera."""
+    import io
+
+    from PIL import Image
+
+    from app.services import diagnostico_storage
+
+    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+    foto = io.BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6  # orientação: girada 90 graus
+    exif[0x8825] = {2: (30.0, 1.0, 0.0)}  # GPS
+    Image.new("RGB", (4, 2), "red").save(foto, format="JPEG", exif=exif)
+    url = await diagnostico_storage.salvar(foto.getvalue(), "image/jpeg", "/api/v1")
+    async with session_factory() as db:
+        imagem = await db.scalar(select(Imagem))
+        imagem.url_arquivo = url
+        imagem.content_type = content_type
+        await db.commit()
+
+
+async def test_exportacao_desligada_explica_o_motivo(http, dados, como, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", False)
+    como("admin")
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"] == "exportação de dataset indisponível"
+
+
+async def test_exportacao_lista_inelegiveis_sem_gravar_ids_na_auditoria(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type="image/jpeg")
+    como("admin")
+    d1, d2 = dados["d"]["d1"].id, dados["d"]["d2"].id  # d2: concluído sem rótulo humano
+
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [d1, d2]})
+
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"]["diagnostico_ids"] == [d2]
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "falha"
+    assert "diagnostico_ids" not in str(evento.metadados)
+
+
+async def test_exportacao_acima_do_limite_de_itens_responde_413(http, dados, como, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    monkeypatch.setattr(get_settings(), "dataset_export_max_items", 1)
+    como("admin")
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports",
+        json={"diagnostico_ids": [dados["d"]["d1"].id, dados["d"]["d2"].id]},
+    )
+    assert resposta.status_code == 413
+
+
+async def test_exportacao_aceita_imagem_antiga_sem_content_type(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    import csv
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type=None)
+    como("admin")
+
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+
+    assert resposta.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
+        linha = next(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+        assert linha["image_path"].endswith(".jpg")
+        with Image.open(io.BytesIO(arquivo.read(linha["image_path"]))) as imagem:
+            assert imagem.size == (2, 4)  # orientação aplicada
+            assert not imagem.getexif()  # sem EXIF, inclusive GPS

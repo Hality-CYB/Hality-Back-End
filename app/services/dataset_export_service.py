@@ -30,6 +30,13 @@ _IMAGE_FORMATS = {
     "image/png": ("png", "PNG"),
     "image/webp": ("webp", "WEBP"),
 }
+# Reencodar é o que tira os metadados; os padrões do Pillow perdem qualidade
+# (JPEG 75, WebP com perda), o que degrada o dado de treino.
+_SAVE_OPTIONS = {
+    "JPEG": {"quality": 95, "subsampling": 0},
+    "PNG": {},
+    "WEBP": {"lossless": True},
+}
 _MANIFEST_FIELDS = (
     "sample_id",
     "image_path",
@@ -45,7 +52,22 @@ _SAFE_LABEL_CODE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 class DatasetExportError(Exception):
     status_code = 409
-    detail = "a seleção não está mais elegível para exportação"
+    detail: str | dict = "a seleção não está mais elegível para exportação"
+
+
+class DatasetExportDisabledError(DatasetExportError):
+    detail = "exportação de dataset indisponível"
+
+
+class DatasetExportIneligibleError(DatasetExportError):
+    """Diz quais diagnósticos da seleção não podem ser exportados."""
+
+    def __init__(self, diagnostico_ids: list[int]):
+        super().__init__()
+        self.detail = {
+            "mensagem": "há diagnósticos não elegíveis na seleção",
+            "diagnostico_ids": diagnostico_ids,
+        }
 
 
 class DatasetExportNotFoundError(DatasetExportError):
@@ -78,6 +100,7 @@ class _Artifact:
     candidate: _Candidate
     image: Imagem
     sample_id: str
+    content_type: str
     extension: str
     sha256: str
 
@@ -146,7 +169,29 @@ async def _candidates(db: AsyncSession, ids: list[int]) -> list[_Candidate]:
     por_id = {diagnostico.id: diagnostico for diagnostico in diagnosticos}
     if len(por_id) != len(ids):
         raise DatasetExportNotFoundError
-    return [await _candidate(db, por_id[diagnostico_id]) for diagnostico_id in ids]
+    candidatos: list[_Candidate] = []
+    inelegiveis: list[int] = []
+    for diagnostico_id in ids:
+        try:
+            candidatos.append(await _candidate(db, por_id[diagnostico_id]))
+        except DatasetExportError:
+            inelegiveis.append(diagnostico_id)
+    if inelegiveis:
+        raise DatasetExportIneligibleError(inelegiveis)
+    return candidatos
+
+
+def _content_type(image: Imagem, conteudo: bytes) -> str:
+    """Usa o tipo gravado; imagens anteriores a 20/10 não têm, e o tipo sai do cabeçalho."""
+    if image.content_type in _IMAGE_FORMATS:
+        return image.content_type
+    if conteudo.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if conteudo.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if conteudo[:4] == b"RIFF" and conteudo[8:12] == b"WEBP":
+        return "image/webp"
+    raise DatasetExportStorageError
 
 
 def _sem_exif(conteudo: bytes, content_type: str) -> bytes:
@@ -159,7 +204,7 @@ def _sem_exif(conteudo: bytes, content_type: str) -> bytes:
             saida = io.BytesIO()
             derivada = ImageOps.exif_transpose(imagem)
             derivada.info.clear()
-            derivada.save(saida, format=formato[1], exif=b"")
+            derivada.save(saida, format=formato[1], exif=b"", **_SAVE_OPTIONS[formato[1]])
             return saida.getvalue()
     except Exception as exc:
         raise DatasetExportStorageError from exc
@@ -177,18 +222,19 @@ async def _artifacts(candidates: list[_Candidate]) -> list[_Artifact]:
         for image in candidate.images:
             try:
                 original = await diagnostico_storage.ler_privado(image.url_arquivo)
-                image_bytes = _sem_exif(original, image.content_type or "")
+                content_type = _content_type(image, original)
+                image_bytes = _sem_exif(original, content_type)
             except DatasetExportStorageError:
                 raise
             except (OSError, ValueError) as exc:
                 raise DatasetExportStorageError from exc
-            extension = _IMAGE_FORMATS[image.content_type or ""][0]
             artifacts.append(
                 _Artifact(
                     candidate=candidate,
                     image=image,
                     sample_id=uuid4().hex,
-                    extension=extension,
+                    content_type=content_type,
+                    extension=_IMAGE_FORMATS[content_type][0],
                     sha256=hashlib.sha256(image_bytes).hexdigest(),
                 )
             )
@@ -251,7 +297,7 @@ async def gerar(
     spool = None
     try:
         if not settings.dataset_export_enabled:
-            raise DatasetExportError
+            raise DatasetExportDisabledError
         if len(ids) > settings.dataset_export_max_items:
             raise DatasetExportLimitError
         candidates = await _candidates(db, ids)
@@ -272,7 +318,7 @@ async def gerar(
                 )
                 image_bytes = _sem_exif(
                     await diagnostico_storage.ler_privado(artifact.image.url_arquivo),
-                    artifact.image.content_type or "",
+                    artifact.content_type,
                 )
                 if hashlib.sha256(image_bytes).hexdigest() != artifact.sha256:
                     raise DatasetExportError
@@ -308,7 +354,10 @@ async def gerar(
         await db.rollback()
         if spool is not None:
             spool.close()
-        await _auditar_falha(db, admin, correlation_id, len(ids), exc.detail)
+        # A auditoria guarda só o motivo e contagens: os ids da seleção vão na
+        # resposta ao admin, nunca na trilha.
+        motivo = exc.detail if isinstance(exc.detail, str) else exc.detail["mensagem"]
+        await _auditar_falha(db, admin, correlation_id, len(ids), motivo)
         raise
     except Exception as exc:
         await db.rollback()

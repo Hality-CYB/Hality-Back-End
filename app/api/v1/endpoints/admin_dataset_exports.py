@@ -20,7 +20,21 @@ async def _stream_and_cleanup(spool) -> AsyncIterator[bytes]:
         spool.close()
 
 
-@router.post("/exports")
+@router.post(
+    "/exports",
+    response_class=StreamingResponse,
+    responses={
+        200: {"content": {"application/zip": {}}, "description": "Pacote ZIP do dataset."},
+        404: {"description": "Diagnóstico inexistente na seleção."},
+        409: {
+            "description": (
+                "Exportação desligada, ou diagnósticos não elegíveis (lista em "
+                "`detail.diagnostico_ids`)."
+            )
+        },
+        413: {"description": "Limite de itens ou de bytes excedido."},
+    },
+)
 async def exportar_dataset(
     payload: DatasetExportCreate,
     request: Request,

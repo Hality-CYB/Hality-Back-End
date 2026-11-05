@@ -196,3 +196,37 @@ async def test_relabel_durante_geracao_aborta_pacote(monkeypatch):
     with pytest.raises(dataset_export_service.DatasetExportError):
         await dataset_export_service.gerar(AsyncMock(), ADMIN, [1], _settings(), "relabel")
     assert auditoria.await_args.kwargs["result"] == "falha"
+
+
+async def test_sem_exif_mantem_qualidade_alta_no_jpeg() -> None:
+    entrada = io.BytesIO()
+    Image.effect_noise((32, 32), 64).convert("RGB").save(entrada, format="JPEG", quality=95)
+
+    exportada = dataset_export_service._sem_exif(entrada.getvalue(), "image/jpeg")
+
+    with Image.open(io.BytesIO(exportada)) as resultado:
+        # Qualidade 95 tem tabela de quantização com valores baixos; o padrão
+        # do Pillow (75) passa de 20 e degradaria a foto a cada exportação.
+        assert max(resultado.quantization[0]) < 20
+
+
+async def test_sem_exif_preserva_os_pixels_do_webp() -> None:
+    original = Image.effect_noise((16, 16), 64).convert("RGB")
+    entrada = io.BytesIO()
+    original.save(entrada, format="WEBP", lossless=True)
+
+    exportada = dataset_export_service._sem_exif(entrada.getvalue(), "image/webp")
+
+    with Image.open(io.BytesIO(exportada)) as resultado:
+        assert resultado.convert("RGB").tobytes() == original.tobytes()
+
+
+async def test_content_type_ausente_e_reconhecido_pelo_cabecalho() -> None:
+    jpeg = io.BytesIO()
+    Image.new("RGB", (1, 1), "red").save(jpeg, format="JPEG")
+    sem_tipo = SimpleNamespace(content_type=None)
+
+    assert dataset_export_service._content_type(sem_tipo, jpeg.getvalue()) == "image/jpeg"
+    assert dataset_export_service._content_type(sem_tipo, _png_bytes()) == "image/png"
+    with pytest.raises(dataset_export_service.DatasetExportStorageError):
+        dataset_export_service._content_type(sem_tipo, b"nao e imagem")
