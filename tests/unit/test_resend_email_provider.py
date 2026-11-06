@@ -110,7 +110,9 @@ async def test_sandbox_rejeita_destinatario_diferente_sem_chamada_http() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("purpose", ["invitation", "password_reset", "diagnostic_review"])
+@pytest.mark.parametrize(
+    "purpose", ["invitation", "password_reset", "email_verification", "diagnostic_review"]
+)
 async def test_dominio_verificado_envia_cada_fluxo_ao_destinatario_real(purpose: str) -> None:
     payloads = []
 
@@ -156,6 +158,25 @@ async def test_erro_de_autenticacao_ou_permissao_e_recuperavel(status_code: int)
             )
         )
     assert erro.value.status_code == status_code
+
+
+@pytest.mark.asyncio
+async def test_403_de_validacao_do_resend_e_permanente() -> None:
+    corpo = {"name": "validation_error", "message": "so envia para o proprio endereco"}
+    provider = ResendEmailProvider(
+        _settings(),
+        httpx.MockTransport(lambda request: httpx.Response(403, json=corpo)),
+    )
+    with pytest.raises(PermanentEmailError):
+        await provider.send(
+            EmailMessage(
+                recipient="pessoa@example.com",
+                purpose="email_verification",
+                token="segredo",
+                token_url="http://localhost:3000/confirmar",
+                correlation_id="verificacao-sandbox",
+            )
+        )
 
 
 @pytest.mark.asyncio

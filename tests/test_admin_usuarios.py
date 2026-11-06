@@ -114,7 +114,9 @@ def _definir_senha_real(usuario: User) -> None:
 
     async def _atualizar(db: AsyncSession) -> None:
         await db.execute(
-            update(User).where(User.id == usuario.id).values(hashed_password=hashed_password)
+            update(User)
+            .where(User.id == usuario.id)
+            .values(hashed_password=hashed_password, is_verified=True)
         )
         await db.commit()
 

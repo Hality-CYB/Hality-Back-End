@@ -10,6 +10,7 @@ CONTRATO_ADMIN = {
     "/api/v1/admin/vinculos/{vinculo_id}": {"patch", "delete"},
     "/api/v1/admin/diagnosticos": {"get"},
     "/api/v1/admin/diagnosticos/{diagnostico_id}": {"get"},
+    "/api/v1/admin/datasets/exports": {"post"},
 }
 
 

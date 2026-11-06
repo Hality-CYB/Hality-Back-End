@@ -8,6 +8,7 @@ teste; produção continua JSONB).
 então `require_admin` roda de verdade — só a validação do JWT é substituída.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from app.auth.users import current_active_user
+from app.core.consentimentos import TERMOS, Finalidade
 from app.core.erros_diagnostico import MENSAGENS, CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.db.base import Base
@@ -34,8 +36,11 @@ from app.models import (
     Diagnostico,
     DiagnosticoRevisao,
     Imagem,
+    RotuloDataset,
     User,
 )
+from app.models.consentimento import ConsentimentoEvento
+from app.services import dataset_export_service, rotulo_dataset_service
 
 
 @compiles(JSONB, "sqlite")
@@ -44,6 +49,149 @@ def _jsonb_como_json_no_sqlite(type_, compiler, **kw):
 
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.mark.parametrize("decisao", ["ausente", "recusado", "revogado", "antigo", "aceito"])
+async def test_exportacao_consulta_consentimento_real(dados, session_factory, decisao):
+    from sqlalchemy import delete
+
+    async with session_factory() as db:
+        await db.execute(delete(ConsentimentoEvento))
+        if decisao == "revogado":
+            db.add(
+                ConsentimentoEvento(
+                    titular_id=PACIENTE_A,
+                    finalidade="image_training",
+                    versao="v1",
+                    aceito=True,
+                    origem="perfil",
+                )
+            )
+            await db.flush()
+        if decisao != "ausente":
+            db.add(
+                ConsentimentoEvento(
+                    titular_id=PACIENTE_A,
+                    finalidade="image_training",
+                    versao="antiga"
+                    if decisao == "antigo"
+                    else TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                    aceito=decisao in ("aceito", "antigo"),
+                    origem="perfil",
+                )
+            )
+        await db.commit()
+        if decisao == "aceito":
+            candidatos = await dataset_export_service._candidates(db, [dados["d"]["d1"].id])
+            assert candidatos[0].label_source == "profissional"
+        else:
+            with pytest.raises(dataset_export_service.DatasetExportError):
+                await dataset_export_service._candidates(db, [dados["d"]["d1"].id])
+
+
+async def test_exportacao_preferencia_hality_com_fontes_no_banco(dados, session_factory):
+    async with session_factory() as db:
+        diagnostico_id = dados["d"]["d1"].id
+        social = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "mau_halito_social"
+            )
+        )
+        db.add(
+            RotuloDataset(
+                diagnostico_id=diagnostico_id,
+                admin_id=ADMIN_ID,
+                classificacao_id=social.id,
+                version=1,
+            )
+        )
+        await db.commit()
+        candidato = (await dataset_export_service._candidates(db, [diagnostico_id]))[0]
+        assert candidato.label_source == "hality"
+        assert candidato.label.codigo == "mau_halito_social"
+
+
+@pytest.mark.parametrize("caso", ["ia", "sem_imagem", "falha", "inexistente"])
+async def test_exportacao_rejeita_selecao_inelegivel(dados, session_factory, caso):
+    from sqlalchemy import delete
+
+    async with session_factory() as db:
+        diagnostico_id = dados["d"]["d1"].id
+        if caso == "ia":
+            await db.execute(delete(DiagnosticoRevisao))
+        elif caso == "sem_imagem":
+            await db.execute(delete(Imagem))
+        elif caso == "falha":
+            diagnostico = await db.get(Diagnostico, diagnostico_id)
+            diagnostico.status = "falha"
+        else:
+            diagnostico_id = 999999
+        await db.commit()
+        with pytest.raises(dataset_export_service.DatasetExportError):
+            await dataset_export_service._candidates(db, [diagnostico_id])
+
+
+async def test_exportacao_rota_storage_manifesto_e_auditoria(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    import csv
+    import hashlib
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    from app.core.config import get_settings
+    from app.services import diagnostico_storage
+
+    como("admin")
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+    original = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(original, format="PNG")
+    url = await diagnostico_storage.salvar(original.getvalue(), "image/png", "/api/v1")
+    async with session_factory() as db:
+        imagem = await db.scalar(select(Imagem))
+        imagem.url_arquivo = url
+        imagem.content_type = "image/png"
+        imagem.sha256 = hashlib.sha256(original.getvalue()).hexdigest()
+        await db.commit()
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == 200
+    assert resposta.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
+        manifesto = arquivo.read("manifest.csv").decode()
+        linhas = list(csv.DictReader(io.StringIO(manifesto)))
+        assert len(linhas) == 1
+        assert linhas[0]["label_source"] == "profissional"
+        assert (
+            hashlib.sha256(arquivo.read(linhas[0]["image_path"])).hexdigest() == linhas[0]["sha256"]
+        )
+        assert str(PACIENTE_A) not in manifesto
+        assert url not in manifesto
+    assert await diagnostico_storage.ler_privado(url) == original.getvalue()
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+        assert evento.ator_id == ADMIN_ID
+        assert evento.resultado == "sucesso"
+        assert evento.metadados["contagem_exportada"] == 1
+
+
+@pytest.mark.parametrize("role,status", [("paciente", 403), ("profissional", 403), ("admin", 409)])
+async def test_exportacao_rota_autorizacao_e_flag(http, dados, como, role, status, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", False)
+    como(role)
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == status
+
 
 BASE = "/api/v1/admin/diagnosticos"
 
@@ -61,6 +209,8 @@ TABELAS = [
     Imagem.__table__,
     DiagnosticoRevisao.__table__,
     AuditoriaAcesso.__table__,
+    RotuloDataset.__table__,
+    ConsentimentoEvento.__table__,
 ]
 
 
@@ -126,6 +276,17 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
             codigo="mau_halito_social", nome_exibicao="Social", ordem=3
         )
         db.add_all([normal, intima, social])
+        db.add(
+            ConsentimentoEvento(
+                titular_id=PACIENTE_A,
+                finalidade=Finalidade.IMAGE_TRAINING.value,
+                versao=TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                aceito=True,
+                origem="perfil",
+                ator_id=PACIENTE_A,
+                ator_papel="paciente",
+            )
+        )
         await db.flush()
 
         def _d(n, paciente, status, cls, dia, **extra):
@@ -209,6 +370,7 @@ def como() -> ComoUsuario:
     def _como(role: str) -> None:
         app.dependency_overrides[current_active_user] = lambda: SimpleNamespace(
             id=ADMIN_ID if role == "admin" else PROFISSIONAL_ID,
+            name="Admin" if role == "admin" else "Prof",
             role=role,
             is_active=True,
         )
@@ -462,6 +624,13 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["dataset"] == {
         "disponivel": False,
         "motivo": "exportacao_fora_do_escopo",
+    }
+    assert corpo["rotulo_dataset"] == {
+        "atual": None,
+        "historico": [],
+        "fonte_efetiva": "profissional",
+        "exportavel": True,
+        "motivo": None,
     }
     assert corpo["imagem"] == {
         "disponivel": False,
@@ -760,7 +929,11 @@ async def test_nenhum_papel_consegue_mutar(
         await _contar(session_factory, AuditoriaAcesso),
     )
 
-    r = await http.request(metodo.upper(), f"{BASE}{sufixo}", json={"rotulo": "x"})
+    r = await http.request(
+        metodo.upper(),
+        f"{BASE}{sufixo}",
+        json={"rotulo": "x", "classificacao": "halito_normal", "version": 0},
+    )
 
     assert r.status_code in (403, 404, 405)
     depois = (
@@ -775,11 +948,368 @@ async def test_nenhum_papel_consegue_mutar(
         assert d1.classificacao_id is not None
 
 
-async def test_openapi_admin_expoe_apenas_get() -> None:
-    """Contrato: sob /admin/diagnosticos só existe leitura (sem rótulo, sem download/importação)."""
+async def test_openapi_admin_expoe_rotulagem_sem_exportacao() -> None:
+    """Contrato: leitura + rotulagem Hality, sem exportação neste escopo."""
     paths = {p: v for p, v in app.openapi()["paths"].items() if "/admin/diagnosticos" in p}
 
     assert paths, "rotas admin não registradas"
     for path, operacoes in paths.items():
-        assert set(operacoes) == {"get"}, path
-        assert not any(t in path for t in ("export", "download", "import", "rotulo", "label"))
+        esperadas = {"get"} if path == BASE or path == f"{BASE}/{{diagnostico_id}}" else {"post"}
+        assert set(operacoes) == esperadas, path
+        assert not any(t in path for t in ("export", "download", "import"))
+
+
+# ---------------------------------------------------------------------------
+# Rótulo Hality: histórico append-only
+# ---------------------------------------------------------------------------
+
+
+async def test_admin_cria_rotulo_e_precede_revisao_profissional(http, dados, como) -> None:
+    como("admin")
+    diagnostico_id = dados["d"]["d1"].id
+
+    resposta = await http.post(
+        f"{BASE}/{diagnostico_id}/rotulos-dataset",
+        json={"classificacao": "halitose_intima", "version": 0},
+    )
+
+    assert resposta.status_code == 201
+    corpo = resposta.json()
+    assert corpo["diagnostico_id"] == diagnostico_id
+    assert corpo["version"] == 1
+    assert corpo["classificacao"]["codigo"] == "halitose_intima"
+    assert corpo["autor"] == {"papel": "admin", "nome": "Admin"}
+
+    detalhe = (await http.get(f"{BASE}/{diagnostico_id}")).json()["rotulo_dataset"]
+    assert detalhe["atual"]["version"] == 1
+    assert detalhe["fonte_efetiva"] == "hality"
+    assert detalhe["exportavel"] is True
+
+
+async def test_rotulo_exige_versao_atual_e_preserva_historico(http, dados, como) -> None:
+    como("admin")
+    diagnostico_id = dados["d"]["d1"].id
+    rota = f"{BASE}/{diagnostico_id}/rotulos-dataset"
+
+    assert (
+        await http.post(rota, json={"classificacao": "halito_normal", "version": 0})
+    ).status_code == 201
+    conflito = await http.post(rota, json={"classificacao": "halitose_intima", "version": 0})
+    assert conflito.status_code == 409
+
+    segunda = await http.post(rota, json={"classificacao": "halitose_intima", "version": 1})
+    assert segunda.status_code == 201
+    detalhe = (await http.get(f"{BASE}/{diagnostico_id}")).json()["rotulo_dataset"]
+    assert detalhe["atual"]["version"] == 2
+    assert [item["version"] for item in detalhe["historico"]] == [1]
+
+
+async def test_rotulo_concorrente_com_mesma_versao_cria_apenas_um(http, dados, como) -> None:
+    como("admin")
+    rota = f"{BASE}/{dados['d']['d1'].id}/rotulos-dataset"
+
+    respostas = await asyncio.gather(
+        http.post(rota, json={"classificacao": "halito_normal", "version": 0}),
+        http.post(rota, json={"classificacao": "halitose_intima", "version": 0}),
+    )
+
+    assert sorted(resposta.status_code for resposta in respostas) == [201, 409]
+
+
+async def test_rotulo_e_auditoria_fazem_rollback_juntos(
+    dados, session_factory, monkeypatch
+) -> None:
+    async def registrar_e_falhar(*args, **kwargs):
+        await registrar_original(*args, **kwargs)
+        raise RuntimeError("falha simulada na auditoria")
+
+    registrar_original = rotulo_dataset_service.auditoria_queries.registrar_mutacao
+    monkeypatch.setattr(
+        rotulo_dataset_service.auditoria_queries,
+        "registrar_mutacao",
+        registrar_e_falhar,
+    )
+
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        with pytest.raises(RuntimeError, match="falha simulada"):
+            await rotulo_dataset_service.criar(
+                db,
+                dados["d"]["d1"].id,
+                "halito_normal",
+                0,
+                admin,
+            )
+
+    assert await _contar(session_factory, RotuloDataset) == 0
+    assert await _contar(session_factory, AuditoriaAcesso) == 0
+
+
+async def test_rotulo_exige_imagem_e_admin(http, dados, como) -> None:
+    diagnostico_sem_imagem = dados["d"]["d2"].id
+
+    como("admin")
+    sem_imagem = await http.post(
+        f"{BASE}/{diagnostico_sem_imagem}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+    assert sem_imagem.status_code == 409
+
+    como("profissional")
+    sem_permissao = await http.post(
+        f"{BASE}/{dados['d']['d1'].id}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+    assert sem_permissao.status_code == 403
+
+
+async def test_rotulo_exige_classificacao_no_diagnostico_concluido(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    diagnostico = dados["d"]["d4"]
+
+    async with session_factory() as db:
+        diagnostico = await db.get(Diagnostico, diagnostico.id)
+        diagnostico.status = "concluido"
+        db.add(
+            Imagem(
+                diagnostico_id=diagnostico.id,
+                url_arquivo="/api/v1/diagnosticos/imagens/sem-classificacao.jpg",
+                ordem=1,
+                parametros_captura={},
+            )
+        )
+        await db.commit()
+
+    resposta = await http.post(
+        f"{BASE}/{diagnostico.id}/rotulos-dataset",
+        json={"classificacao": "halito_normal", "version": 0},
+    )
+
+    assert resposta.status_code == 409
+    assert await _contar(session_factory, RotuloDataset) == 0
+
+
+async def test_detalhe_rotulo_dataset_sem_consentimento_treino_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente com rótulo humano mas consentimento revogado fica exportavel=False."""
+    como("admin")
+    d1 = dados["d"]["d1"]
+
+    async with session_factory() as db:
+        db.add(
+            ConsentimentoEvento(
+                titular_id=PACIENTE_A,
+                finalidade=Finalidade.IMAGE_TRAINING.value,
+                versao=TERMOS[Finalidade.IMAGE_TRAINING].versao,
+                aceito=False,
+                origem="perfil",
+                ator_id=PACIENTE_A,
+                ator_papel="paciente",
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d1.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_decisao_consentimento_nao_e_exportavel(
+    http, dados, como, session_factory
+) -> None:
+    """Paciente sem nenhuma decisão de consentimento não pode ter dados exportáveis."""
+    como("admin")
+    d3 = dados["d"]["d3"]  # PACIENTE_B não tem consentimento
+
+    async with session_factory() as db:
+        normal = await db.scalar(
+            select(ClassificacaoDiagnostico).where(
+                ClassificacaoDiagnostico.codigo == "halito_normal"
+            )
+        )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d3.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=normal.id,
+                observacao="revisado",
+                versao=1,
+            )
+        )
+        await db.commit()
+
+    corpo = (await http.get(f"{BASE}/{d3.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "profissional"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_consentimento"
+
+
+async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano(
+    http, dados, como
+) -> None:
+    """Paciente consentiu, mas diagnóstico não tem rótulo humano (só IA)."""
+    como("admin")
+    d2 = dados["d"]["d2"]  # PACIENTE_A tem consentimento, d2 só tem IA
+
+    corpo = (await http.get(f"{BASE}/{d2.id}")).json()
+    rotulo = corpo["rotulo_dataset"]
+    assert rotulo["fonte_efetiva"] == "ia"
+    assert rotulo["exportavel"] is False
+    assert rotulo["motivo"] == "sem_rotulo_humano"
+
+
+# ---------------------------------------------------------------------------
+# Exportação: mensagens, ids inelegíveis, limite e imagem sem content_type
+# ---------------------------------------------------------------------------
+
+
+async def _foto_do_d1(session_factory, monkeypatch, tmp_path, *, content_type=None) -> None:
+    """Grava a foto do d1 com EXIF de orientação e GPS, como sai da câmera."""
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    from app.services import diagnostico_storage
+
+    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+    foto = io.BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6  # orientação: girada 90 graus
+    exif[0x8825] = {2: (30.0, 1.0, 0.0)}  # GPS
+    Image.new("RGB", (4, 2), "red").save(foto, format="JPEG", exif=exif)
+    url = await diagnostico_storage.salvar(foto.getvalue(), "image/jpeg", "/api/v1")
+    async with session_factory() as db:
+        imagem = await db.scalar(select(Imagem))
+        imagem.url_arquivo = url
+        imagem.content_type = content_type
+        imagem.sha256 = hashlib.sha256(foto.getvalue()).hexdigest()
+        await db.commit()
+
+
+async def test_exportacao_desligada_explica_o_motivo(http, dados, como, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", False)
+    como("admin")
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"] == "exportação de dataset indisponível"
+
+
+async def test_exportacao_lista_inelegiveis_sem_gravar_ids_na_auditoria(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type="image/jpeg")
+    como("admin")
+    d1, d2 = dados["d"]["d1"].id, dados["d"]["d2"].id  # d2: concluído sem rótulo humano
+
+    resposta = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [d1, d2]})
+
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"]["diagnostico_ids"] == [d2]
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "falha"
+    assert "diagnostico_ids" not in str(evento.metadados)
+
+
+async def test_exportacao_acima_do_limite_de_itens_responde_413(http, dados, como, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    monkeypatch.setattr(get_settings(), "dataset_export_max_items", 1)
+    como("admin")
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports",
+        json={"diagnostico_ids": [dados["d"]["d1"].id, dados["d"]["d2"].id]},
+    )
+    assert resposta.status_code == 413
+
+
+async def test_exportacao_aceita_imagem_antiga_sem_content_type(
+    http, dados, como, session_factory, monkeypatch, tmp_path
+):
+    import csv
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type=None)
+    como("admin")
+
+    resposta = await http.post(
+        "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
+    )
+
+    assert resposta.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
+        linha = next(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+        assert linha["image_path"].endswith(".jpg")
+        with Image.open(io.BytesIO(arquivo.read(linha["image_path"]))) as imagem:
+            assert imagem.size == (2, 4)  # orientação aplicada
+            assert not imagem.getexif()  # sem EXIF, inclusive GPS
+
+
+async def test_exportacao_com_falha_audita_usando_o_admin_real_da_sessao(dados, session_factory):
+    """No servidor o admin vem da mesma sessão, e o rollback o expira."""
+    settings = SimpleNamespace(
+        dataset_export_enabled=True,
+        dataset_export_max_items=10,
+        dataset_export_max_bytes=1024 * 1024,
+    )
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        with pytest.raises(dataset_export_service.DatasetExportIneligibleError):
+            await dataset_export_service.gerar(
+                db, admin, [dados["d"]["d2"].id], settings, "corr-real"
+            )
+
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "falha"
+    assert evento.ator_id == ADMIN_ID
+
+
+async def test_exportacao_confirma_auditoria_e_solta_a_transacao_antes_do_download(
+    dados, session_factory, monkeypatch, tmp_path
+):
+    """Um download lento não pode manter locks sobre o paciente e o diagnóstico."""
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type="image/jpeg")
+    settings = SimpleNamespace(
+        dataset_export_enabled=True,
+        dataset_export_max_items=10,
+        dataset_export_max_bytes=10 * 1024 * 1024,
+    )
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        spool = await dataset_export_service.gerar(
+            db, admin, [dados["d"]["d1"].id], settings, "corr-real"
+        )
+        assert not db.in_transaction()
+    spool.close()
+
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "sucesso"

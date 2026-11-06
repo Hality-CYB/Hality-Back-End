@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.user import RegistroCreate
 from app.schemas.usuario import TipoUsuario
 from app.services import consentimento_service
+from app.services.identity_token_service import create_email_verification
 
 
 class EmailJaCadastradoError(Exception):
@@ -50,6 +51,7 @@ async def registrar_paciente(
             ator=usuario,
             referencia_coleta=referencia_coleta,
         )
+        await create_email_verification(db, usuario, commit=False)
         await db.commit()
 
     except IntegrityError as exc:
