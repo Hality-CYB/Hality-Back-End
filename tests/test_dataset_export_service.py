@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image
 
+from app.api.v1.endpoints import admin_dataset_exports
 from app.services import dataset_export_service
 
 pytestmark = pytest.mark.asyncio
@@ -28,11 +29,12 @@ def _candidate(*, code: str, source: str, version: int, url: str) -> object:
         url_arquivo=url,
         content_type="image/png",
         ordem=1,
-        sha256="stored-sha",
+        sha256=None,
     )
     label = SimpleNamespace(codigo=code, nome_exibicao=code.replace("_", " "))
     return dataset_export_service._Candidate(
         diagnostico_id=version,
+        paciente_id=uuid.uuid4(),
         images=(image,),
         label=label,
         label_source=source,
@@ -155,6 +157,87 @@ async def test_gerar_converte_falha_de_storage_e_audita(monkeypatch) -> None:
 
     auditoria.assert_awaited_once()
     assert auditoria.await_args.kwargs["result"] == "falha"
+
+
+async def test_gerar_rejeita_imagem_cujo_sha_original_diverge_do_banco(monkeypatch) -> None:
+    candidato = _candidate(code="halito_normal", source="hality", version=1, url="/a.png")
+    candidato.images[0].sha256 = "0" * 64
+    monkeypatch.setattr(dataset_export_service, "_candidates", AsyncMock(return_value=[candidato]))
+    monkeypatch.setattr(
+        dataset_export_service.diagnostico_storage,
+        "ler_privado",
+        AsyncMock(return_value=_png_bytes()),
+    )
+    monkeypatch.setattr(
+        dataset_export_service.auditoria_queries, "registrar_acesso", _sem_auditoria
+    )
+
+    with pytest.raises(dataset_export_service.DatasetExportStorageError):
+        await dataset_export_service.gerar(AsyncMock(), ADMIN, [1], _settings(), "sha-invalido")
+
+
+async def test_gerar_delega_recodificacao_e_compactacao_para_threads(monkeypatch) -> None:
+    candidato = _candidate(code="halito_normal", source="hality", version=1, url="/a.png")
+    monkeypatch.setattr(
+        dataset_export_service,
+        "_candidates",
+        AsyncMock(side_effect=[[candidato], [candidato]]),
+    )
+    monkeypatch.setattr(
+        dataset_export_service.diagnostico_storage,
+        "ler_privado",
+        AsyncMock(return_value=_png_bytes()),
+    )
+    monkeypatch.setattr(
+        dataset_export_service.auditoria_queries, "registrar_acesso", _sem_auditoria
+    )
+    original_to_thread = asyncio.to_thread
+    chamadas = []
+
+    async def registrar(func, *args, **kwargs):
+        chamadas.append(func)
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(dataset_export_service.asyncio, "to_thread", registrar)
+
+    spool = await dataset_export_service.gerar(AsyncMock(), ADMIN, [1], _settings(), "fora-do-loop")
+
+    assert dataset_export_service._derivar_imagem in chamadas
+    assert any(getattr(func, "__name__", "") == "writestr" for func in chamadas)
+    spool.close()
+
+
+async def test_stream_confirma_transacao_somente_depois_do_ultimo_chunk() -> None:
+    spool = io.BytesIO(b"conteudo")
+    db = AsyncMock()
+
+    chunks = []
+    async for chunk in admin_dataset_exports._stream_and_cleanup(
+        spool, db, ADMIN, "corr-stream", 1
+    ):
+        chunks.append(chunk)
+        db.commit.assert_not_awaited()
+
+    assert b"".join(chunks) == b"conteudo"
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+    assert spool.closed
+
+
+async def test_stream_interrompido_desfaz_sucesso_e_audita_falha(monkeypatch) -> None:
+    spool = io.BytesIO(b"conteudo")
+    db = AsyncMock()
+    auditoria = AsyncMock()
+    monkeypatch.setattr(dataset_export_service, "_auditar_falha", auditoria)
+    stream = admin_dataset_exports._stream_and_cleanup(spool, db, ADMIN, "corr-cancel", 1)
+
+    assert await anext(stream) == b"conteudo"
+    await stream.aclose()
+
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    auditoria.assert_awaited_once_with(db, ADMIN, "corr-cancel", 1, "download_interrompido")
+    assert spool.closed
 
 
 async def test_cancelamento_fecha_spool_e_desfaz_transacao(monkeypatch):

@@ -6,7 +6,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from PIL import Image, ImageOps
 from sqlalchemy import select
@@ -88,6 +88,7 @@ class DatasetExportStorageError(DatasetExportError):
 @dataclass(frozen=True)
 class _Candidate:
     diagnostico_id: int
+    paciente_id: UUID
     images: tuple[Imagem, ...]
     label: ClassificacaoDiagnostico
     label_source: str
@@ -102,6 +103,7 @@ class _Artifact:
     sample_id: str
     content_type: str
     extension: str
+    original_sha256: str
     sha256: str
 
 
@@ -150,6 +152,7 @@ async def _candidate(db: AsyncSession, diagnostico: Diagnostico) -> _Candidate:
 
     return _Candidate(
         diagnostico_id=diagnostico.id,
+        paciente_id=diagnostico.paciente_id,
         images=images,
         label=label,
         label_source=label_source,
@@ -216,29 +219,49 @@ def _label_code(label: ClassificacaoDiagnostico) -> str:
     return label.codigo
 
 
-async def _artifacts(candidates: list[_Candidate]) -> list[_Artifact]:
-    artifacts: list[_Artifact] = []
-    for candidate in candidates:
-        for image in candidate.images:
-            try:
-                original = await diagnostico_storage.ler_privado(image.url_arquivo)
-                content_type = _content_type(image, original)
-                image_bytes = _sem_exif(original, content_type)
-            except DatasetExportStorageError:
-                raise
-            except (OSError, ValueError) as exc:
-                raise DatasetExportStorageError from exc
-            artifacts.append(
-                _Artifact(
-                    candidate=candidate,
-                    image=image,
-                    sample_id=uuid4().hex,
-                    content_type=content_type,
-                    extension=_IMAGE_FORMATS[content_type][0],
-                    sha256=hashlib.sha256(image_bytes).hexdigest(),
-                )
-            )
-    return artifacts
+def _derivar_imagem(
+    candidate: _Candidate, image: Imagem, original: bytes
+) -> tuple[_Artifact, bytes]:
+    """Valida e recodifica uma imagem fora do event loop."""
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    if image.sha256 is not None and original_sha256 != image.sha256:
+        raise DatasetExportStorageError
+    content_type = _content_type(image, original)
+    image_bytes = _sem_exif(original, content_type)
+    return (
+        _Artifact(
+            candidate=candidate,
+            image=image,
+            sample_id=uuid4().hex,
+            content_type=content_type,
+            extension=_IMAGE_FORMATS[content_type][0],
+            original_sha256=original_sha256,
+            sha256=hashlib.sha256(image_bytes).hexdigest(),
+        ),
+        image_bytes,
+    )
+
+
+async def _artifact(candidate: _Candidate, image: Imagem) -> tuple[_Artifact, bytes]:
+    try:
+        original = await diagnostico_storage.ler_privado(image.url_arquivo)
+        return await asyncio.to_thread(_derivar_imagem, candidate, image, original)
+    except DatasetExportStorageError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise DatasetExportStorageError from exc
+
+
+async def _storage_inalterado(artifacts: list[_Artifact]) -> None:
+    """Confirma os bytes originais sem repetir a recodificação cara."""
+    for artifact in artifacts:
+        try:
+            original = await diagnostico_storage.ler_privado(artifact.image.url_arquivo)
+            atual = await asyncio.to_thread(hashlib.sha256, original)
+        except (OSError, ValueError) as exc:
+            raise DatasetExportStorageError from exc
+        if atual.hexdigest() != artifact.original_sha256:
+            raise DatasetExportError
 
 
 def _manifest(artifacts: list[_Artifact]) -> bytes:
@@ -287,6 +310,33 @@ def _verificar_limite(spool: tempfile.SpooledTemporaryFile[bytes], settings: Set
         raise DatasetExportLimitError
 
 
+async def _gravar_zip(archive: zipfile.ZipFile, path: str, content: bytes) -> None:
+    """Compactação é CPU-bound e não pode bloquear o event loop da API."""
+    await asyncio.to_thread(archive.writestr, path, content)
+
+
+async def _bloquear_estado_exportado(db: AsyncSession, candidates: list[_Candidate]) -> None:
+    """Impede revogação/revisão entre a revalidação e o fim do download.
+
+    Os escritores tomam locks exclusivos nessas mesmas linhas. Em SQLite,
+    ``FOR SHARE`` é ignorado, mas produção usa PostgreSQL.
+    """
+    paciente_ids = sorted({candidate.paciente_id for candidate in candidates}, key=str)
+    diagnostico_ids = sorted(candidate.diagnostico_id for candidate in candidates)
+    await db.execute(
+        select(User.id)
+        .where(User.id.in_(paciente_ids))
+        .order_by(User.id)
+        .with_for_update(read=True)
+    )
+    await db.execute(
+        select(Diagnostico.id)
+        .where(Diagnostico.id.in_(diagnostico_ids))
+        .order_by(Diagnostico.id)
+        .with_for_update(read=True)
+    )
+
+
 async def gerar(
     db: AsyncSession,
     admin: User,
@@ -302,28 +352,30 @@ async def gerar(
             raise DatasetExportLimitError
         candidates = await _candidates(db, ids)
         fingerprints = [_fingerprint(item) for item in candidates]
-        artifacts = await _artifacts(candidates)
+        artifacts: list[_Artifact] = []
         spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - response owns cleanup
             max_size=8 * 1024 * 1024, mode="w+b"
         )
-        with zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.csv", _manifest(artifacts))
+        archive = zipfile.ZipFile(spool, "w", compression=zipfile.ZIP_DEFLATED)
+        try:
+            for candidate in candidates:
+                for image in candidate.images:
+                    artifact, image_bytes = await _artifact(candidate, image)
+                    artifacts.append(artifact)
+                    path = (
+                        f"images/{_label_code(candidate.label)}/"
+                        f"{artifact.sample_id}.{artifact.extension}"
+                    )
+                    await _gravar_zip(archive, path, image_bytes)
+                    _verificar_limite(spool, settings)
+            await _gravar_zip(archive, "manifest.csv", _manifest(artifacts))
             _verificar_limite(spool, settings)
-            archive.writestr("README.md", _readme())
+            await _gravar_zip(archive, "README.md", _readme())
             _verificar_limite(spool, settings)
-            for artifact in artifacts:
-                path = (
-                    f"images/{_label_code(artifact.candidate.label)}/"
-                    f"{artifact.sample_id}.{artifact.extension}"
-                )
-                image_bytes = _sem_exif(
-                    await diagnostico_storage.ler_privado(artifact.image.url_arquivo),
-                    artifact.content_type,
-                )
-                if hashlib.sha256(image_bytes).hexdigest() != artifact.sha256:
-                    raise DatasetExportError
-                archive.writestr(path, image_bytes)
-                _verificar_limite(spool, settings)
+        finally:
+            await asyncio.to_thread(archive.close)
+        await _storage_inalterado(artifacts)
+        await _bloquear_estado_exportado(db, candidates)
         confirmados = await _candidates(db, ids)
         if fingerprints != [_fingerprint(item) for item in confirmados]:
             raise DatasetExportError
@@ -343,7 +395,6 @@ async def gerar(
                 "resultado": "sucesso",
             },
         )
-        await db.commit()
         return spool
     except asyncio.CancelledError:
         if spool is not None:

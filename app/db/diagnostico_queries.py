@@ -801,6 +801,17 @@ async def inserir_revisao(
     IntegrityError durante o flush e o service converte o conflito em 409.
     """
 
+    # A exportação mantém FOR SHARE no diagnóstico até concluir o download.
+    # O lock exclusivo serializa uma nova revisão com essa janela protegida.
+    diagnostico = await db.scalar(
+        select(Diagnostico)
+        .where(Diagnostico.id == diagnostico.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if diagnostico is None:
+        return None
+
     ultima = await db.scalar(
         select(DiagnosticoRevisao)
         .where(

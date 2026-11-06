@@ -154,6 +154,7 @@ async def test_exportacao_rota_storage_manifesto_e_auditoria(
         imagem = await db.scalar(select(Imagem))
         imagem.url_arquivo = url
         imagem.content_type = "image/png"
+        imagem.sha256 = hashlib.sha256(original.getvalue()).hexdigest()
         await db.commit()
     resposta = await http.post(
         "/api/v1/admin/datasets/exports", json={"diagnostico_ids": [dados["d"]["d1"].id]}
@@ -1170,6 +1171,7 @@ async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano
 
 async def _foto_do_d1(session_factory, monkeypatch, tmp_path, *, content_type=None) -> None:
     """Grava a foto do d1 com EXIF de orientação e GPS, como sai da câmera."""
+    import hashlib
     import io
 
     from PIL import Image
@@ -1187,6 +1189,7 @@ async def _foto_do_d1(session_factory, monkeypatch, tmp_path, *, content_type=No
         imagem = await db.scalar(select(Imagem))
         imagem.url_arquivo = url
         imagem.content_type = content_type
+        imagem.sha256 = hashlib.sha256(foto.getvalue()).hexdigest()
         await db.commit()
 
 
