@@ -118,8 +118,8 @@ async def gravar_decisoes(
     mesmo. O texto do termo nunca vai para o evento — só finalidade e versão.
     """
     # Serializa a decisão com exportações em andamento. A exportação mantém
-    # FOR SHARE nesta linha até terminar o download; uma revogação não pode
-    # ultrapassar silenciosamente a revalidação final do pacote.
+    # FOR SHARE nesta linha durante a revalidação final; uma revogação não pode
+    # ultrapassar silenciosamente essa checagem.
     await db.execute(select(User.id).where(User.id == titular.id).with_for_update())
     eventos: list[ConsentimentoEvento] = []
     for decisao in decisoes:

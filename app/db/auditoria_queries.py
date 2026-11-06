@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -42,6 +43,15 @@ def _metadados_minimos(valor: Mapping[str, Any]) -> dict[str, Any]:
         elif isinstance(item, (str, int, float, bool)) or item is None:
             resultado[chave] = item
     return resultado
+
+
+def copia_do_ator(actor: Any) -> SimpleNamespace:
+    """Copia o que a auditoria lê do ator, para usar depois de um rollback.
+
+    O rollback expira os objetos da sessão, inclusive o usuário autenticado, e
+    ler um atributo expirado quebra no driver assíncrono.
+    """
+    return SimpleNamespace(id=getattr(actor, "id", actor), role=getattr(actor, "role", None))
 
 
 async def _registrar(

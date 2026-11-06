@@ -229,36 +229,22 @@ async def test_em_thread_aguarda_escrita_terminar_antes_de_propagar_cancelamento
         await task
 
 
-async def test_stream_confirma_transacao_somente_depois_do_ultimo_chunk() -> None:
+async def test_stream_entrega_tudo_e_fecha_o_spool() -> None:
     spool = io.BytesIO(b"conteudo")
-    db = AsyncMock()
 
-    chunks = []
-    async for chunk in admin_dataset_exports._stream_and_cleanup(
-        spool, db, ADMIN, "corr-stream", 1
-    ):
-        chunks.append(chunk)
-        db.commit.assert_not_awaited()
+    chunks = [chunk async for chunk in admin_dataset_exports._stream_and_cleanup(spool)]
 
     assert b"".join(chunks) == b"conteudo"
-    db.commit.assert_awaited_once()
-    db.rollback.assert_not_awaited()
     assert spool.closed
 
 
-async def test_stream_interrompido_desfaz_sucesso_e_audita_falha(monkeypatch) -> None:
+async def test_stream_interrompido_fecha_o_spool() -> None:
     spool = io.BytesIO(b"conteudo")
-    db = AsyncMock()
-    auditoria = AsyncMock()
-    monkeypatch.setattr(dataset_export_service, "_auditar_falha", auditoria)
-    stream = admin_dataset_exports._stream_and_cleanup(spool, db, ADMIN, "corr-cancel", 1)
+    stream = admin_dataset_exports._stream_and_cleanup(spool)
 
     assert await anext(stream) == b"conteudo"
     await stream.aclose()
 
-    db.rollback.assert_awaited_once()
-    db.commit.assert_not_awaited()
-    auditoria.assert_awaited_once_with(db, ADMIN, "corr-cancel", 1, "download_interrompido")
     assert spool.closed
 
 

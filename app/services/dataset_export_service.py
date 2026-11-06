@@ -6,6 +6,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from PIL import Image, ImageOps
@@ -331,7 +332,7 @@ async def _gravar_zip(archive: zipfile.ZipFile, path: str, content: bytes) -> No
 
 
 async def _bloquear_estado_exportado(db: AsyncSession, candidates: list[_Candidate]) -> None:
-    """Impede revogação/revisão entre a revalidação e o fim do download.
+    """Impede revogação/revisão entre a revalidação final e o commit da exportação.
 
     Os escritores tomam locks exclusivos nessas mesmas linhas. Em SQLite,
     ``FOR SHARE`` é ignorado, mas produção usa PostgreSQL.
@@ -360,6 +361,7 @@ async def gerar(
     correlation_id: str,
 ) -> tempfile.SpooledTemporaryFile[bytes]:
     spool = None
+    ator = auditoria_queries.copia_do_ator(admin)
     try:
         if not settings.dataset_export_enabled:
             raise DatasetExportDisabledError
@@ -398,7 +400,7 @@ async def gerar(
         spool.seek(0)
         await auditoria_queries.registrar_acesso(
             db,
-            actor=admin,
+            actor=ator,
             action="dataset.exportar",
             resource="dataset_export",
             resource_id="lote",
@@ -410,6 +412,11 @@ async def gerar(
                 "resultado": "sucesso",
             },
         )
+        # O pacote está pronto e revalidado. Confirma aqui, e não no fim do
+        # streaming: os locks não podem depender da velocidade do cliente, senão
+        # um download parado trava a revogação de consentimento do paciente. A
+        # auditoria de sucesso registra a liberação do pacote, não o recebimento.
+        await db.commit()
         return spool
     except asyncio.CancelledError:
         if spool is not None:
@@ -423,22 +430,22 @@ async def gerar(
         # A auditoria guarda só o motivo e contagens: os ids da seleção vão na
         # resposta ao admin, nunca na trilha.
         motivo = exc.detail if isinstance(exc.detail, str) else exc.detail["mensagem"]
-        await _auditar_falha(db, admin, correlation_id, len(ids), motivo)
+        await _auditar_falha(db, ator, correlation_id, len(ids), motivo)
         raise
     except Exception as exc:
         await db.rollback()
         if spool is not None:
             spool.close()
-        await _auditar_falha(db, admin, correlation_id, len(ids), "falha_interna")
+        await _auditar_falha(db, ator, correlation_id, len(ids), "falha_interna")
         raise DatasetExportStorageError from exc
 
 
 async def _auditar_falha(
-    db: AsyncSession, admin: User, correlation_id: str, selected: int, reason: str
+    db: AsyncSession, ator: SimpleNamespace, correlation_id: str, selected: int, reason: str
 ) -> None:
     await auditoria_queries.registrar_acesso(
         db,
-        actor=admin,
+        actor=ator,
         action="dataset.exportar",
         resource="dataset_export",
         resource_id="lote",

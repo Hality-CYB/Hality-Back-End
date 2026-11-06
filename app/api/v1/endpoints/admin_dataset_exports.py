@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -13,47 +12,10 @@ from app.services import dataset_export_service
 router = APIRouter(prefix="/admin/datasets", tags=["admin-datasets"])
 
 
-async def _rollback_and_audit_download(
-    db: DbSession,
-    admin: CurrentAdminMutationDep,
-    correlation_id: str,
-    selected: int,
-) -> None:
-    await db.rollback()
-    await dataset_export_service._auditar_falha(
-        db, admin, correlation_id, selected, "download_interrompido"
-    )
-
-
-async def _finish_cleanup_after_cancellation(coro) -> None:
-    """Não abandona a auditoria se houver novo cancelamento da task da resposta."""
-    task = asyncio.create_task(coro)
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-
-
-async def _stream_and_cleanup(
-    spool,
-    db: DbSession,
-    admin: CurrentAdminMutationDep,
-    correlation_id: str,
-    selected: int,
-) -> AsyncIterator[bytes]:
+async def _stream_and_cleanup(spool) -> AsyncIterator[bytes]:
     try:
         while chunk := spool.read(1024 * 1024):
             yield chunk
-        # Libera os locks que protegem consentimento e rótulo somente depois
-        # que todo o pacote foi entregue e confirma a auditoria de sucesso.
-        await db.commit()
-    except BaseException:
-        # O servidor cancela o iterador quando o cliente interrompe o download.
-        # Shield permite registrar a tentativa mesmo sob cancelamento da task.
-        await _finish_cleanup_after_cancellation(
-            _rollback_and_audit_download(db, admin, correlation_id, selected)
-        )
-        raise
     finally:
         spool.close()
 
@@ -88,7 +50,7 @@ async def exportar_dataset(
     except dataset_export_service.DatasetExportError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     response = StreamingResponse(
-        _stream_and_cleanup(spool, db, admin, correlation_id, len(payload.diagnostico_ids)),
+        _stream_and_cleanup(spool),
         media_type="application/zip",
     )
     filename = f"hality-dataset-{datetime.now(UTC):%Y%m%d}.zip"

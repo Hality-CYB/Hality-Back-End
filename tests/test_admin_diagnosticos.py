@@ -1266,3 +1266,50 @@ async def test_exportacao_aceita_imagem_antiga_sem_content_type(
         with Image.open(io.BytesIO(arquivo.read(linha["image_path"]))) as imagem:
             assert imagem.size == (2, 4)  # orientação aplicada
             assert not imagem.getexif()  # sem EXIF, inclusive GPS
+
+
+async def test_exportacao_com_falha_audita_usando_o_admin_real_da_sessao(dados, session_factory):
+    """No servidor o admin vem da mesma sessão, e o rollback o expira."""
+    settings = SimpleNamespace(
+        dataset_export_enabled=True,
+        dataset_export_max_items=10,
+        dataset_export_max_bytes=1024 * 1024,
+    )
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        with pytest.raises(dataset_export_service.DatasetExportIneligibleError):
+            await dataset_export_service.gerar(
+                db, admin, [dados["d"]["d2"].id], settings, "corr-real"
+            )
+
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "falha"
+    assert evento.ator_id == ADMIN_ID
+
+
+async def test_exportacao_confirma_auditoria_e_solta_a_transacao_antes_do_download(
+    dados, session_factory, monkeypatch, tmp_path
+):
+    """Um download lento não pode manter locks sobre o paciente e o diagnóstico."""
+    await _foto_do_d1(session_factory, monkeypatch, tmp_path, content_type="image/jpeg")
+    settings = SimpleNamespace(
+        dataset_export_enabled=True,
+        dataset_export_max_items=10,
+        dataset_export_max_bytes=10 * 1024 * 1024,
+    )
+    async with session_factory() as db:
+        admin = await db.get(User, ADMIN_ID)
+        spool = await dataset_export_service.gerar(
+            db, admin, [dados["d"]["d1"].id], settings, "corr-real"
+        )
+        assert not db.in_transaction()
+    spool.close()
+
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
+        )
+    assert evento.resultado == "sucesso"
