@@ -19,6 +19,7 @@ As funções `gravar_*` não fazem commit: o chamador controla a transação.
 import uuid
 from collections.abc import Sequence
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import papel_canonico
@@ -116,6 +117,10 @@ async def gravar_decisoes(
     ``ator`` é quem coletou a decisão; para o titular decidindo por si é ele
     mesmo. O texto do termo nunca vai para o evento — só finalidade e versão.
     """
+    # Serializa a decisão com exportações em andamento. A exportação mantém
+    # FOR SHARE nesta linha durante a revalidação final; uma revogação não pode
+    # ultrapassar silenciosamente essa checagem.
+    await db.execute(select(User.id).where(User.id == titular.id).with_for_update())
     eventos: list[ConsentimentoEvento] = []
     for decisao in decisoes:
         _validar_versao(decisao)
