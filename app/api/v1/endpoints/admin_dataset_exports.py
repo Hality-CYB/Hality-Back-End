@@ -25,6 +25,15 @@ async def _rollback_and_audit_download(
     )
 
 
+async def _finish_cleanup_after_cancellation(coro) -> None:
+    """Não abandona a auditoria se houver novo cancelamento da task da resposta."""
+    task = asyncio.create_task(coro)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+
+
 async def _stream_and_cleanup(
     spool,
     db: DbSession,
@@ -41,7 +50,9 @@ async def _stream_and_cleanup(
     except BaseException:
         # O servidor cancela o iterador quando o cliente interrompe o download.
         # Shield permite registrar a tentativa mesmo sob cancelamento da task.
-        await asyncio.shield(_rollback_and_audit_download(db, admin, correlation_id, selected))
+        await _finish_cleanup_after_cancellation(
+            _rollback_and_audit_download(db, admin, correlation_id, selected)
+        )
         raise
     finally:
         spool.close()

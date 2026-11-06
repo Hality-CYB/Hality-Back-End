@@ -219,6 +219,21 @@ def _label_code(label: ClassificacaoDiagnostico) -> str:
     return label.codigo
 
 
+async def _em_thread(func, /, *args):
+    """Executa trabalho bloqueante sem abandonar a thread ao cancelar.
+
+    ``asyncio.to_thread`` não interrompe a função subjacente. Esperar a task
+    terminar antes de propagar o cancelamento evita fechar o ZIP/spool enquanto
+    uma thread ainda escreve neles.
+    """
+    task = asyncio.create_task(asyncio.to_thread(func, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
 def _derivar_imagem(
     candidate: _Candidate, image: Imagem, original: bytes
 ) -> tuple[_Artifact, bytes]:
@@ -245,7 +260,7 @@ def _derivar_imagem(
 async def _artifact(candidate: _Candidate, image: Imagem) -> tuple[_Artifact, bytes]:
     try:
         original = await diagnostico_storage.ler_privado(image.url_arquivo)
-        return await asyncio.to_thread(_derivar_imagem, candidate, image, original)
+        return await _em_thread(_derivar_imagem, candidate, image, original)
     except DatasetExportStorageError:
         raise
     except (OSError, ValueError) as exc:
@@ -257,7 +272,7 @@ async def _storage_inalterado(artifacts: list[_Artifact]) -> None:
     for artifact in artifacts:
         try:
             original = await diagnostico_storage.ler_privado(artifact.image.url_arquivo)
-            atual = await asyncio.to_thread(hashlib.sha256, original)
+            atual = await _em_thread(hashlib.sha256, original)
         except (OSError, ValueError) as exc:
             raise DatasetExportStorageError from exc
         if atual.hexdigest() != artifact.original_sha256:
@@ -312,7 +327,7 @@ def _verificar_limite(spool: tempfile.SpooledTemporaryFile[bytes], settings: Set
 
 async def _gravar_zip(archive: zipfile.ZipFile, path: str, content: bytes) -> None:
     """Compactação é CPU-bound e não pode bloquear o event loop da API."""
-    await asyncio.to_thread(archive.writestr, path, content)
+    await _em_thread(archive.writestr, path, content)
 
 
 async def _bloquear_estado_exportado(db: AsyncSession, candidates: list[_Candidate]) -> None:
@@ -373,7 +388,7 @@ async def gerar(
             await _gravar_zip(archive, "README.md", _readme())
             _verificar_limite(spool, settings)
         finally:
-            await asyncio.to_thread(archive.close)
+            await _em_thread(archive.close)
         await _storage_inalterado(artifacts)
         await _bloquear_estado_exportado(db, candidates)
         confirmados = await _candidates(db, ids)

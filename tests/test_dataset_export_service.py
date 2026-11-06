@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+import threading
 import uuid
 import zipfile
 from types import SimpleNamespace
@@ -205,6 +206,27 @@ async def test_gerar_delega_recodificacao_e_compactacao_para_threads(monkeypatch
     assert dataset_export_service._derivar_imagem in chamadas
     assert any(getattr(func, "__name__", "") == "writestr" for func in chamadas)
     spool.close()
+
+
+async def test_em_thread_aguarda_escrita_terminar_antes_de_propagar_cancelamento() -> None:
+    iniciou = threading.Event()
+    liberar = threading.Event()
+
+    def bloqueante() -> None:
+        iniciou.set()
+        liberar.wait()
+
+    task = asyncio.create_task(dataset_export_service._em_thread(bloqueante))
+    while not iniciou.is_set():
+        await asyncio.sleep(0)
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    liberar.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 async def test_stream_confirma_transacao_somente_depois_do_ultimo_chunk() -> None:
