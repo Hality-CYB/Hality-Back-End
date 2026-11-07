@@ -87,6 +87,17 @@ async def buscar_identidade(
     )
 
 
+async def buscar_identidade_do_usuario(
+    db: AsyncSession, *, provider: str, user_id: uuid.UUID
+) -> IdentidadeExterna | None:
+    return await db.scalar(
+        select(IdentidadeExterna).where(
+            IdentidadeExterna.provider == provider,
+            IdentidadeExterna.user_id == user_id,
+        )
+    )
+
+
 async def criar_identidade(
     db: AsyncSession, *, user_id: uuid.UUID, provider: str, subject: str
 ) -> IdentidadeExterna:

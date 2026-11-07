@@ -13,13 +13,17 @@ class ConsentimentoEvento(Base):
     """Tabela `consentimento_eventos`.
 
     Cada linha é UMA decisão (aceite ou recusa/revogação) do titular para uma
-    finalidade e uma versão do termo. Nunca é atualizada nem apagada: o estado
-    vigente é o evento mais recente da finalidade, e revogar é gravar um novo
-    evento com `aceito = false`. Não guarda texto do termo nem dado clínico.
+    finalidade e uma versão do termo. Durante a vida da conta, nunca é
+    atualizada nem apagada: o estado vigente é o evento mais recente da
+    finalidade, e revogar é gravar um novo evento com `aceito = false`. A
+    exceção controlada é o descarte integral de um cadastro que nunca teve o
+    e-mail verificado, pois a decisão não pode ser atribuída ao titular
+    confirmado. Não guarda texto do termo nem dado clínico.
 
     `titular_id` usa RESTRICT: o histórico é a prova da decisão e não pode
-    sumir junto com a exclusão do usuário sem uma política de retenção
-    explícita. `ator_id` usa SET NULL, como em `auditoria_acessos`.
+    sumir numa exclusão genérica do usuário. A exceção acima remove os eventos
+    explicitamente antes da conta. `ator_id` usa SET NULL, como em
+    `auditoria_acessos`.
     """
 
     __tablename__ = "consentimento_eventos"

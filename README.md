@@ -461,7 +461,14 @@ O callback sempre redireciona para `GOOGLE_FRONTEND_REDIRECT_URL` com:
 
 ### Política de vínculo de contas
 
-A identidade é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail **nunca** vincula sozinho. Se o e-mail do Google já pertence a uma conta que não está vinculada ao Google, o login é recusado com `conta_existente` (vincular exigiria uma ação autenticada do titular, fora deste corte). Unlink e múltiplos provedores também estão fora de escopo.
+A identidade permanente é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail só resolve o primeiro vínculo quando o Google é autoritativo sobre o endereço: conta `@gmail.com`, ou Google Workspace com `email_verified` e `hd` no ID token.
+
+- conta manual verificada: recebe o vínculo Google e mantém senha, dados, consentimentos e ID;
+- conta manual ativa que nunca verificou o e-mail: depois dos novos consentimentos, o cadastro pendente e suas decisões são descartados e uma conta Google independente é criada, com outro ID e sem herdar dados;
+- conta inativa, papel diferente de paciente ou cadastro pendente que já possua dados de uso: não é vinculado nem substituído automaticamente;
+- conta Google com e-mail externo sem `hd`: `email_verified` não basta para vincular ou substituir uma conta existente; o fluxo retorna `conta_existente` e exige outro método de confirmação.
+
+Unlink e múltiplos provedores continuam fora de escopo.
 
 ## Home
 

@@ -27,8 +27,11 @@ class OAuthFluxo(Base):
     O `state` e o código de troca só existem aqui como hash SHA-256. O
     `code_verifier` e o `nonce` ficam em claro por poucos minutos (precisam ser
     reenviados/conferidos). `email`/`nome` só são guardados para um cadastro
-    novo ainda pendente de consentimento e são apagados ao concluir. Nenhum
-    token do Google é persistido.
+    Google novo ainda pendente de consentimento — inclusive quando ele vai
+    substituir um cadastro manual não verificado — e são apagados ao concluir.
+    Nesse segundo caso, `user_id` aponta temporariamente para a conta pendente;
+    nos demais, aponta para a conta que receberá a sessão. Nenhum token do
+    Google é persistido.
     """
 
     __tablename__ = "oauth_fluxos"

@@ -4,14 +4,18 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.identity_action import IdentityAction
+from app.models.anamnese import Anamnese
+from app.models.diagnostico import Diagnostico
+from app.models.identity_action import EmailOutbox, IdentityAction
+from app.models.paciente_profissional import PacienteProfissional
 from app.models.profissional import Profissional
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.usuario import TipoUsuario
-from app.services.identity_token_service import INVITATION
+from app.services.identity_token_service import EMAIL_VERIFICATION, INVITATION
 
 UsuarioComProfissional = tuple[User, Profissional | None]
 
@@ -29,6 +33,38 @@ async def email_em_uso(db: AsyncSession, email: str) -> bool:
 
 async def buscar_por_email(db: AsyncSession, email: str) -> User | None:
     return await db.scalar(select(User).where(func.lower(User.email) == email.lower()).limit(1))
+
+
+async def buscar_por_id_para_atualizacao(db: AsyncSession, usuario_id: uuid.UUID) -> User | None:
+    return await db.scalar(select(User).where(User.id == usuario_id).with_for_update())
+
+
+async def possui_historico_de_confirmacao_de_email(db: AsyncSession, usuario_id: uuid.UUID) -> bool:
+    """Distingue cadastro público pendente de convite ou estado inconsistente."""
+    encontrado = await db.scalar(
+        select(IdentityAction.id)
+        .where(
+            IdentityAction.user_id == usuario_id,
+            IdentityAction.purpose == EMAIL_VERIFICATION,
+        )
+        .limit(1)
+    )
+    return encontrado is not None
+
+
+async def possui_registros_de_uso(db: AsyncSession, usuario_id: uuid.UUID) -> bool:
+    """Evita descartar automaticamente uma conta que já possua dados de uso."""
+    consultas = (
+        select(Anamnese.id).where(Anamnese.paciente_id == usuario_id).limit(1),
+        select(Diagnostico.id).where(Diagnostico.paciente_id == usuario_id).limit(1),
+        select(PacienteProfissional.id)
+        .where(PacienteProfissional.paciente_id == usuario_id)
+        .limit(1),
+    )
+    for consulta in consultas:
+        if await db.scalar(consulta) is not None:
+            return True
+    return False
 
 
 async def tem_convite_pendente(db: AsyncSession, usuario_id: uuid.UUID) -> bool:
@@ -119,6 +155,19 @@ async def criar_usuario(db: AsyncSession, **campos: Any) -> User:
     db.add(usuario)
     await db.flush()
     return usuario
+
+
+async def remover_usuario(db: AsyncSession, usuario: User) -> None:
+    await db.delete(usuario)
+    await db.flush()
+
+
+async def remover_credenciais_e_sessoes(db: AsyncSession, usuario_id: uuid.UUID) -> None:
+    """Elimina tokens e entregas associados antes de descartar o cadastro."""
+    acoes = select(IdentityAction.id).where(IdentityAction.user_id == usuario_id)
+    await db.execute(delete(EmailOutbox).where(EmailOutbox.action_id.in_(acoes)))
+    await db.execute(delete(IdentityAction).where(IdentityAction.user_id == usuario_id))
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == usuario_id))
 
 
 async def criar_profissional(

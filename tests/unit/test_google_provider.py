@@ -164,7 +164,10 @@ async def test_troca_envia_verifier_e_segredo_no_corpo_do_post(servidor: Google)
     identidade = await _obter(servidor)
 
     assert identidade == IdentidadeGoogle(
-        subject="1234567890", email="maria.silva@gmail.com", nome="Maria Silva"
+        subject="1234567890",
+        email="maria.silva@gmail.com",
+        nome="Maria Silva",
+        email_autoritativo=True,
     )
     troca = next(c for c in servidor.chamadas if str(c.url) == google.GOOGLE_TOKEN_URL)
     corpo = parse_qs(troca.content.decode())
@@ -294,6 +297,22 @@ async def test_email_verified_como_string_true_e_aceito(servidor: Google) -> Non
 
 
 @pytest.mark.asyncio
+async def test_workspace_verificado_com_hd_e_autoritativo(servidor: Google) -> None:
+    servidor.id_token = _token(
+        _claims(email="pessoa@empresa.com", email_verified=True, hd="empresa.com")
+    )
+
+    assert (await _obter(servidor)).email_autoritativo is True
+
+
+@pytest.mark.asyncio
+async def test_conta_google_com_email_externo_nao_e_autoritativa(servidor: Google) -> None:
+    servidor.id_token = _token(_claims(email="pessoa@provedor.com", email_verified=True, hd=None))
+
+    assert (await _obter(servidor)).email_autoritativo is False
+
+
+@pytest.mark.asyncio
 async def test_nome_ausente_usa_a_parte_local_do_email(servidor: Google) -> None:
     servidor.id_token = _token(_claims(name=None))
 
@@ -325,5 +344,5 @@ async def test_jwks_fica_em_cache_e_e_rebuscado_na_rotacao_de_chave(servidor: Go
 def test_resultado_da_identidade_nao_expoe_token() -> None:
     campos = {campo for campo in IdentidadeGoogle.__slots__}
 
-    assert campos == {"subject", "email", "nome"}
+    assert campos == {"subject", "email", "nome", "email_autoritativo"}
     assert json.dumps(sorted(campos))  # só metadados

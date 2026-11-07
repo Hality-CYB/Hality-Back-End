@@ -13,10 +13,12 @@ Fluxo, todo conduzido pelo backend:
 
 Regras de segurança:
 
-* o vínculo é por (provider, ``sub``); e-mail nunca vincula sozinho. Um e-mail
-  Google igual ao de uma conta existente NÃO é vinculado: devolve
-  ``conta_existente`` (vincular exige uma ação autenticada do titular, fora
-  deste corte);
+* o vínculo permanente é por (provider, ``sub``), nunca pelo e-mail. O e-mail
+  só resolve uma conta ainda sem vínculo quando o Google é autoritativo sobre
+  o endereço: Gmail, ou Workspace com ``email_verified`` e ``hd``;
+* conta manual verificada recebe o vínculo Google; conta manual nunca
+  verificada é substituída por uma conta Google nova, sem herdar dados ou
+  consentimentos; conta inativa nunca é substituída;
 * só paciente: conta de profissional/admin (por vínculo ou por e-mail) é barrada;
 * nenhuma conta parcial: a conta nasce na troca, junto com o consentimento, na
   mesma transação;
@@ -47,7 +49,7 @@ from app.auth.google import (
 from app.auth.policies import tem_papel
 from app.auth.users import password_helper
 from app.core.consentimentos import OrigemConsentimento
-from app.db import auditoria_queries, oauth_queries, user_queries
+from app.db import auditoria_queries, consentimento_queries, oauth_queries, user_queries
 from app.models.oauth_fluxo import ESTADO_AUTENTICADO, ESTADO_FALHOU, OAuthFluxo
 from app.models.user import User
 from app.schemas.consentimento import DecisaoConsentimento
@@ -261,16 +263,39 @@ async def processar_callback(
     else:
         existente = await user_queries.buscar_por_email(db, google.email)
         if existente is not None:
-            # Sem vínculo silencioso por e-mail (AC-014).
-            erro = (
-                ErroLogin.CONTA_EXISTENTE
-                if tem_papel(existente, TipoUsuario.PACIENTE)
-                else ErroLogin.PAPEL_NAO_PERMITIDO
+            erro = _erro_do_usuario(existente)
+            if erro is not None:
+                return await _falhar(db, fluxo, erro, usuario=existente)
+
+            # `email_verified` sozinho não prova posse atual de um endereço
+            # externo. Nessa situação, o usuário deve usar outro método para
+            # confirmar a conta; não vinculamos nem substituímos cadastros.
+            if not google.email_autoritativo:
+                return await _falhar(db, fluxo, ErroLogin.CONTA_EXISTENTE)
+
+            identidade_do_usuario = await oauth_queries.buscar_identidade_do_usuario(
+                db, provider=PROVIDER, user_id=existente.id
             )
-            return await _falhar(db, fluxo, erro)
-        fluxo.email = google.email
-        fluxo.nome = google.nome
-        etapa = Etapa.CONSENTIMENTO
+            if identidade_do_usuario is not None:
+                # Outro `sub` Google já pertence a esta conta.
+                return await _falhar(db, fluxo, ErroLogin.CONTA_EXISTENTE)
+
+            fluxo.user_id = existente.id
+            if existente.is_verified:
+                etapa = Etapa.SESSAO
+            elif await _conta_manual_pendente_descartavel(db, existente):
+                # A conta antiga só é removida na troca final, depois que os
+                # novos consentimentos forem validados. `user_id` identifica
+                # o cadastro a descartar; email/nome pertencem à conta nova.
+                fluxo.email = google.email
+                fluxo.nome = google.nome
+                etapa = Etapa.CONSENTIMENTO
+            else:
+                return await _falhar(db, fluxo, ErroLogin.CONTA_EXISTENTE)
+        else:
+            fluxo.email = google.email
+            fluxo.nome = google.nome
+            etapa = Etapa.CONSENTIMENTO
 
     codigo = secrets.token_urlsafe(32)
     fluxo.estado = ESTADO_AUTENTICADO
@@ -307,6 +332,10 @@ async def trocar_codigo(
         await db.commit()
         raise CodigoTrocaInvalidoError
 
+    if fluxo.user_id is not None and fluxo.email is not None:
+        return await _trocar_substituindo_conta_pendente(
+            db, fluxo, consentimentos=consentimentos, referencia_coleta=referencia_coleta
+        )
     if fluxo.user_id is not None:
         return await _trocar_para_conta_existente(db, fluxo)
     return await _trocar_criando_conta(
@@ -331,6 +360,7 @@ async def _recusar_troca(
 
 
 async def _trocar_para_conta_existente(db: AsyncSession, fluxo: OAuthFluxo) -> User:
+    fluxo_id = fluxo.id
     usuario = await db.get(User, fluxo.user_id)
     erro = _erro_do_usuario(usuario) if usuario else ErroLogin.CONTA_INATIVA
     if erro is not None:
@@ -340,21 +370,185 @@ async def _trocar_para_conta_existente(db: AsyncSession, fluxo: OAuthFluxo) -> U
             raise PapelNaoPermitidoError
         raise ContaInativaError
 
-    if not await oauth_queries.consumir_codigo_de_troca(db, fluxo_id=fluxo.id):
+    if not usuario.is_verified:
+        await _recusar_troca(db, fluxo, ErroLogin.CONTA_EXISTENTE, usuario)
+        raise ContaExistenteError
+
+    try:
+        if not await oauth_queries.consumir_codigo_de_troca(db, fluxo_id=fluxo_id):
+            await db.rollback()
+            raise CodigoTrocaInvalidoError
+
+        identidade = await oauth_queries.buscar_identidade(
+            db, provider=PROVIDER, subject=fluxo.subject or ""
+        )
+        if identidade is None:
+            identidade = await oauth_queries.criar_identidade(
+                db, user_id=usuario.id, provider=PROVIDER, subject=fluxo.subject or ""
+            )
+        elif identidade.user_id != usuario.id:
+            await db.rollback()
+            await _auditar(
+                db,
+                "auth.google.trocar",
+                fluxo_id,
+                "falha",
+                metadata={"motivo": ErroLogin.CONTA_EXISTENTE.value},
+            )
+            await db.commit()
+            raise ContaExistenteError
+        identidade.ultimo_login_em = _agora()
+        fluxo.email = None
+        fluxo.nome = None
+        await _auditar(db, "auth.google.trocar", fluxo_id, "sucesso", usuario=usuario)
+        await db.commit()
+        return usuario
+    except IntegrityError as exc:
         await db.rollback()
+        await _auditar(
+            db,
+            "auth.google.trocar",
+            fluxo_id,
+            "falha",
+            metadata={"motivo": ErroLogin.CONTA_EXISTENTE.value},
+        )
+        await db.commit()
+        raise ContaExistenteError from exc
+
+
+async def _conta_manual_pendente_descartavel(db: AsyncSession, usuario: User) -> bool:
+    """Aceita somente o cadastro público que nunca chegou a ser utilizado."""
+    return (
+        usuario.is_active
+        and not usuario.is_verified
+        and tem_papel(usuario, TipoUsuario.PACIENTE)
+        and await user_queries.possui_historico_de_confirmacao_de_email(db, usuario.id)
+        and not await user_queries.possui_registros_de_uso(db, usuario.id)
+    )
+
+
+async def _criar_usuario_google(
+    db: AsyncSession,
+    fluxo: OAuthFluxo,
+    *,
+    consentimentos: list[DecisaoConsentimento],
+    referencia_coleta: str | None,
+) -> User:
+    email, nome, subject = fluxo.email, fluxo.nome, fluxo.subject
+    if not email or not nome or not subject:
         raise CodigoTrocaInvalidoError
 
-    identidade = await oauth_queries.buscar_identidade(
-        db, provider=PROVIDER, subject=fluxo.subject or ""
+    usuario = await user_queries.criar_usuario(
+        db,
+        name=nome,
+        email=email,
+        phone=None,
+        role=TipoUsuario.PACIENTE.value,
+        # Conta sem senha utilizável: o acesso é pelo Google.
+        hashed_password=password_helper.hash(secrets.token_urlsafe(32)),
+        is_verified=True,
     )
-    if identidade is not None:
-        identidade.ultimo_login_em = _agora()
-    usuario.is_verified = True
-    fluxo.email = None
-    fluxo.nome = None
-    await _auditar(db, "auth.google.trocar", fluxo.id, "sucesso", usuario=usuario)
-    await db.commit()
+    await oauth_queries.criar_identidade(db, user_id=usuario.id, provider=PROVIDER, subject=subject)
+    await consentimento_service.gravar_decisoes(
+        db,
+        titular=usuario,
+        decisoes=consentimentos,
+        origem=OrigemConsentimento.GOOGLE,
+        ator=usuario,
+        referencia_coleta=referencia_coleta,
+    )
     return usuario
+
+
+async def _trocar_substituindo_conta_pendente(
+    db: AsyncSession,
+    fluxo: OAuthFluxo,
+    *,
+    consentimentos: list[DecisaoConsentimento],
+    referencia_coleta: str | None,
+) -> User:
+    """Descarta cadastro não verificado e cria uma conta Google independente."""
+    consentimento_service.validar_decisoes_cadastro(consentimentos)
+
+    email, usuario_id = fluxo.email, fluxo.user_id
+    if not email or usuario_id is None:
+        raise CodigoTrocaInvalidoError
+
+    usuario = await user_queries.buscar_por_id_para_atualizacao(db, usuario_id)
+    if usuario is None:
+        # A conta pendente já foi removida por outro processo. A criação ainda
+        # passa pela unicidade do e-mail e do `sub` abaixo.
+        fluxo.user_id = None
+        return await _trocar_criando_conta(
+            db,
+            fluxo,
+            consentimentos=consentimentos,
+            referencia_coleta=referencia_coleta,
+        )
+
+    erro = _erro_do_usuario(usuario)
+    if erro is not None:
+        await _recusar_troca(db, fluxo, erro, usuario)
+        if erro is ErroLogin.PAPEL_NAO_PERMITIDO:
+            raise PapelNaoPermitidoError
+        raise ContaInativaError
+
+    email_ainda_corresponde = usuario.email.lower() == email.lower()
+    identidade_do_usuario = await oauth_queries.buscar_identidade_do_usuario(
+        db, provider=PROVIDER, user_id=usuario.id
+    )
+    if (
+        usuario.is_verified
+        or not email_ainda_corresponde
+        or identidade_do_usuario is not None
+        or not await _conta_manual_pendente_descartavel(db, usuario)
+    ):
+        await _recusar_troca(db, fluxo, ErroLogin.CONTA_EXISTENTE, usuario)
+        raise ContaExistenteError
+
+    fluxo_id = fluxo.id
+    try:
+        if not await oauth_queries.consumir_codigo_de_troca(db, fluxo_id=fluxo_id):
+            await db.rollback()
+            raise CodigoTrocaInvalidoError
+
+        await user_queries.remover_credenciais_e_sessoes(db, usuario.id)
+        await consentimento_queries.remover_eventos_de_cadastro_pendente(db, usuario.id)
+        # Evita depender do SET NULL do banco enquanto a mesma transação cria
+        # a conta substituta e preserva o fluxo para auditoria.
+        fluxo.user_id = None
+        await user_queries.remover_usuario(db, usuario)
+
+        novo_usuario = await _criar_usuario_google(
+            db,
+            fluxo,
+            consentimentos=consentimentos,
+            referencia_coleta=referencia_coleta,
+        )
+        fluxo.user_id = novo_usuario.id
+        fluxo.email = None
+        fluxo.nome = None
+        await _auditar(
+            db,
+            "auth.google.trocar",
+            fluxo_id,
+            "sucesso",
+            usuario=novo_usuario,
+            metadata={"conta_pendente_descartada": True},
+        )
+        await db.commit()
+        return novo_usuario
+    except IntegrityError as exc:
+        await db.rollback()
+        await _auditar(
+            db,
+            "auth.google.trocar",
+            fluxo_id,
+            "falha",
+            metadata={"motivo": ErroLogin.CONTA_EXISTENTE.value},
+        )
+        await db.commit()
+        raise ContaExistenteError from exc
 
 
 async def _trocar_criando_conta(
@@ -381,25 +575,10 @@ async def _trocar_criando_conta(
             await db.rollback()
             raise CodigoTrocaInvalidoError
 
-        usuario = await user_queries.criar_usuario(
+        usuario = await _criar_usuario_google(
             db,
-            name=nome,
-            email=email,
-            phone=None,
-            role=TipoUsuario.PACIENTE.value,
-            # Conta sem senha utilizável: o acesso é pelo Google.
-            hashed_password=password_helper.hash(secrets.token_urlsafe(32)),
-            is_verified=True,
-        )
-        await oauth_queries.criar_identidade(
-            db, user_id=usuario.id, provider=PROVIDER, subject=subject
-        )
-        await consentimento_service.gravar_decisoes(
-            db,
-            titular=usuario,
-            decisoes=consentimentos,
-            origem=OrigemConsentimento.GOOGLE,
-            ator=usuario,
+            fluxo,
+            consentimentos=consentimentos,
             referencia_coleta=referencia_coleta,
         )
         fluxo = await db.get(OAuthFluxo, fluxo_id, populate_existing=True)

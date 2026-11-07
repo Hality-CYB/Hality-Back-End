@@ -66,7 +66,10 @@ def _limpar(email: str, subject: str) -> None:
 def conta_google() -> Iterator[IdentidadeGoogle]:
     token = uuid.uuid4().hex
     identidade = IdentidadeGoogle(
-        subject=f"sub-{token}", email=f"google.{token}@hality.com", nome="Paciente Google"
+        subject=f"sub-{token}",
+        email=f"google.{token}@hality.com",
+        nome="Paciente Google",
+        email_autoritativo=True,
     )
     settings = _settings_google()
     app.dependency_overrides[get_settings] = lambda: settings
@@ -112,6 +115,13 @@ def _contagens(email: str) -> tuple[int, int, int]:
         return usuarios, identidades, eventos
 
     return executar_no_banco(_contar)
+
+
+def _usuario_por_email(email: str) -> User | None:
+    async def _buscar(db: AsyncSession) -> User | None:
+        return await db.scalar(select(User).where(User.email == email))
+
+    return executar_no_banco(_buscar)
 
 
 def test_primeiro_login_google_cria_paciente_apos_consentimento(
@@ -162,6 +172,40 @@ def test_segundo_login_reutiliza_a_conta_vinculada_pelo_sub(
     assert segundo["etapa"] == "sessao"
     resposta = TestClient(app).post(EXCHANGE_URL, json={"codigo": segundo["code"]})
     assert resposta.status_code == 200
+    assert _contagens(conta_google.email) == (1, 1, 1)
+
+
+def test_conta_manual_nao_verificada_e_substituida_no_postgres(
+    conta_google: IdentidadeGoogle,
+) -> None:
+    client = TestClient(app)
+    cadastro = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": conta_google.email,
+            "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
+            "name": "Cadastro Pendente",
+            "consentimentos": [TRATAMENTO],
+        },
+    )
+    assert cadastro.status_code == 201
+    antiga = _usuario_por_email(conta_google.email)
+    assert antiga is not None and antiga.is_verified is False
+
+    retorno = _ate_o_callback(client)
+    assert retorno["etapa"] == "consentimento"
+    assert _usuario_por_email(conta_google.email).id == antiga.id
+
+    sessao = client.post(
+        EXCHANGE_URL, json={"codigo": retorno["code"], "consentimentos": [TRATAMENTO]}
+    )
+
+    assert sessao.status_code == 200
+    nova = _usuario_por_email(conta_google.email)
+    assert nova is not None and nova.id != antiga.id
+    assert nova.name == conta_google.nome and nova.is_verified is True
+    assert nova.data_nascimento is None
     assert _contagens(conta_google.email) == (1, 1, 1)
 
 

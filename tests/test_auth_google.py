@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.google import (
@@ -32,9 +32,12 @@ from app.main import app
 from app.models import (
     AuditoriaAcesso,
     ConsentimentoEvento,
+    EmailOutbox,
     IdentidadeExterna,
+    IdentityAction,
     IdentityRateLimit,
     OAuthFluxo,
+    RefreshToken,
     User,
 )
 from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
@@ -50,7 +53,12 @@ TRATAMENTO = {"finalidade": "health_data", "versao": "v1", "aceito": True}
 TREINO_ACEITO = {"finalidade": "image_training", "versao": "v1", "aceito": True}
 TREINO_RECUSADO = {"finalidade": "image_training", "versao": "v1", "aceito": False}
 
-GOOGLE = IdentidadeGoogle(subject="sub-123", email="maria.google@gmail.com", nome="Maria Google")
+GOOGLE = IdentidadeGoogle(
+    subject="sub-123",
+    email="maria.google@gmail.com",
+    nome="Maria Google",
+    email_autoritativo=True,
+)
 
 
 class ProviderFalso(GoogleOAuthProvider):
@@ -87,6 +95,16 @@ async def google(client: AsyncClient) -> AsyncGenerator[ProviderFalso]:
     app.dependency_overrides[get_google_provider] = lambda: provider
     yield provider
     # O fixture `client` limpa os overrides ao terminar.
+
+
+@pytest.fixture(autouse=True)
+def sem_tabelas_clinicas_no_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A base isolada de auth não cria as tabelas clínicas PostgreSQL-only."""
+
+    async def _sem_registros(_db, _usuario_id) -> bool:
+        return False
+
+    monkeypatch.setattr("app.db.user_queries.possui_registros_de_uso", _sem_registros)
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +159,12 @@ async def _usuario(db: AsyncSession, email: str) -> User | None:
 
 
 async def _registrar_com_senha(
-    client: AsyncClient, db: AsyncSession, email: str, role: str | None = None
+    client: AsyncClient,
+    db: AsyncSession,
+    email: str,
+    role: str | None = None,
+    *,
+    confirmar: bool = True,
 ) -> None:
     resposta = await client.post(
         "/api/v1/auth/register",
@@ -154,7 +177,8 @@ async def _registrar_com_senha(
         },
     )
     assert resposta.status_code == 201
-    await confirmar_email_cadastrado(client, db, email)
+    if confirmar:
+        await confirmar_email_cadastrado(client, db, email)
     if role is not None:
         usuario = await _usuario(db, email)
         usuario.role = role
@@ -639,7 +663,10 @@ async def test_vinculo_e_pelo_sub_e_nao_pelo_email(
     client.cookies.clear()
     # O mesmo `sub` volta com outro e-mail: continua sendo a mesma conta.
     google.identidade = IdentidadeGoogle(
-        subject=GOOGLE.subject, email="email.novo@gmail.com", nome="Outro Nome"
+        subject=GOOGLE.subject,
+        email="email.novo@gmail.com",
+        nome="Outro Nome",
+        email_autoritativo=True,
     )
 
     retorno = await _fluxo_ate_o_callback(client)
@@ -658,7 +685,10 @@ async def test_outro_sub_com_o_mesmo_email_nao_assume_a_conta(
     await _primeiro_login(client)
     client.cookies.clear()
     google.identidade = IdentidadeGoogle(
-        subject="sub-de-outra-pessoa", email=GOOGLE.email, nome="X Y"
+        subject="sub-de-outra-pessoa",
+        email=GOOGLE.email,
+        nome="X Y",
+        email_autoritativo=True,
     )
 
     retorno = await _fluxo_ate_o_callback(client)
@@ -668,12 +698,12 @@ async def test_outro_sub_com_o_mesmo_email_nao_assume_a_conta(
 
 
 # ---------------------------------------------------------------------------
-# AC-014 — sem vínculo silencioso por e-mail
+# Contas manuais com o mesmo e-mail
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_conta_existente_com_mesmo_email_nao_e_vinculada(
+async def test_conta_manual_verificada_com_mesmo_email_e_vinculada(
     client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
 ) -> None:
     await _registrar_com_senha(client, db_session, "Maria.Google@Gmail.com")
@@ -681,18 +711,153 @@ async def test_conta_existente_com_mesmo_email_nao_e_vinculada(
     senha_antes = antes.hashed_password
 
     retorno = await _fluxo_ate_o_callback(client)
+    resposta = await _trocar(client, retorno["code"])
 
-    assert retorno == {"erro": "conta_existente"}
-    assert await _contar(db_session, IdentidadeExterna) == 0
+    assert retorno["etapa"] == "sessao"
+    assert resposta.status_code == 200
+    assert await _contar(db_session, IdentidadeExterna) == 1
     assert await _contar(db_session, User) == 1
     depois = await _usuario(db_session, GOOGLE.email)
     assert depois.id == antes.id and depois.hashed_password == senha_antes
-    # E a conta segue acessível pela senha de sempre.
+    evento = await db_session.scalar(select(ConsentimentoEvento))
+    assert evento.titular_id == antes.id and evento.origem == "registro"
+    # A conta segue acessível pela senha de sempre após ganhar o segundo método.
     login = await client.post(
         "/api/v1/auth/login",
         data={"username": "Maria.Google@Gmail.com", "password": "SenhaSegura123!"},
     )
     assert login.status_code == 200
+
+    client.cookies.clear()
+    segundo = await _fluxo_ate_o_callback(client)
+    assert segundo["etapa"] == "sessao"
+    assert (await _trocar(client, segundo["code"])).status_code == 200
+    assert await _contar(db_session, IdentidadeExterna) == 1
+
+
+@pytest.mark.asyncio
+async def test_conta_manual_nao_verificada_e_substituida_sem_reaproveitar_dados(
+    client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
+) -> None:
+    # Reproduz o RESTRICT do Postgres sem tocar no banco externo do ambiente.
+    await db_session.execute(text("PRAGMA foreign_keys=ON"))
+    await _registrar_com_senha(client, db_session, GOOGLE.email, confirmar=False)
+    antiga = await _usuario(db_session, GOOGLE.email)
+    antigo_id = antiga.id
+    senha_antiga = antiga.hashed_password
+    db_session.add(RefreshToken(token="refresh-da-conta-pendente", user_id=antigo_id))
+    await db_session.commit()
+    assert await _contar(db_session, ConsentimentoEvento) == 1
+    assert await _contar(db_session, IdentityAction) == 1
+    assert await _contar(db_session, EmailOutbox) == 1
+    assert await _contar(db_session, RefreshToken) == 1
+
+    retorno = await _fluxo_ate_o_callback(client)
+
+    assert retorno["etapa"] == "consentimento"
+    # O cadastro só é descartado depois que a nova decisão for válida.
+    assert (await _usuario(db_session, GOOGLE.email)).id == antigo_id
+
+    resposta = await _trocar(client, retorno["code"], [TRATAMENTO, TREINO_RECUSADO])
+
+    assert resposta.status_code == 200
+    nova = await _usuario(db_session, GOOGLE.email)
+    assert nova.id != antigo_id
+    assert nova.name == GOOGLE.nome
+    assert nova.phone is None and nova.data_nascimento is None
+    assert nova.hashed_password != senha_antiga
+    assert nova.is_active and nova.is_verified
+    identidade = await db_session.scalar(select(IdentidadeExterna))
+    assert identidade.user_id == nova.id and identidade.subject == GOOGLE.subject
+    eventos = list(
+        await db_session.scalars(select(ConsentimentoEvento).order_by(ConsentimentoEvento.id))
+    )
+    assert [(e.finalidade, e.aceito, e.origem, e.titular_id) for e in eventos] == [
+        ("health_data", True, "google", nova.id),
+        ("image_training", False, "google", nova.id),
+    ]
+    assert await _contar(db_session, IdentityAction) == 0
+    assert await _contar(db_session, EmailOutbox) == 0
+    tokens = list(await db_session.scalars(select(RefreshToken)))
+    assert len(tokens) == 1
+    assert tokens[0].user_id == nova.id and tokens[0].token != "refresh-da-conta-pendente"
+    auditorias = list(await db_session.scalars(select(AuditoriaAcesso)))
+    # A trilha mínima de segurança permanece, mas deixa de apontar para a
+    # conta excluída e não carrega seus dados de autenticação.
+    assert all(linha.ator_id != antigo_id for linha in auditorias)
+    trilha = " ".join(f"{linha.metadados} {linha.recurso_id}" for linha in auditorias).lower()
+    assert GOOGLE.email.lower() not in trilha
+    assert senha_antiga.lower() not in trilha
+    assert "refresh-da-conta-pendente" not in trilha
+
+    login_antigo = await client.post(
+        "/api/v1/auth/login",
+        data={"username": GOOGLE.email, "password": "SenhaSegura123!"},
+    )
+    assert login_antigo.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_consentimento_invalido_preserva_conta_pendente_e_codigo(
+    client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
+) -> None:
+    await _registrar_com_senha(client, db_session, GOOGLE.email, confirmar=False)
+    antiga = await _usuario(db_session, GOOGLE.email)
+    retorno = await _fluxo_ate_o_callback(client)
+
+    invalida = await _trocar(client, retorno["code"], [])
+
+    assert invalida.status_code == 422
+    assert (await _usuario(db_session, GOOGLE.email)).id == antiga.id
+    valida = await _trocar(client, retorno["code"], [TRATAMENTO])
+    assert valida.status_code == 200
+    assert (await _usuario(db_session, GOOGLE.email)).id != antiga.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmar", [False, True], ids=["nao_verificada", "verificada"])
+async def test_email_externo_nao_vincula_nem_substitui_conta_manual(
+    client: AsyncClient,
+    google: ProviderFalso,
+    db_session: AsyncSession,
+    confirmar: bool,
+) -> None:
+    email = "pessoa@provedor.com"
+    google.identidade = IdentidadeGoogle(
+        subject="sub-email-externo",
+        email=email,
+        nome="Pessoa Externa",
+        email_autoritativo=False,
+    )
+    await _registrar_com_senha(client, db_session, email, confirmar=confirmar)
+    antes = await _usuario(db_session, email)
+
+    retorno = await _fluxo_ate_o_callback(client)
+
+    assert retorno == {"erro": "conta_existente"}
+    assert (await _usuario(db_session, email)).id == antes.id
+    assert await _contar(db_session, IdentidadeExterna) == 0
+
+
+@pytest.mark.asyncio
+async def test_conta_pendente_com_registros_de_uso_nao_e_descartada(
+    client: AsyncClient,
+    google: ProviderFalso,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _registrar_com_senha(client, db_session, GOOGLE.email, confirmar=False)
+    antiga = await _usuario(db_session, GOOGLE.email)
+
+    async def _possui_registros(_db, _usuario_id) -> bool:
+        return True
+
+    monkeypatch.setattr("app.db.user_queries.possui_registros_de_uso", _possui_registros)
+
+    retorno = await _fluxo_ate_o_callback(client)
+
+    assert retorno == {"erro": "conta_existente"}
+    assert (await _usuario(db_session, GOOGLE.email)).id == antiga.id
 
 
 @pytest.mark.asyncio
@@ -774,6 +939,22 @@ async def test_conta_inativa_nao_entra_pelo_google(
     await db_session.commit()
 
     assert await _fluxo_ate_o_callback(client) == {"erro": "conta_inativa"}
+
+
+@pytest.mark.asyncio
+async def test_conta_manual_nao_verificada_mas_inativa_nao_e_substituida(
+    client: AsyncClient, google: ProviderFalso, db_session: AsyncSession
+) -> None:
+    await _registrar_com_senha(client, db_session, GOOGLE.email, confirmar=False)
+    usuario = await _usuario(db_session, GOOGLE.email)
+    usuario.is_active = False
+    await db_session.commit()
+
+    retorno = await _fluxo_ate_o_callback(client)
+
+    assert retorno == {"erro": "conta_inativa"}
+    assert (await _usuario(db_session, GOOGLE.email)).id == usuario.id
+    assert await _contar(db_session, IdentidadeExterna) == 0
 
 
 # ---------------------------------------------------------------------------
