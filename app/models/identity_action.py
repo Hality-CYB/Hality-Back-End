@@ -58,7 +58,7 @@ class EmailOutbox(Base):
     __table_args__ = (
         Index("ix_email_outbox_status_available_at", "status", "available_at"),
         Index("ix_email_outbox_correlation_id", "correlation_id"),
-        UniqueConstraint("review_id", name="uq_email_outbox_review_id"),
+        UniqueConstraint("review_id", "purpose", name="uq_email_outbox_review_id_purpose"),
         CheckConstraint(
             "(action_id IS NOT NULL) != (review_id IS NOT NULL)",
             name="ck_email_outbox_one_source",

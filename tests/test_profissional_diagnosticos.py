@@ -28,6 +28,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models import (
     Anamnese,
+    AuditoriaAcesso,
     ClassificacaoDiagnostico,
     Diagnostico,
     DiagnosticoRevisao,
@@ -37,8 +38,10 @@ from app.models import (
     Imagem,
     PacienteProfissional,
     Profissional,
+    RotuloDataset,
     User,
 )
+from app.models.consentimento import ConsentimentoEvento
 from app.services import diagnostico_mock
 
 
@@ -83,6 +86,9 @@ TABELAS = [
     Diagnostico.__table__,
     DiagnosticoRevisao.__table__,
     Imagem.__table__,
+    AuditoriaAcesso.__table__,
+    ConsentimentoEvento.__table__,
+    RotuloDataset.__table__,
 ]
 
 
@@ -1336,3 +1342,208 @@ async def test_integrity_error_de_corrida_vira_409(
     )
 
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Reclassificação pelo admin
+# ---------------------------------------------------------------------------
+
+ADMIN_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+ADMIN_BASE = "/api/v1/admin/diagnosticos"
+AVISO_AO_PROFISSIONAL = "diagnostic_review_override"
+
+
+async def _criar_admin(session_factory) -> None:
+    async with session_factory() as db:
+        db.add(
+            User(
+                id=ADMIN_ID,
+                name="Admin",
+                email="admin@hality.local",
+                hashed_password="x",
+                role="admin",
+            )
+        )
+        await db.commit()
+
+
+async def _revisar_como_profissional(http, como, diagnostico_id, classificacao="halito_normal"):
+    como()
+    resposta = await http.patch(
+        f"{BASE}/{diagnostico_id}/revisao",
+        json={"classificacao": classificacao, "version": 0},
+    )
+    assert resposta.status_code == 200
+
+
+async def _reclassificar(http, como, diagnostico_id, classificacao, version):
+    como("admin", ADMIN_ID)
+    return await http.patch(
+        f"{ADMIN_BASE}/{diagnostico_id}/revisao",
+        json={"classificacao": classificacao, "observacao": "curadoria", "version": version},
+    )
+
+
+async def _emails(session_factory) -> list[EmailOutbox]:
+    async with session_factory() as db:
+        return list(await db.scalars(select(EmailOutbox)))
+
+
+async def test_admin_reclassifica_por_cima_do_profissional_e_avisa_os_dois(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+    await _revisar_como_profissional(http, como, d2.id)
+
+    resposta = await _reclassificar(http, como, d2.id, "mau_halito_social", 1)
+
+    assert resposta.status_code == 200
+    assert resposta.json()["version"] == 2
+    emails = await _emails(session_factory)
+    avisos = [e for e in emails if e.purpose == AVISO_AO_PROFISSIONAL]
+    assert [e.recipient_email for e in avisos] == ["prof.a@hality.local"]
+    assert len([e for e in emails if e.purpose == "diagnostic_review"]) == 2
+
+    async with session_factory() as db:
+        evento = await db.scalar(
+            select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "diagnostico.revisao.admin")
+        )
+    assert evento.ator_id == ADMIN_ID
+    assert evento.metadados["avisou_profissional"] is True
+
+
+async def test_entrega_do_aviso_ao_profissional_nao_leva_o_resultado(
+    http, dados, como, session_factory
+) -> None:
+    from app.services.identity_token_service import dispatch_pending_emails
+
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+    await _revisar_como_profissional(http, como, d2.id)
+    await _reclassificar(http, como, d2.id, "mau_halito_social", 1)
+
+    mensagens = []
+
+    class Provider:
+        async def send(self, message) -> None:
+            mensagens.append(message)
+
+    async with session_factory() as db:
+        await dispatch_pending_emails(db, Provider())
+
+    por_finalidade = {m.purpose: m for m in mensagens}
+    aviso = por_finalidade[AVISO_AO_PROFISSIONAL]
+    assert aviso.recipient == "prof.a@hality.local"
+    assert aviso.token_url.endswith(f"/profissional/diagnosticos/{d2.id}")
+    assert aviso.review_result is None
+    paciente = por_finalidade["diagnostic_review"]
+    assert paciente.token_url.endswith(f"/paciente/diagnosticos/{d2.id}")
+    assert paciente.professional_name == "Equipe Hality"
+
+
+async def test_admin_confirmando_a_mesma_classificacao_nao_avisa_o_profissional(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+    await _revisar_como_profissional(http, como, d2.id)
+
+    resposta = await _reclassificar(http, como, d2.id, "halito_normal", 1)
+
+    assert resposta.status_code == 200
+    emails = await _emails(session_factory)
+    assert not [e for e in emails if e.purpose == AVISO_AO_PROFISSIONAL]
+
+
+async def test_admin_reclassifica_sem_revisao_previa_avisa_so_o_paciente(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+
+    resposta = await _reclassificar(http, como, d2.id, "mau_halito_social", 0)
+
+    assert resposta.status_code == 200
+    emails = await _emails(session_factory)
+    assert [e.purpose for e in emails] == ["diagnostic_review"]
+    async with session_factory() as db:
+        assert (await db.get(Diagnostico, d2.id)).status == "concluido"
+
+
+async def test_admin_por_cima_de_outro_admin_nao_gera_aviso(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+    await _reclassificar(http, como, d2.id, "halito_normal", 0)
+
+    resposta = await _reclassificar(http, como, d2.id, "mau_halito_social", 1)
+
+    assert resposta.status_code == 200
+    emails = await _emails(session_factory)
+    assert not [e for e in emails if e.purpose == AVISO_AO_PROFISSIONAL]
+
+
+async def test_reclassificacao_exige_admin_e_versao_atual(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+
+    como()
+    negado = await http.patch(
+        f"{ADMIN_BASE}/{d2.id}/revisao",
+        json={"classificacao": "mau_halito_social", "version": 0},
+    )
+    assert negado.status_code == 403
+
+    conflito = await _reclassificar(http, como, d2.id, "mau_halito_social", 5)
+    assert conflito.status_code == 409
+    assert await _emails(session_factory) == []
+
+    inexistente = await _reclassificar(http, como, 999999, "mau_halito_social", 0)
+    assert inexistente.status_code == 404
+    invalida = await _reclassificar(http, como, d2.id, "nao_existe", 0)
+    assert invalida.status_code == 400
+
+
+async def test_detalhe_do_admin_informa_versao_e_se_o_profissional_revisou(
+    http, dados, como, session_factory
+) -> None:
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+
+    como("admin", ADMIN_ID)
+    antes = (await http.get(f"{ADMIN_BASE}/{d2.id}")).json()["reclassificacao"]
+    assert antes == {"version": 0, "revisada_por_profissional": False}
+
+    await _revisar_como_profissional(http, como, d2.id)
+    como("admin", ADMIN_ID)
+    depois = (await http.get(f"{ADMIN_BASE}/{d2.id}")).json()["reclassificacao"]
+    assert depois == {"version": 1, "revisada_por_profissional": True}
+
+    await _reclassificar(http, como, d2.id, "mau_halito_social", 1)
+    final = (await http.get(f"{ADMIN_BASE}/{d2.id}")).json()["reclassificacao"]
+    assert final == {"version": 2, "revisada_por_profissional": False}
+
+
+async def test_revisao_do_admin_aparece_como_equipe_hality(
+    http, dados, como, session_factory
+) -> None:
+    from app.db.diagnostico_queries import buscar_nome_revisor
+
+    await _criar_admin(session_factory)
+    d2 = dados["d"]["d2"]
+    await _revisar_como_profissional(http, como, d2.id)
+    await _reclassificar(http, como, d2.id, "mau_halito_social", 1)
+
+    como()
+    detalhe = (await http.get(f"{BASE}/{d2.id}")).json()
+    assert detalhe["revisao"]["profissional_nome"] == "Equipe Hality"
+    nomes = [r["profissional_nome"] for r in detalhe["historico_revisoes"]]
+    assert nomes[-1] == "Equipe Hality"
+    assert nomes[0] != "Equipe Hality"
+
+    async with session_factory() as db:
+        assert await buscar_nome_revisor(db, ADMIN_ID) == "Equipe Hality"

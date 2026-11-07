@@ -17,7 +17,9 @@ from app.core.erros_diagnostico import erro_publico
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
+from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.identity_action import EmailOutbox
+from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
     MOTIVO_DATASET_INDISPONIVEL,
@@ -28,6 +30,7 @@ from app.schemas.admin_diagnostico import (
     DatasetInfo,
     ImagemInfo,
     PacienteAdminResumo,
+    ReclassificacaoInfo,
     RevisaoHistorica,
     RevisaoProfissional,
     RevisaoResumo,
@@ -66,6 +69,10 @@ from app.services import (
     diagnostico_provider,
     diagnostico_storage,
     rotulo_dataset_service,
+)
+from app.services.identity_token_service import (
+    DIAGNOSTIC_REVIEW,
+    DIAGNOSTIC_REVIEW_OVERRIDE,
 )
 
 AVISO_LEGAL = (
@@ -1008,12 +1015,35 @@ async def revisar_diagnostico_profissional(
     if classificacao is None:
         raise ClassificacaoRevisaoInvalidaError
 
+    await _gravar_revisao(
+        db,
+        diagnostico=diagnostico,
+        autor_id=profissional.id,
+        classificacao_id=classificacao.id,
+        observacao=observacao,
+        version=version,
+    )
+    await db.commit()
+
+    return await _resposta_da_revisao(db, diagnostico.id)
+
+
+async def _gravar_revisao(
+    db: AsyncSession,
+    *,
+    diagnostico: Diagnostico,
+    autor_id: uuid.UUID,
+    classificacao_id: int,
+    observacao: str | None,
+    version: int,
+) -> DiagnosticoRevisao:
+    """Grava a revisão e enfileira o aviso ao paciente; o commit é do chamador."""
     try:
         revisao = await diagnostico_queries.inserir_revisao(
             db=db,
             diagnostico=diagnostico,
-            profissional_id=profissional.id,
-            classificacao_id=classificacao.id,
+            profissional_id=autor_id,
+            classificacao_id=classificacao_id,
             observacao=observacao,
             versao_esperada=version,
         )
@@ -1036,16 +1066,21 @@ async def revisar_diagnostico_profissional(
         EmailOutbox(
             review_id=revisao.id,
             recipient_email=paciente.email,
-            purpose="diagnostic_review",
+            purpose=DIAGNOSTIC_REVIEW,
             status="queued",
             correlation_id=uuid.uuid4().hex,
         )
     )
-    await db.commit()
+    return revisao
 
+
+async def _resposta_da_revisao(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> RevisaoProfissionalResponse:
     detalhe = await diagnostico_queries.buscar_ultima_revisao(
         db,
-        diagnostico.id,
+        diagnostico_id,
     )
 
     if detalhe is None:
@@ -1059,6 +1094,97 @@ async def revisar_diagnostico_profissional(
         revisao=revisao_response,
         version=revisao_response.version,
     )
+
+
+async def _profissional_que_revisou(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    ultima_revisao: diagnostico_queries.DiagnosticoRevisaoDetalhada | None,
+) -> Profissional | None:
+    """Perfil do último revisor; revisão feita pelo admin não tem perfil profissional."""
+    autor_id = (
+        ultima_revisao.revisao.profissional_id
+        if ultima_revisao is not None
+        else diagnostico.profissional_revisor_id
+    )
+    return await db.get(Profissional, autor_id) if autor_id is not None else None
+
+
+async def reclassificar_diagnostico_admin(
+    db: AsyncSession,
+    admin: User,
+    diagnostico_id: int,
+    classificacao_codigo: str,
+    observacao: str | None,
+    version: int,
+) -> RevisaoProfissionalResponse:
+    """Reclassifica para o paciente, com o mesmo efeito da revisão do profissional.
+
+    Não depende de vínculo. Se a mudança passa por cima da classificação de um
+    profissional, ele é avisado por e-mail na mesma transação.
+    """
+    diagnostico = await diagnostico_queries.buscar_por_id(db, diagnostico_id)
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    if not _tem_resultado(diagnostico):
+        raise DiagnosticoNaoRevisavelError
+
+    classificacao = await diagnostico_queries.buscar_classificacao_por_codigo(
+        db,
+        classificacao_codigo.strip(),
+    )
+
+    if classificacao is None:
+        raise ClassificacaoRevisaoInvalidaError
+
+    # A checagem de `version` no insert garante que esta ainda é a última revisão.
+    anterior = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico.id)
+    perfil = await _profissional_que_revisou(db, diagnostico, anterior)
+    classificacao_anterior_id = (
+        anterior.revisao.classificacao_id if anterior is not None else diagnostico.classificacao_id
+    )
+
+    revisao = await _gravar_revisao(
+        db,
+        diagnostico=diagnostico,
+        autor_id=admin.id,
+        classificacao_id=classificacao.id,
+        observacao=observacao,
+        version=version,
+    )
+
+    avisou_profissional = False
+    if perfil is not None and classificacao_anterior_id != classificacao.id:
+        profissional = await db.get(User, perfil.usuario_id)
+        if profissional is not None:
+            db.add(
+                EmailOutbox(
+                    review_id=revisao.id,
+                    recipient_email=profissional.email,
+                    purpose=DIAGNOSTIC_REVIEW_OVERRIDE,
+                    status="queued",
+                    correlation_id=uuid.uuid4().hex,
+                )
+            )
+            avisou_profissional = True
+
+    await auditoria_queries.registrar_mutacao(
+        db,
+        admin,
+        "diagnostico.revisao.admin",
+        "diagnostico",
+        diagnostico.id,
+        metadata={
+            "version": revisao.versao,
+            "classificacao": classificacao.codigo,
+            "avisou_profissional": avisou_profissional,
+        },
+    )
+    await db.commit()
+
+    return await _resposta_da_revisao(db, diagnostico.id)
 
 
 def _classificacao_automatica_admin(
@@ -1218,6 +1344,7 @@ async def obter_diagnostico_admin(
     )
 
     revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
+    perfil_do_revisor = await _profissional_que_revisou(db, diagnostico, ultima_revisao)
 
     detalhe = AdminDiagnosticoDetalhe(
         id=diagnostico.id,
@@ -1243,6 +1370,10 @@ async def obter_diagnostico_admin(
             motivo=MOTIVO_DATASET_INDISPONIVEL,
         ),
         rotulo_dataset=rotulo_dataset,
+        reclassificacao=ReclassificacaoInfo(
+            version=ultima_revisao.revisao.versao if ultima_revisao is not None else 0,
+            revisada_por_profissional=perfil_do_revisor is not None,
+        ),
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
         imagem=ImagemInfo(),
