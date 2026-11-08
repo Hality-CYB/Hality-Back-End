@@ -10,6 +10,7 @@ import httpx
 from app.core.config import Settings, get_settings
 from app.services.identity_token_service import (
     DIAGNOSTIC_REVIEW,
+    DIAGNOSTIC_REVIEW_OVERRIDE,
     EMAIL_VERIFICATION,
     INVITATION,
     PASSWORD_RESET,
@@ -96,6 +97,15 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
             f"O link expira em {token_expiry_minutes} minutos. "
             "Se não criou esta conta, ignore a mensagem."
         )
+    elif message.purpose == DIAGNOSTIC_REVIEW_OVERRIDE:
+        subject = "Um diagnóstico que você revisou foi reclassificado"
+        title = "Diagnóstico reclassificado"
+        description = (
+            "A equipe Hality reclassificou um diagnóstico que você tinha revisado "
+            "no Check Your Breath."
+        )
+        button = "Ver diagnóstico"
+        detail = "Consulte o resultado atual na plataforma."
     elif message.purpose == DIAGNOSTIC_REVIEW:
         subject = "Sua análise foi revisada no Check Your Breath"
         title = "Sua análise foi revisada"

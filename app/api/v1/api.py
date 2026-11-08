@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     admin_dataset_exports,
     admin_diagnosticos,
     admin_resumo,
+    admin_revisoes,
     admin_rotulos_dataset,
     admin_usuarios,
     admin_vinculos,
@@ -38,6 +39,7 @@ api_router.include_router(admin_diagnosticos.router)
 api_router.include_router(admin_dataset_exports.router)
 api_router.include_router(admin_rotulos_dataset.router)
 api_router.include_router(admin_resumo.router)
+api_router.include_router(admin_revisoes.router)
 api_router.include_router(home.router)
 api_router.include_router(profissional.router)
 api_router.include_router(vinculo.router)

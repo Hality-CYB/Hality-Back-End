@@ -36,6 +36,7 @@ from app.models import (
     Diagnostico,
     DiagnosticoRevisao,
     Imagem,
+    Profissional,
     RotuloDataset,
     User,
 )
@@ -204,6 +205,7 @@ DATA_BASE = datetime(2099, 8, 1, 9, 0, tzinfo=UTC)
 
 TABELAS = [
     User.__table__,
+    Profissional.__table__,
     ClassificacaoDiagnostico.__table__,
     Diagnostico.__table__,
     Imagem.__table__,
@@ -269,6 +271,8 @@ async def dados(session_factory) -> dict[str, dict[str, Diagnostico]]:
                     role=role,
                 )
             )
+        await db.flush()
+        db.add(Profissional(usuario_id=PROFISSIONAL_ID))
 
         normal = ClassificacaoDiagnostico(codigo="halito_normal", nome_exibicao="Normal", ordem=1)
         intima = ClassificacaoDiagnostico(codigo="halitose_intima", nome_exibicao="Íntima", ordem=2)
@@ -949,12 +953,17 @@ async def test_nenhum_papel_consegue_mutar(
 
 
 async def test_openapi_admin_expoe_rotulagem_sem_exportacao() -> None:
-    """Contrato: leitura + rotulagem Hality, sem exportação neste escopo."""
+    """Contrato: leitura, rotulagem Hality e reclassificação, sem exportação aqui."""
     paths = {p: v for p, v in app.openapi()["paths"].items() if "/admin/diagnosticos" in p}
 
     assert paths, "rotas admin não registradas"
     for path, operacoes in paths.items():
-        esperadas = {"get"} if path == BASE or path == f"{BASE}/{{diagnostico_id}}" else {"post"}
+        if path == BASE or path == f"{BASE}/{{diagnostico_id}}":
+            esperadas = {"get"}
+        elif path.endswith("/revisao"):
+            esperadas = {"patch"}
+        else:
+            esperadas = {"post"}
         assert set(operacoes) == esperadas, path
         assert not any(t in path for t in ("export", "download", "import"))
 
