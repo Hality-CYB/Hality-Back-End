@@ -3,6 +3,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.consentimentos import Finalidade
+from app.core.senha import SenhaNova
 from app.schemas.consentimento import DecisaoConsentimento
 
 
@@ -16,6 +17,7 @@ class TrocaGoogleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     codigo: str = Field(..., min_length=1, max_length=2048)
+    senha: SenhaNova | None = None
     consentimentos: list[DecisaoConsentimento] = Field(
         default_factory=list, max_length=len(Finalidade)
     )

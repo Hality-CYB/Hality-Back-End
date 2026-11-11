@@ -117,7 +117,7 @@ async def _fluxo_ate_o_callback(client: AsyncClient, **extras) -> dict[str, str]
 
 
 async def _trocar(client: AsyncClient, codigo: str, consentimentos: list[dict] | None = None):
-    corpo: dict = {"codigo": codigo}
+    corpo: dict = {"codigo": codigo, "senha": "SenhaSegura123!"}
     if consentimentos is not None:
         corpo["consentimentos"] = consentimentos
     return await client.post(EXCHANGE_URL, json=corpo)
@@ -159,6 +159,74 @@ async def _registrar_com_senha(
         usuario = await _usuario(db, email)
         usuario.role = role
         await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_vinculo_exige_mesmo_usuario_e_preserva_conta(client, google, db_session):
+    await _registrar_com_senha(client, db_session, "paciente@example.com")
+    login = await client.post(
+        "/api/v1/auth/login",
+        data={"username": "paciente@example.com", "password": "SenhaSegura123!"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    original = (await client.get(ME_URL, headers=headers)).json()["id"]
+    inicio = await client.post("/api/v1/auth/google/link/start", headers=headers)
+    assert inicio.status_code == 200
+    state = parse_qs(urlparse(inicio.json()["url"]).query)["state"][0]
+    retorno = _consulta(await _callback(client, state, code="codigo-do-google"))
+    assert retorno["etapa"] == "vinculo"
+    codigo = retorno["code"]
+    assert (await client.post(EXCHANGE_URL, json={"codigo": codigo})).status_code == 400
+    await _registrar_com_senha(client, db_session, "outro@example.com")
+    outro = await client.post(
+        "/api/v1/auth/login",
+        data={"username": "outro@example.com", "password": "SenhaSegura123!"},
+    )
+    outro_headers = {"Authorization": f"Bearer {outro.json()['access_token']}"}
+    assert (
+        await client.post(
+            "/api/v1/auth/google/link/complete", json={"codigo": codigo}, headers=outro_headers
+        )
+    ).status_code == 400
+    assert (
+        await client.post("/api/v1/auth/google/link/complete", json={"codigo": codigo})
+    ).status_code == 401
+    assert (
+        await client.post(
+            "/api/v1/auth/google/link/complete", json={"codigo": codigo}, headers=headers
+        )
+    ).status_code == 204
+    assert (
+        await client.post(
+            "/api/v1/auth/google/link/complete", json={"codigo": codigo}, headers=headers
+        )
+    ).status_code == 400
+    assert (await client.get("/api/v1/auth/google/link", headers=headers)).json() == {
+        "vinculado": True,
+        "email": GOOGLE.email,
+    }
+    retorno = await _fluxo_ate_o_callback(client)
+    assert retorno["etapa"] == "sessao"
+    sessao = await _trocar(client, retorno["code"])
+    me = await client.get(
+        ME_URL, headers={"Authorization": f"Bearer {sessao.json()['access_token']}"}
+    )
+    assert me.json()["id"] == original
+
+
+@pytest.mark.asyncio
+async def test_cadastro_google_exige_senha_sem_consumir_codigo(client, google):
+    retorno = await _fluxo_ate_o_callback(client)
+    sem_senha = await client.post(
+        EXCHANGE_URL, json={"codigo": retorno["code"], "consentimentos": [TRATAMENTO]}
+    )
+    assert sem_senha.status_code == 422
+    senha_fraca = await client.post(
+        EXCHANGE_URL,
+        json={"codigo": retorno["code"], "consentimentos": [TRATAMENTO], "senha": "fraca"},
+    )
+    assert senha_fraca.status_code == 422
+    assert (await _trocar(client, retorno["code"], [TRATAMENTO])).status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +586,7 @@ async def test_troca_cria_paciente_identidade_e_consentimentos_na_mesma_operacao
     usuario = await _usuario(db_session, GOOGLE.email)
     assert usuario.role == "paciente" and usuario.is_active and usuario.is_verified
     assert usuario.name == "Maria Google"
-    assert usuario.hashed_password  # conta sem senha utilizável, mas coluna preenchida
+    assert usuario.hashed_password
 
     identidade = await db_session.scalar(select(IdentidadeExterna))
     assert (identidade.user_id, identidade.provider, identidade.subject) == (
@@ -538,11 +606,15 @@ async def test_troca_cria_paciente_identidade_e_consentimentos_na_mesma_operacao
     me = await client.get(ME_URL, headers={"Authorization": f"Bearer {sessao['access_token']}"})
     assert me.status_code == 200 and me.json()["email"] == GOOGLE.email
 
-    # A conta não tem senha conhecida: login por senha não entra.
+    # A senha definida no cadastro dá acesso ao mesmo usuário.
     senha = await client.post(
         "/api/v1/auth/login", data={"username": GOOGLE.email, "password": "SenhaSegura123!"}
     )
-    assert senha.status_code == 400
+    assert senha.status_code == 200
+    me_senha = await client.get(
+        ME_URL, headers={"Authorization": f"Bearer {senha.json()['access_token']}"}
+    )
+    assert me_senha.json()["id"] == me.json()["id"]
 
 
 @pytest.mark.asyncio

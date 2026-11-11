@@ -15,8 +15,7 @@ Regras de segurança:
 
 * o vínculo é por (provider, ``sub``); e-mail nunca vincula sozinho. Um e-mail
   Google igual ao de uma conta existente NÃO é vinculado: devolve
-  ``conta_existente`` (vincular exige uma ação autenticada do titular, fora
-  deste corte);
+  ``conta_existente`` (vincular exige uma ação autenticada do titular);
 * só paciente: conta de profissional/admin (por vínculo ou por e-mail) é barrada;
 * nenhuma conta parcial: a conta nasce na troca, junto com o consentimento, na
   mesma transação;
@@ -85,6 +84,7 @@ class ErroLogin(StrEnum):
 class Etapa(StrEnum):
     """O que o frontend deve fazer depois do callback."""
 
+    VINCULO = "vinculo"
     SESSAO = "sessao"  # conta já existe: trocar o código por sessão
     CONSENTIMENTO = "consentimento"  # conta nova: coletar consentimento antes de trocar
 
@@ -140,7 +140,9 @@ async def _auditar(
     )
 
 
-async def iniciar_autorizacao(db: AsyncSession, provider: GoogleOAuthProvider) -> tuple[str, str]:
+async def iniciar_autorizacao(
+    db: AsyncSession, provider: GoogleOAuthProvider, vincular_user_id: uuid.UUID | None = None
+) -> tuple[str, str]:
     """Cria o fluxo e devolve ``(url_do_google, state)``; o state vira cookie no endpoint."""
     agora = _agora()
     await oauth_queries.purgar_fluxos_antigos(db, antes_de=agora - RETENCAO_FLUXOS)
@@ -155,6 +157,7 @@ async def iniciar_autorizacao(db: AsyncSession, provider: GoogleOAuthProvider) -
         nonce=nonce,
         code_verifier=code_verifier,
         expira_em=agora + STATE_TTL,
+        vincular_user_id=vincular_user_id,
     )
     await _auditar(db, "auth.google.autorizar", fluxo.id, "sucesso")
     await db.commit()
@@ -251,11 +254,18 @@ async def processar_callback(
     identidade = await oauth_queries.buscar_identidade(
         db, provider=PROVIDER, subject=google.subject
     )
-    if identidade is not None:
+    if fluxo.vincular_user_id is not None:
+        if identidade is not None:
+            return await _falhar(db, fluxo, ErroLogin.CONTA_EXISTENTE)
+        fluxo.email = google.email
+        fluxo.nome = google.nome
+        etapa = Etapa.VINCULO
+    elif identidade is not None:
         usuario = await db.get(User, identidade.user_id)
         erro = _erro_do_usuario(usuario) if usuario else ErroLogin.CONTA_INATIVA
         if erro is not None:
             return await _falhar(db, fluxo, erro, usuario=usuario)
+        identidade.email = google.email
         fluxo.user_id = usuario.id
         etapa = Etapa.SESSAO
     else:
@@ -287,6 +297,7 @@ async def trocar_codigo(
     *,
     codigo: str,
     consentimentos: list[DecisaoConsentimento],
+    senha: str | None,
     referencia_coleta: str | None,
 ) -> User:
     """Gasta o código de troca e devolve o usuário autenticado (a sessão é do endpoint)."""
@@ -307,10 +318,12 @@ async def trocar_codigo(
         await db.commit()
         raise CodigoTrocaInvalidoError
 
+    if fluxo.vincular_user_id is not None:
+        raise CodigoTrocaInvalidoError
     if fluxo.user_id is not None:
         return await _trocar_para_conta_existente(db, fluxo)
     return await _trocar_criando_conta(
-        db, fluxo, consentimentos=consentimentos, referencia_coleta=referencia_coleta
+        db, fluxo, consentimentos=consentimentos, senha=senha, referencia_coleta=referencia_coleta
     )
 
 
@@ -362,11 +375,17 @@ async def _trocar_criando_conta(
     fluxo: OAuthFluxo,
     *,
     consentimentos: list[DecisaoConsentimento],
+    senha: str | None,
     referencia_coleta: str | None,
 ) -> User:
     # Valida o consentimento ANTES de gastar o código: se faltar o aceite do
     # tratamento, nada é criado e o mesmo código ainda vale até expirar.
     consentimento_service.validar_decisoes_cadastro(consentimentos)
+
+    if senha is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail="defina uma senha para criar a conta")
 
     email, nome, subject = fluxo.email, fluxo.nome, fluxo.subject
     if not email or not nome or not subject:
@@ -387,12 +406,11 @@ async def _trocar_criando_conta(
             email=email,
             phone=None,
             role=TipoUsuario.PACIENTE.value,
-            # Conta sem senha utilizável: o acesso é pelo Google.
-            hashed_password=password_helper.hash(secrets.token_urlsafe(32)),
+            hashed_password=password_helper.hash(senha),
             is_verified=True,
         )
         await oauth_queries.criar_identidade(
-            db, user_id=usuario.id, provider=PROVIDER, subject=subject
+            db, user_id=usuario.id, provider=PROVIDER, subject=subject, email=email
         )
         await consentimento_service.gravar_decisoes(
             db,

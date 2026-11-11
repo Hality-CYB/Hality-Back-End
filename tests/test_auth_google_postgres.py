@@ -128,7 +128,12 @@ def test_primeiro_login_google_cria_paciente_apos_consentimento(
     assert _contagens(conta_google.email) == (0, 0, 0)
 
     sessao = client.post(
-        EXCHANGE_URL, json={"codigo": retorno["code"], "consentimentos": [TRATAMENTO]}
+        EXCHANGE_URL,
+        json={
+            "codigo": retorno["code"],
+            "consentimentos": [TRATAMENTO],
+            "senha": "SenhaSegura123!",
+        },
     )
     assert sessao.status_code == 200
     assert set(sessao.json()) == {"access_token", "token_type"}
@@ -152,7 +157,12 @@ def test_segundo_login_reutiliza_a_conta_vinculada_pelo_sub(
     primeiro = _ate_o_callback(client)
     assert (
         client.post(
-            EXCHANGE_URL, json={"codigo": primeiro["code"], "consentimentos": [TRATAMENTO]}
+            EXCHANGE_URL,
+            json={
+                "codigo": primeiro["code"],
+                "consentimentos": [TRATAMENTO],
+                "senha": "SenhaSegura123!",
+            },
         ).status_code
         == 200
     )
