@@ -172,6 +172,7 @@ async def test_vinculo_exige_mesmo_usuario_e_preserva_conta(client, google, db_s
     original = (await client.get(ME_URL, headers=headers)).json()["id"]
     inicio = await client.post("/api/v1/auth/google/link/start", headers=headers)
     assert inicio.status_code == 200
+    assert inicio.headers["cache-control"] == "no-store"
     state = inicio.json()["state"]
     autorizacao = await client.get(
         "/api/v1/auth/google/link/authorize", params={"state": state}, follow_redirects=False

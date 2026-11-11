@@ -48,6 +48,7 @@ async def status_vinculo(db: DbSession, user: CurrentPatient) -> dict:
 @router.post("/link/start")
 async def iniciar_vinculo(
     request: Request,
+    response: Response,
     db: DbSession,
     settings: SettingsDep,
     provider: ProviderDep,
@@ -63,6 +64,8 @@ async def iniciar_vinculo(
     if existente:
         raise HTTPException(status_code=409, detail="conta Google já vinculada")
     _, state = await oauth_google_service.iniciar_autorizacao(db, provider, user.id)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return {"state": state}
 
 
