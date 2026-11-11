@@ -229,6 +229,25 @@ async def test_cadastro_google_exige_senha_sem_consumir_codigo(client, google):
     assert (await _trocar(client, retorno["code"], [TRATAMENTO])).status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_vinculo_recusa_identidade_que_pertence_a_outro_usuario(client, google, db_session):
+    await _primeiro_login(client)
+    await _registrar_com_senha(client, db_session, "outro@example.com")
+    login = await client.post(
+        "/api/v1/auth/login",
+        data={"username": "outro@example.com", "password": "SenhaSegura123!"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    inicio = await client.post("/api/v1/auth/google/link/start", headers=headers)
+    state = parse_qs(urlparse(inicio.json()["url"]).query)["state"][0]
+    retorno = _consulta(await _callback(client, state, code="codigo-do-google"))
+    assert retorno["erro"] == "conta_existente"
+    assert (await client.get("/api/v1/auth/google/link", headers=headers)).json() == {
+        "vinculado": False,
+        "email": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # AC-012 — authorize: state, PKCE e nenhum segredo no navegador
 # ---------------------------------------------------------------------------
