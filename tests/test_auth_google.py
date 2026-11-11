@@ -172,7 +172,12 @@ async def test_vinculo_exige_mesmo_usuario_e_preserva_conta(client, google, db_s
     original = (await client.get(ME_URL, headers=headers)).json()["id"]
     inicio = await client.post("/api/v1/auth/google/link/start", headers=headers)
     assert inicio.status_code == 200
-    state = parse_qs(urlparse(inicio.json()["url"]).query)["state"][0]
+    state = inicio.json()["state"]
+    autorizacao = await client.get(
+        "/api/v1/auth/google/link/authorize", params={"state": state}, follow_redirects=False
+    )
+    assert _consulta(autorizacao)["state"] == state
+    assert "google_oauth_state=" in autorizacao.headers["set-cookie"]
     retorno = _consulta(await _callback(client, state, code="codigo-do-google"))
     assert retorno["etapa"] == "vinculo"
     codigo = retorno["code"]
@@ -239,7 +244,12 @@ async def test_vinculo_recusa_identidade_que_pertence_a_outro_usuario(client, go
     )
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     inicio = await client.post("/api/v1/auth/google/link/start", headers=headers)
-    state = parse_qs(urlparse(inicio.json()["url"]).query)["state"][0]
+    state = inicio.json()["state"]
+    assert (
+        await client.get(
+            "/api/v1/auth/google/link/authorize", params={"state": state}, follow_redirects=False
+        )
+    ).status_code == 303
     retorno = _consulta(await _callback(client, state, code="codigo-do-google"))
     assert retorno["erro"] == "conta_existente"
     assert (await client.get("/api/v1/auth/google/link", headers=headers)).json() == {

@@ -22,6 +22,7 @@ from app.auth.policies import CORRELATION_HEADER, definir_correlation_id
 from app.auth.users import get_jwt_strategy, get_refresh_strategy
 from app.core.config import Settings
 from app.models.identidade_externa import IdentidadeExterna
+from app.models.oauth_fluxo import ESTADO_INICIADO, OAuthFluxo
 from app.schemas.oauth_google import TrocaGoogleRequest
 from app.services import consentimento_service, oauth_google_service
 from app.services.identity_token_service import consume_rate_limit
@@ -47,7 +48,6 @@ async def status_vinculo(db: DbSession, user: CurrentPatient) -> dict:
 @router.post("/link/start")
 async def iniciar_vinculo(
     request: Request,
-    response: Response,
     db: DbSession,
     settings: SettingsDep,
     provider: ProviderDep,
@@ -62,7 +62,35 @@ async def iniciar_vinculo(
     )
     if existente:
         raise HTTPException(status_code=409, detail="conta Google já vinculada")
-    url, state = await oauth_google_service.iniciar_autorizacao(db, provider, user.id)
+    _, state = await oauth_google_service.iniciar_autorizacao(db, provider, user.id)
+    return {"state": state}
+
+
+@router.get("/link/authorize")
+async def autorizar_vinculo(
+    state: str, db: DbSession, settings: SettingsDep, provider: ProviderDep
+) -> RedirectResponse:
+    _exigir_configurado(settings)
+    if not oauth_google_service._state_bem_formado(state):
+        raise HTTPException(status_code=400, detail="vínculo inválido")
+    fluxo = await db.scalar(
+        select(OAuthFluxo).where(
+            OAuthFluxo.state_hash == oauth_google_service._hash(state),
+            OAuthFluxo.estado == ESTADO_INICIADO,
+            OAuthFluxo.expira_em > oauth_google_service._agora(),
+            OAuthFluxo.vincular_user_id.is_not(None),
+        )
+    )
+    if fluxo is None:
+        raise HTTPException(status_code=400, detail="vínculo inválido")
+    url = provider.authorization_url(
+        state=state, nonce=fluxo.nonce, code_verifier=fluxo.code_verifier
+    )
+    response = RedirectResponse(
+        url,
+        status_code=303,
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
     response.set_cookie(
         key=STATE_COOKIE_NAME,
         value=state,
@@ -72,7 +100,7 @@ async def iniciar_vinculo(
         secure=settings.environment == "production",
         samesite="lax",
     )
-    return {"url": url}
+    return response
 
 
 @router.post("/link/complete", status_code=204)
