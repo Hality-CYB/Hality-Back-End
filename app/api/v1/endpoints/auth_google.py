@@ -13,13 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi_users.authentication.strategy import DatabaseStrategy, JWTStrategy
 
-from app.api.deps import DbSession, SettingsDep
+from app.api.deps import CurrentPatient, DbSession, SettingsDep
 from app.api.v1.endpoints.auth import AccessTokenResponse, emitir_sessao
 from app.auth.google import GoogleOAuthProvider, get_google_provider
 from app.auth.policies import CORRELATION_HEADER, definir_correlation_id
 from app.auth.users import get_jwt_strategy, get_refresh_strategy
 from app.core.config import Settings
-from app.schemas.oauth_google import TrocaGoogleRequest
+from app.db import oauth_queries
+from app.schemas.oauth_google import TrocaGoogleRequest, VinculoGoogleResponse
 from app.services import consentimento_service, oauth_google_service
 from app.services.identity_token_service import consume_rate_limit
 
@@ -29,6 +30,21 @@ STATE_COOKIE_NAME = "google_oauth_state"
 STATE_COOKIE_MAX_AGE = int(oauth_google_service.STATE_TTL.total_seconds())
 
 ProviderDep = Annotated[GoogleOAuthProvider, Depends(get_google_provider)]
+
+
+@router.get("/link", response_model=VinculoGoogleResponse, name="auth:google_link_status")
+async def status_vinculo(
+    usuario: CurrentPatient, db: DbSession, response: Response
+) -> VinculoGoogleResponse:
+    """Consulta somente a identidade Google do paciente autenticado, sem criar vínculo."""
+    response.headers["Cache-Control"] = "no-store"
+    identidade = await oauth_queries.buscar_identidade_do_usuario(
+        db, provider=oauth_google_service.PROVIDER, user_id=usuario.id
+    )
+    return VinculoGoogleResponse(
+        vinculado=identidade is not None,
+        email=identidade.email if identidade else None,
+    )
 
 
 def _exigir_configurado(settings: Settings) -> None:
@@ -155,6 +171,7 @@ async def exchange(
             db,
             codigo=dados.codigo,
             consentimentos=dados.consentimentos,
+            senha=dados.senha,
             referencia_coleta=definir_correlation_id(request.headers.get(CORRELATION_HEADER)),
         )
 

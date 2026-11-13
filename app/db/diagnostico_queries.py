@@ -2,7 +2,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.erros_diagnostico import CodigoErroDiagnostico
@@ -15,8 +15,21 @@ from app.models.diagnostico import Diagnostico
 from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.imagem import Imagem
 from app.models.paciente_profissional import PacienteProfissional
+from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.diagnostico import OrigemResultado, StatusDiagnostico
+
+NOME_EQUIPE_HALITY = "Equipe Hality"
+
+# Quem revisa sem perfil de profissional (o admin) aparece como a equipe da Hality.
+# Usuário removido continua sem nome, como antes.
+NOME_REVISOR = case(
+    (
+        User.id.is_not(None) & Profissional.usuario_id.is_(None),
+        literal(NOME_EQUIPE_HALITY),
+    ),
+    else_=User.name,
+)
 
 
 @dataclass
@@ -548,6 +561,20 @@ async def buscar_nome_usuario(
     return result.scalar_one_or_none()
 
 
+async def buscar_nome_revisor(
+    db: AsyncSession,
+    usuario_id: uuid.UUID,
+) -> str | None:
+    result = await db.execute(
+        select(NOME_REVISOR)
+        .select_from(User)
+        .outerjoin(Profissional, Profissional.usuario_id == User.id)
+        .where(User.id == usuario_id)
+    )
+
+    return result.scalar_one_or_none()
+
+
 async def buscar_dados_detalhe(
     db: AsyncSession,
     diagnostico: Diagnostico,
@@ -579,7 +606,7 @@ async def buscar_dados_detalhe(
     profissional_nome = None
 
     if diagnostico.profissional_revisor_id is not None:
-        profissional_nome = await buscar_nome_usuario(
+        profissional_nome = await buscar_nome_revisor(
             db,
             diagnostico.profissional_revisor_id,
         )
@@ -603,7 +630,7 @@ async def buscar_ultima_revisao(
         select(
             DiagnosticoRevisao,
             ClassificacaoDiagnostico,
-            User.name,
+            NOME_REVISOR,
         )
         .join(
             ClassificacaoDiagnostico,
@@ -614,6 +641,10 @@ async def buscar_ultima_revisao(
         .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .outerjoin(
+            Profissional,
+            Profissional.usuario_id == User.id,
         )
         .where(
             DiagnosticoRevisao.diagnostico_id == diagnostico_id,
@@ -652,7 +683,7 @@ async def buscar_ultimas_revisoes(
         select(
             DiagnosticoRevisao,
             ClassificacaoDiagnostico,
-            User.name,
+            NOME_REVISOR,
         )
         .join(
             ClassificacaoDiagnostico,
@@ -661,6 +692,10 @@ async def buscar_ultimas_revisoes(
         .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .outerjoin(
+            Profissional,
+            Profissional.usuario_id == User.id,
         )
         .where(DiagnosticoRevisao.diagnostico_id.in_(diagnostico_ids))
         .order_by(
@@ -695,7 +730,7 @@ async def listar_revisoes(
         select(
             DiagnosticoRevisao,
             ClassificacaoDiagnostico,
-            User.name,
+            NOME_REVISOR,
         )
         .join(
             ClassificacaoDiagnostico,
@@ -704,6 +739,10 @@ async def listar_revisoes(
         .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .outerjoin(
+            Profissional,
+            Profissional.usuario_id == User.id,
         )
         .where(
             DiagnosticoRevisao.diagnostico_id == diagnostico_id,
@@ -754,7 +793,7 @@ async def listar_ultimas_revisoes(
         select(
             DiagnosticoRevisao,
             ClassificacaoDiagnostico,
-            User.name,
+            NOME_REVISOR,
         )
         .join(
             ultimas_versoes,
@@ -768,6 +807,10 @@ async def listar_ultimas_revisoes(
         .outerjoin(
             User,
             User.id == DiagnosticoRevisao.profissional_id,
+        )
+        .outerjoin(
+            Profissional,
+            Profissional.usuario_id == User.id,
         )
     )
 

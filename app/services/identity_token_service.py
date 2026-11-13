@@ -40,6 +40,7 @@ CONSUMED = "consumed"
 BLOCKED = "blocked"
 HELD = "held"
 DIAGNOSTIC_REVIEW = "diagnostic_review"
+DIAGNOSTIC_REVIEW_OVERRIDE = "diagnostic_review_override"
 
 
 class InvalidIdentityTokenError(Exception):
@@ -101,17 +102,25 @@ async def _review_message(db: AsyncSession, outbox: EmailOutbox) -> EmailMessage
     perfil = await db.get(Profissional, review.profissional_id)
     if diagnostico is None or classificacao is None or profissional is None:
         return None
+    base_url = get_settings().identity_token_base_url.rstrip("/")
+    if outbox.purpose == DIAGNOSTIC_REVIEW_OVERRIDE:
+        # Só o aviso e o link: o resultado fica atrás do login do profissional.
+        return EmailMessage(
+            recipient=outbox.recipient_email,
+            purpose=DIAGNOSTIC_REVIEW_OVERRIDE,
+            token="",
+            token_url=f"{base_url}/profissional/diagnosticos/{diagnostico.id}",
+            correlation_id=outbox.correlation_id,
+        )
     return EmailMessage(
         recipient=outbox.recipient_email,
         purpose=DIAGNOSTIC_REVIEW,
         token="",
-        token_url=(
-            f"{get_settings().identity_token_base_url.rstrip('/')}"
-            f"/paciente/diagnosticos/{diagnostico.id}"
-        ),
+        token_url=f"{base_url}/paciente/diagnosticos/{diagnostico.id}",
         correlation_id=outbox.correlation_id,
         review_result=classificacao.nome_exibicao,
-        professional_name=profissional.name,
+        # Sem perfil profissional, a revisão veio da equipe Hality (admin).
+        professional_name=profissional.name if perfil else "Equipe Hality",
         professional_specialty=perfil.especialidade if perfil else None,
         professional_registration=perfil.registro_profissional if perfil else None,
     )

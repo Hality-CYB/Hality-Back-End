@@ -61,6 +61,7 @@ class IdentidadeGoogle:
     subject: str
     email: str
     nome: str
+    email_autoritativo: bool
 
 
 def gerar_code_verifier() -> str:
@@ -233,11 +234,25 @@ class GoogleOAuthProvider:
             raise EmailNaoVerificadoError
 
         email = email.strip().lower()
+        dominio = email.rsplit("@", 1)[1]
+        hosted_domain = claims.get("hd")
+        # O Google só é autoritativo sobre endereços Gmail e sobre contas
+        # Workspace identificadas pela claim `hd`. Em contas Google criadas
+        # com e-mail externo, `email_verified` registra uma verificação
+        # anterior, mas não garante que o titular ainda controle a caixa.
+        email_autoritativo = dominio == "gmail.com" or (
+            isinstance(hosted_domain, str) and bool(hosted_domain.strip())
+        )
         nome = claims.get("name")
         nome = nome.strip() if isinstance(nome, str) else ""
         if len(nome) < 2:
             nome = email.split("@", 1)[0]
-        return IdentidadeGoogle(subject=subject, email=email, nome=nome[:255])
+        return IdentidadeGoogle(
+            subject=subject,
+            email=email,
+            nome=nome[:255],
+            email_autoritativo=email_autoritativo,
+        )
 
 
 def _campo_erro(resposta: httpx.Response) -> str | None:

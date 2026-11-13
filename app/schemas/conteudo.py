@@ -254,6 +254,27 @@ class MidiaEnviadaResponse(BaseModel):
     tipo: Literal["imagem", "video"]
 
 
+class MidiaUploadRequest(BaseModel):
+    content_type: str
+
+    tamanho: int
+
+
+class MidiaUploadResponse(BaseModel):
+    """Alvo de envio direto da mídia (formato do presigned POST) e a URL do bloco.
+
+    `url` é absoluta no S3 e relativa à API no storage local.
+    """
+
+    url: str
+
+    fields: dict[str, str]
+
+    url_publica: str
+
+    tipo: Literal["imagem", "video"]
+
+
 class ConteudoListResponse(BaseModel):
     items: list[ConteudoDetail]
 

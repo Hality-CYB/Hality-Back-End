@@ -196,3 +196,28 @@ async def test_erro_de_requisicao_permanece_permanente(status_code: int) -> None
                 correlation_id="reset-invalid",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_aviso_ao_profissional_nao_leva_dado_clinico() -> None:
+    payloads = []
+
+    def receber(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "email_teste"})
+
+    provider = ResendEmailProvider(_settings(), httpx.MockTransport(receber))
+    await provider.send(
+        EmailMessage(
+            recipient="pessoa@example.com",
+            purpose="diagnostic_review_override",
+            token="",
+            token_url="http://localhost:3000/profissional/diagnosticos/7",
+            correlation_id="aviso-unico",
+        )
+    )
+
+    payload = payloads[0]
+    assert payload["subject"] == "Um diagnóstico que você revisou foi reclassificado"
+    assert "/profissional/diagnosticos/7" in payload["html"]
+    assert "Classificação" not in payload["text"]

@@ -90,6 +90,13 @@ class DatasetInfo(BaseModel):
     motivo: str | None = MOTIVO_DATASET_INDISPONIVEL
 
 
+class ReclassificacaoInfo(BaseModel):
+    """O que a tela precisa para o admin reclassificar o diagnóstico."""
+
+    version: int
+    revisada_por_profissional: bool
+
+
 class ImagemInfo(BaseModel):
     disponivel: bool = False
     motivo: str = MOTIVO_IMAGEM_INDISPONIVEL
@@ -108,6 +115,7 @@ class AdminDiagnosticoDetalhe(BaseModel):
     historico_revisoes: list[RevisaoHistorica]
     dataset: DatasetInfo
     rotulo_dataset: RotuloDatasetInfo
+    reclassificacao: ReclassificacaoInfo
     anamnese_id: int | None
     qtd_imagens: int
     imagem: ImagemInfo

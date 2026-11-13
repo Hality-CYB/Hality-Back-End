@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db import auditoria_queries, conteudo_queries
 from app.models.conteudo import Conteudo
 from app.models.user import User
@@ -420,3 +421,18 @@ async def limpar_midias_orfas(db: AsyncSession) -> None:
         return
 
     await _remover_midias_orfas(db, set(nomes))
+
+    if get_settings().storage_backend == "local":
+        await _remover_uploads_antigos()
+
+
+async def _remover_uploads_antigos() -> None:
+    """No `local` ninguém expira `uploads/`: envios sem confirmação saem aqui."""
+    try:
+        chaves = await conteudo_storage.uploads_anteriores_a(
+            datetime.now(UTC) - IDADE_MINIMA_MIDIA_ORFA
+        )
+        for chave in chaves:
+            await conteudo_storage.remover_chave(chave)
+    except Exception:  # noqa: BLE001
+        logger.warning("falha ao varrer uploads antigos", exc_info=True)

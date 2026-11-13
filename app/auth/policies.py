@@ -43,13 +43,16 @@ Toda decisão é registrada no logger ``app.authz`` (negações em WARNING, perm
 em INFO) com usuário, papel, recurso e correlation id — nunca com payload.
 """
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import re
 import time
 import uuid
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -207,3 +210,122 @@ def url_imagem_assinada_valida(nome_arquivo: str, expira_em: int, assinatura: st
         permitido=permitido, motivo=motivo, recurso=f"imagem:{nome_arquivo}", usuario=None
     )
     return permitido
+
+
+def _assinar(dominio: str, carga: str) -> str:
+    chave = get_settings().secret_key.get_secret_value().encode()
+    return hmac.new(chave, f"{dominio}:{carga}".encode(), hashlib.sha256).hexdigest()
+
+
+def _empacotar(dominio: str, dados: dict[str, object]) -> tuple[str, str]:
+    carga = base64.urlsafe_b64encode(json.dumps(dados, separators=(",", ":")).encode()).decode()
+    return carga, _assinar(dominio, carga)
+
+
+def _desempacotar(dominio: str, carga: str, assinatura: str) -> dict[str, object] | None:
+    if not hmac.compare_digest(_assinar(dominio, carga), assinatura):
+        return None
+    try:
+        dados = json.loads(base64.urlsafe_b64decode(carga.encode()))
+    except ValueError:
+        return None
+    if not isinstance(dados, dict) or not isinstance(dados.get("expira"), int):
+        return None
+    if dados["expira"] < time.time():
+        return None
+    return dados
+
+
+_DOMINIO_UPLOAD_LOCAL = "upload-local"
+_DOMINIO_UPLOAD_DIAGNOSTICO = "upload-diagnostico"
+
+
+def assinar_policy_upload_local(
+    *, chave: str, content_type: str, max_bytes: int, validade: int
+) -> dict[str, str]:
+    """Campos do alvo de upload local: imitam o presigned POST do S3."""
+    policy, assinatura = _empacotar(
+        _DOMINIO_UPLOAD_LOCAL,
+        {
+            "chave": chave,
+            "content_type": content_type,
+            "max_bytes": max_bytes,
+            "expira": int(time.time()) + validade,
+        },
+    )
+    return {
+        "key": chave,
+        "Content-Type": content_type,
+        "policy": policy,
+        "signature": assinatura,
+    }
+
+
+@dataclass(frozen=True)
+class PolicyUploadLocal:
+    chave: str
+    content_type: str
+    max_bytes: int
+
+
+def validar_policy_upload_local(policy: str, assinatura: str) -> PolicyUploadLocal | None:
+    dados = _desempacotar(_DOMINIO_UPLOAD_LOCAL, policy, assinatura)
+    resultado: PolicyUploadLocal | None = None
+    if dados is not None:
+        chave, tipo, limite = dados.get("chave"), dados.get("content_type"), dados.get("max_bytes")
+        if isinstance(chave, str) and isinstance(tipo, str) and isinstance(limite, int):
+            resultado = PolicyUploadLocal(chave, tipo, limite)
+    registrar_decisao(
+        permitido=resultado is not None,
+        motivo="upload_local_policy" if resultado else "upload_local_policy_invalida",
+        recurso="upload:local",
+        usuario=None,
+    )
+    return resultado
+
+
+UPLOAD_TOKEN_VALIDADE_SEGUNDOS = 3600
+
+
+@dataclass(frozen=True)
+class TokenDeUpload:
+    chave: str
+    content_type: str
+
+
+def assinar_upload_token(
+    *,
+    chave: str,
+    usuario_id: uuid.UUID,
+    anamnese_id: int,
+    content_type: str,
+    validade: int = UPLOAD_TOKEN_VALIDADE_SEGUNDOS,
+) -> str:
+    carga, assinatura = _empacotar(
+        _DOMINIO_UPLOAD_DIAGNOSTICO,
+        {
+            "chave": chave,
+            "usuario_id": str(usuario_id),
+            "anamnese_id": anamnese_id,
+            "content_type": content_type,
+            "expira": int(time.time()) + validade,
+        },
+    )
+    return f"{carga}.{assinatura}"
+
+
+def validar_upload_token(
+    token: str, *, usuario_id: uuid.UUID, anamnese_id: int
+) -> TokenDeUpload | None:
+    carga, _, assinatura = token.partition(".")
+    dados = _desempacotar(_DOMINIO_UPLOAD_DIAGNOSTICO, carga, assinatura) if assinatura else None
+    if (
+        dados is None
+        or dados.get("usuario_id") != str(usuario_id)
+        or dados.get("anamnese_id") != anamnese_id
+        or not isinstance(dados.get("chave"), str)
+        or not str(dados["chave"]).startswith("uploads/")
+        or not isinstance(dados.get("content_type"), str)
+    ):
+        return None
+    return TokenDeUpload(str(dados["chave"]), str(dados["content_type"]))

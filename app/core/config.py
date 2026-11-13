@@ -1,5 +1,6 @@
 from email.utils import parseaddr
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
@@ -75,6 +76,21 @@ class Settings(BaseSettings):
     dataset_export_enabled: bool = False
     dataset_export_max_items: int = 500
     dataset_export_max_bytes: int = 250 * 1024 * 1024
+
+    # Storage das fotos de diagnóstico e das mídias de conteúdo. A escolha é
+    # explícita: nunca depende de ENVIRONMENT. Credenciais do S3 vêm da cadeia
+    # padrão da AWS (role da EC2), nunca do .env.
+    storage_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str | None = None
+    aws_region: str | None = None
+
+    @model_validator(mode="after")
+    def validar_storage(self) -> "Settings":
+        if self.storage_backend == "s3" and not (
+            (self.s3_bucket or "").strip() and (self.aws_region or "").strip()
+        ):
+            raise ValueError("S3_BUCKET e AWS_REGION são obrigatórios para STORAGE_BACKEND=s3")
+        return self
 
     @model_validator(mode="after")
     def validar_entrega_de_email(self) -> "Settings":

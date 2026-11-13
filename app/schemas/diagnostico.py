@@ -65,6 +65,33 @@ class DiagnosticoListResponse(BaseModel):
     total_paginas: int
 
 
+class UploadDiagnosticoRequest(BaseModel):
+    anamnese_id: int
+
+    content_type: str
+
+
+class UploadDiagnosticoResponse(BaseModel):
+    """Alvo de envio direto da foto (formato do presigned POST) e o token de confirmação.
+
+    `url` é absoluta no S3 e relativa à API no storage local.
+    """
+
+    url: str
+
+    fields: dict[str, str]
+
+    upload_token: str
+
+
+class ConfirmarUploadDiagnosticoRequest(BaseModel):
+    anamnese_id: int
+
+    upload_token: str
+
+    parametros_captura: dict[str, Any]
+
+
 class DiagnosticoCriadoResponse(BaseModel):
     id: int
     status: StatusDiagnostico

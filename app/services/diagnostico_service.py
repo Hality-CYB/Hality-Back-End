@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, date, datetime, time
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -8,16 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import (
     UsuarioAutenticado,
+    assinar_upload_token,
     assinar_url_imagem,
     pode_acessar_paciente,
     url_imagem_assinada_valida,
+    validar_upload_token,
 )
 from app.core.config import get_settings
 from app.core.erros_diagnostico import erro_publico
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
+from app.models.anamnese import Anamnese
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
+from app.models.diagnostico_revisao import DiagnosticoRevisao
 from app.models.identity_action import EmailOutbox
+from app.models.profissional import Profissional
 from app.models.user import User
 from app.schemas.admin_diagnostico import (
     MOTIVO_DATASET_INDISPONIVEL,
@@ -28,6 +32,7 @@ from app.schemas.admin_diagnostico import (
     DatasetInfo,
     ImagemInfo,
     PacienteAdminResumo,
+    ReclassificacaoInfo,
     RevisaoHistorica,
     RevisaoProfissional,
     RevisaoResumo,
@@ -66,6 +71,10 @@ from app.services import (
     diagnostico_provider,
     diagnostico_storage,
     rotulo_dataset_service,
+)
+from app.services.identity_token_service import (
+    DIAGNOSTIC_REVIEW,
+    DIAGNOSTIC_REVIEW_OVERRIDE,
 )
 
 AVISO_LEGAL = (
@@ -410,14 +419,25 @@ async def listar_diagnosticos(
     )
 
 
-async def criar_diagnostico(
+IMAGEM_LEITURA_VALIDADE_SEGUNDOS = 5 * 60
+
+
+class UploadInvalidoError(Exception):
+    def __init__(self, motivo: str) -> None:
+        self.motivo = motivo
+        super().__init__(motivo)
+
+
+MOTIVO_UPLOAD_INVALIDO = "Envio da imagem inválido ou expirado. Envie a foto de novo."
+MOTIVO_UPLOAD_AUSENTE = "A imagem não foi enviada. Envie a foto de novo."
+
+
+async def _anamnese_para_envio(
     db: AsyncSession,
     usuario: UsuarioAutenticado,
     anamnese_id: int,
-    imagem: bytes,
-    content_type: str,
-    parametros_captura: dict[str, Any],
-) -> DiagnosticoCriadoResponse:
+) -> Anamnese:
+    """Checagens comuns de todo envio de foto; devolve a anamnese travada."""
     # Lock até o commit: um reenvio concorrente espera e recebe 409.
     anamnese = await anamnese_queries.buscar_por_id(
         db,
@@ -438,8 +458,6 @@ async def criar_diagnostico(
     if executor_anamnese != usuario.id:
         raise AnamneseNaoEncontradaError
 
-    paciente_id = anamnese.paciente_id
-
     existente = await diagnostico_queries.buscar_por_anamnese(
         db,
         anamnese_id,
@@ -449,20 +467,49 @@ async def criar_diagnostico(
         raise AnamneseJaUtilizadaError(existente)
 
     # O titular é o dono da anamnese, mesmo quando quem envia é o profissional.
-    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, paciente_id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, anamnese.paciente_id)
 
-    _validar_imagem(
-        imagem,
-        content_type,
+    return anamnese
+
+
+async def preparar_upload(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    content_type: str,
+) -> tuple[diagnostico_storage.AlvoDeUpload, str]:
+    """Alvo para o navegador enviar a foto direto ao storage, e o token de confirmação."""
+    await _anamnese_para_envio(db, usuario, anamnese_id)
+    # O rollback expira o usuário da sessão: o id é lido antes dele.
+    usuario_id = usuario.id
+    # Só leitura: solta o lock da anamnese (nos erros, quem fecha a sessão solta).
+    await db.rollback()
+
+    if not diagnostico_storage.formato_aceito(content_type):
+        raise ImagemInvalidaError("Formato de imagem inválido. Envie JPEG, PNG ou WEBP.")
+
+    chave, alvo = await diagnostico_storage.preparar_upload(content_type)
+    token = assinar_upload_token(
+        chave=chave,
+        usuario_id=usuario_id,
+        anamnese_id=anamnese_id,
+        content_type=content_type,
     )
 
+    return alvo, token
+
+
+async def _inserir_diagnostico(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    paciente_id: uuid.UUID,
+    anamnese_id: int,
+    url_arquivo: str,
+    imagem: bytes,
+    content_type: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
     sha256 = await diagnostico_storage.calcular_sha256(imagem)
-
-    url_arquivo = await diagnostico_storage.salvar(
-        imagem,
-        content_type,
-        get_settings().api_v1_prefix,
-    )
 
     try:
         diagnostico = await diagnostico_queries.inserir(
@@ -506,13 +553,90 @@ async def criar_diagnostico(
     )
 
 
-async def obter_caminho_imagem(
+async def criar_diagnostico(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    imagem: bytes,
+    content_type: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
+    anamnese = await _anamnese_para_envio(db, usuario, anamnese_id)
+
+    _validar_imagem(
+        imagem,
+        content_type,
+    )
+
+    url_arquivo = await diagnostico_storage.salvar(
+        imagem,
+        content_type,
+        get_settings().api_v1_prefix,
+    )
+
+    return await _inserir_diagnostico(
+        db,
+        usuario,
+        anamnese.paciente_id,
+        anamnese_id,
+        url_arquivo,
+        imagem,
+        content_type,
+        parametros_captura,
+    )
+
+
+async def confirmar_upload(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    upload_token: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
+    """Confirma a foto enviada direto ao storage e cria o diagnóstico."""
+    token = validar_upload_token(upload_token, usuario_id=usuario.id, anamnese_id=anamnese_id)
+
+    if token is None:
+        raise UploadInvalidoError(MOTIVO_UPLOAD_INVALIDO)
+
+    try:
+        anamnese = await _anamnese_para_envio(db, usuario, anamnese_id)
+    except AnamneseJaUtilizadaError:
+        await diagnostico_storage.remover_upload(token.chave)
+        raise
+
+    try:
+        url_arquivo, imagem = await diagnostico_storage.consolidar_upload(
+            token.chave, get_settings().api_v1_prefix
+        )
+    except FileNotFoundError as exc:
+        raise UploadInvalidoError(MOTIVO_UPLOAD_AUSENTE) from exc
+
+    try:
+        _validar_imagem(imagem, token.content_type)
+    except (ImagemInvalidaError, ArquivoMuitoGrandeError):
+        await diagnostico_storage.remover(url_arquivo)
+        raise
+
+    return await _inserir_diagnostico(
+        db,
+        usuario,
+        anamnese.paciente_id,
+        anamnese_id,
+        url_arquivo,
+        imagem,
+        token.content_type,
+        parametros_captura,
+    )
+
+
+async def obter_leitura_imagem(
     db: AsyncSession,
     usuario: UsuarioAutenticado | None,
     nome_arquivo: str,
     expira_em: int | None = None,
     assinatura: str | None = None,
-) -> Path:
+) -> diagnostico_storage.ArquivoLocal | diagnostico_storage.UrlAssinada:
     if usuario is not None:
         paciente_id = await diagnostico_queries.buscar_paciente_por_arquivo_imagem(
             db,
@@ -539,12 +663,12 @@ async def obter_caminho_imagem(
     if not permitido:
         raise ImagemNaoEncontradaError
 
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+    leitura = await diagnostico_storage.leitura(nome_arquivo, IMAGEM_LEITURA_VALIDADE_SEGUNDOS)
 
-    if caminho is None:
+    if leitura is None:
         raise ImagemNaoEncontradaError
 
-    return caminho
+    return leitura
 
 
 async def obter_diagnostico(
@@ -1008,12 +1132,35 @@ async def revisar_diagnostico_profissional(
     if classificacao is None:
         raise ClassificacaoRevisaoInvalidaError
 
+    await _gravar_revisao(
+        db,
+        diagnostico=diagnostico,
+        autor_id=profissional.id,
+        classificacao_id=classificacao.id,
+        observacao=observacao,
+        version=version,
+    )
+    await db.commit()
+
+    return await _resposta_da_revisao(db, diagnostico.id)
+
+
+async def _gravar_revisao(
+    db: AsyncSession,
+    *,
+    diagnostico: Diagnostico,
+    autor_id: uuid.UUID,
+    classificacao_id: int,
+    observacao: str | None,
+    version: int,
+) -> DiagnosticoRevisao:
+    """Grava a revisão e enfileira o aviso ao paciente; o commit é do chamador."""
     try:
         revisao = await diagnostico_queries.inserir_revisao(
             db=db,
             diagnostico=diagnostico,
-            profissional_id=profissional.id,
-            classificacao_id=classificacao.id,
+            profissional_id=autor_id,
+            classificacao_id=classificacao_id,
             observacao=observacao,
             versao_esperada=version,
         )
@@ -1036,16 +1183,21 @@ async def revisar_diagnostico_profissional(
         EmailOutbox(
             review_id=revisao.id,
             recipient_email=paciente.email,
-            purpose="diagnostic_review",
+            purpose=DIAGNOSTIC_REVIEW,
             status="queued",
             correlation_id=uuid.uuid4().hex,
         )
     )
-    await db.commit()
+    return revisao
 
+
+async def _resposta_da_revisao(
+    db: AsyncSession,
+    diagnostico_id: int,
+) -> RevisaoProfissionalResponse:
     detalhe = await diagnostico_queries.buscar_ultima_revisao(
         db,
-        diagnostico.id,
+        diagnostico_id,
     )
 
     if detalhe is None:
@@ -1059,6 +1211,97 @@ async def revisar_diagnostico_profissional(
         revisao=revisao_response,
         version=revisao_response.version,
     )
+
+
+async def _profissional_que_revisou(
+    db: AsyncSession,
+    diagnostico: Diagnostico,
+    ultima_revisao: diagnostico_queries.DiagnosticoRevisaoDetalhada | None,
+) -> Profissional | None:
+    """Perfil do último revisor; revisão feita pelo admin não tem perfil profissional."""
+    autor_id = (
+        ultima_revisao.revisao.profissional_id
+        if ultima_revisao is not None
+        else diagnostico.profissional_revisor_id
+    )
+    return await db.get(Profissional, autor_id) if autor_id is not None else None
+
+
+async def reclassificar_diagnostico_admin(
+    db: AsyncSession,
+    admin: User,
+    diagnostico_id: int,
+    classificacao_codigo: str,
+    observacao: str | None,
+    version: int,
+) -> RevisaoProfissionalResponse:
+    """Reclassifica para o paciente, com o mesmo efeito da revisão do profissional.
+
+    Não depende de vínculo. Se a mudança passa por cima da classificação de um
+    profissional, ele é avisado por e-mail na mesma transação.
+    """
+    diagnostico = await diagnostico_queries.buscar_por_id(db, diagnostico_id)
+
+    if diagnostico is None:
+        raise DiagnosticoNaoEncontradoError
+
+    if not _tem_resultado(diagnostico):
+        raise DiagnosticoNaoRevisavelError
+
+    classificacao = await diagnostico_queries.buscar_classificacao_por_codigo(
+        db,
+        classificacao_codigo.strip(),
+    )
+
+    if classificacao is None:
+        raise ClassificacaoRevisaoInvalidaError
+
+    # A checagem de `version` no insert garante que esta ainda é a última revisão.
+    anterior = await diagnostico_queries.buscar_ultima_revisao(db, diagnostico.id)
+    perfil = await _profissional_que_revisou(db, diagnostico, anterior)
+    classificacao_anterior_id = (
+        anterior.revisao.classificacao_id if anterior is not None else diagnostico.classificacao_id
+    )
+
+    revisao = await _gravar_revisao(
+        db,
+        diagnostico=diagnostico,
+        autor_id=admin.id,
+        classificacao_id=classificacao.id,
+        observacao=observacao,
+        version=version,
+    )
+
+    avisou_profissional = False
+    if perfil is not None and classificacao_anterior_id != classificacao.id:
+        profissional = await db.get(User, perfil.usuario_id)
+        if profissional is not None:
+            db.add(
+                EmailOutbox(
+                    review_id=revisao.id,
+                    recipient_email=profissional.email,
+                    purpose=DIAGNOSTIC_REVIEW_OVERRIDE,
+                    status="queued",
+                    correlation_id=uuid.uuid4().hex,
+                )
+            )
+            avisou_profissional = True
+
+    await auditoria_queries.registrar_mutacao(
+        db,
+        admin,
+        "diagnostico.revisao.admin",
+        "diagnostico",
+        diagnostico.id,
+        metadata={
+            "version": revisao.versao,
+            "classificacao": classificacao.codigo,
+            "avisou_profissional": avisou_profissional,
+        },
+    )
+    await db.commit()
+
+    return await _resposta_da_revisao(db, diagnostico.id)
 
 
 def _classificacao_automatica_admin(
@@ -1218,6 +1461,7 @@ async def obter_diagnostico_admin(
     )
 
     revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
+    perfil_do_revisor = await _profissional_que_revisou(db, diagnostico, ultima_revisao)
 
     detalhe = AdminDiagnosticoDetalhe(
         id=diagnostico.id,
@@ -1243,6 +1487,10 @@ async def obter_diagnostico_admin(
             motivo=MOTIVO_DATASET_INDISPONIVEL,
         ),
         rotulo_dataset=rotulo_dataset,
+        reclassificacao=ReclassificacaoInfo(
+            version=ultima_revisao.revisao.versao if ultima_revisao is not None else 0,
+            revisada_por_profissional=perfil_do_revisor is not None,
+        ),
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
         imagem=ImagemInfo(),
