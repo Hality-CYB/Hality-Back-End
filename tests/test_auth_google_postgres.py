@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.google import GoogleOAuthProvider, IdentidadeGoogle, get_google_provider
@@ -66,7 +66,10 @@ def _limpar(email: str, subject: str) -> None:
 def conta_google() -> Iterator[IdentidadeGoogle]:
     token = uuid.uuid4().hex
     identidade = IdentidadeGoogle(
-        subject=f"sub-{token}", email=f"google.{token}@hality.com", nome="Paciente Google"
+        subject=f"sub-{token}",
+        email=f"google.{token}@hality.com",
+        nome="Paciente Google",
+        email_autoritativo=True,
     )
     settings = _settings_google()
     app.dependency_overrides[get_settings] = lambda: settings
@@ -114,6 +117,13 @@ def _contagens(email: str) -> tuple[int, int, int]:
     return executar_no_banco(_contar)
 
 
+def _usuario_por_email(email: str) -> User | None:
+    async def _buscar(db: AsyncSession) -> User | None:
+        return await db.scalar(select(User).where(User.email == email))
+
+    return executar_no_banco(_buscar)
+
+
 def test_primeiro_login_google_cria_paciente_apos_consentimento(
     conta_google: IdentidadeGoogle,
 ) -> None:
@@ -140,7 +150,12 @@ def test_primeiro_login_google_cria_paciente_apos_consentimento(
     assert _contagens(conta_google.email) == (1, 1, 1)
 
     repetida = client.post(
-        EXCHANGE_URL, json={"codigo": retorno["code"], "consentimentos": [TRATAMENTO]}
+        EXCHANGE_URL,
+        json={
+            "codigo": retorno["code"],
+            "consentimentos": [TRATAMENTO],
+            "senha": "SenhaSegura123!",
+        },
     )
     assert repetida.status_code == 400
 
@@ -172,6 +187,69 @@ def test_segundo_login_reutiliza_a_conta_vinculada_pelo_sub(
     assert segundo["etapa"] == "sessao"
     resposta = TestClient(app).post(EXCHANGE_URL, json={"codigo": segundo["code"]})
     assert resposta.status_code == 200
+    assert _contagens(conta_google.email) == (1, 1, 1)
+
+
+def test_conta_manual_nao_verificada_preservada_no_postgres(
+    conta_google: IdentidadeGoogle,
+) -> None:
+    client = TestClient(app)
+    cadastro = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": conta_google.email,
+            "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
+            "name": "Cadastro Pendente",
+            "consentimentos": [TRATAMENTO],
+        },
+    )
+    assert cadastro.status_code == 201
+    antiga = _usuario_por_email(conta_google.email)
+    assert antiga is not None and antiga.is_verified is False
+    assert _ate_o_callback(client) == {"erro": "email_pendente"}
+    depois = _usuario_por_email(conta_google.email)
+    assert depois is not None and depois.id == antiga.id
+    assert depois.hashed_password == antiga.hashed_password
+    assert _contagens(conta_google.email) == (1, 0, 1)
+
+
+def test_conta_manual_confirmada_reutiliza_identidade_no_postgres(
+    conta_google: IdentidadeGoogle,
+) -> None:
+    client = TestClient(app)
+    cadastro = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": conta_google.email,
+            "password": "SenhaSegura123!",
+            "data_nascimento": "1990-01-01",
+            "name": "Paciente Existente",
+            "consentimentos": [TRATAMENTO],
+        },
+    )
+    assert cadastro.status_code == 201
+    original = _usuario_por_email(conta_google.email)
+    assert original is not None
+
+    async def confirmar(db: AsyncSession) -> None:
+        await db.execute(update(User).where(User.id == original.id).values(is_verified=True))
+        await db.commit()
+
+    executar_no_banco(confirmar)
+    retorno = _ate_o_callback(client)
+    assert retorno["etapa"] == "sessao"
+    sessao = client.post(EXCHANGE_URL, json={"codigo": retorno["code"]})
+    assert sessao.status_code == 200
+    perfil = client.get(
+        "/api/v1/users/me", headers={"Authorization": f"Bearer {sessao.json()['access_token']}"}
+    )
+    assert perfil.json()["id"] == str(original.id)
+    senha = client.post(
+        "/api/v1/auth/login",
+        data={"username": conta_google.email, "password": "SenhaSegura123!"},
+    )
+    assert senha.status_code == 200
     assert _contagens(conta_google.email) == (1, 1, 1)
 
 

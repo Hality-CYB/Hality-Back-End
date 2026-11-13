@@ -12,17 +12,13 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi_users.authentication.strategy import DatabaseStrategy, JWTStrategy
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import CurrentPatient, DbSession, SettingsDep
+from app.api.deps import DbSession, SettingsDep
 from app.api.v1.endpoints.auth import AccessTokenResponse, emitir_sessao
 from app.auth.google import GoogleOAuthProvider, get_google_provider
 from app.auth.policies import CORRELATION_HEADER, definir_correlation_id
 from app.auth.users import get_jwt_strategy, get_refresh_strategy
 from app.core.config import Settings
-from app.models.identidade_externa import IdentidadeExterna
-from app.models.oauth_fluxo import ESTADO_INICIADO, OAuthFluxo
 from app.schemas.oauth_google import TrocaGoogleRequest
 from app.services import consentimento_service, oauth_google_service
 from app.services.identity_token_service import consume_rate_limit
@@ -33,106 +29,6 @@ STATE_COOKIE_NAME = "google_oauth_state"
 STATE_COOKIE_MAX_AGE = int(oauth_google_service.STATE_TTL.total_seconds())
 
 ProviderDep = Annotated[GoogleOAuthProvider, Depends(get_google_provider)]
-
-
-@router.get("/link")
-async def status_vinculo(db: DbSession, user: CurrentPatient) -> dict:
-    identidade = await db.scalar(
-        select(IdentidadeExterna).where(
-            IdentidadeExterna.user_id == user.id, IdentidadeExterna.provider == "google"
-        )
-    )
-    return {"vinculado": identidade is not None, "email": identidade.email if identidade else None}
-
-
-@router.post("/link/start")
-async def iniciar_vinculo(
-    request: Request,
-    response: Response,
-    db: DbSession,
-    settings: SettingsDep,
-    provider: ProviderDep,
-    user: CurrentPatient,
-) -> dict:
-    _exigir_configurado(settings)
-    await _limitar_authorize(request, db, settings)
-    existente = await db.scalar(
-        select(IdentidadeExterna).where(
-            IdentidadeExterna.user_id == user.id, IdentidadeExterna.provider == "google"
-        )
-    )
-    if existente:
-        raise HTTPException(status_code=409, detail="conta Google já vinculada")
-    _, state = await oauth_google_service.iniciar_autorizacao(db, provider, user.id)
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return {"state": state}
-
-
-@router.get("/link/authorize")
-async def autorizar_vinculo(
-    state: str, db: DbSession, settings: SettingsDep, provider: ProviderDep
-) -> RedirectResponse:
-    _exigir_configurado(settings)
-    if not oauth_google_service._state_bem_formado(state):
-        raise HTTPException(status_code=400, detail="vínculo inválido")
-    fluxo = await db.scalar(
-        select(OAuthFluxo).where(
-            OAuthFluxo.state_hash == oauth_google_service._hash(state),
-            OAuthFluxo.estado == ESTADO_INICIADO,
-            OAuthFluxo.expira_em > oauth_google_service._agora(),
-            OAuthFluxo.vincular_user_id.is_not(None),
-        )
-    )
-    if fluxo is None:
-        raise HTTPException(status_code=400, detail="vínculo inválido")
-    url = provider.authorization_url(
-        state=state, nonce=fluxo.nonce, code_verifier=fluxo.code_verifier
-    )
-    response = RedirectResponse(
-        url,
-        status_code=303,
-        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
-    )
-    response.set_cookie(
-        key=STATE_COOKIE_NAME,
-        value=state,
-        max_age=STATE_COOKIE_MAX_AGE,
-        path=_cookie_path(settings),
-        httponly=True,
-        secure=settings.environment == "production",
-        samesite="lax",
-    )
-    return response
-
-
-@router.post("/link/complete", status_code=204)
-async def concluir_vinculo(
-    dados: TrocaGoogleRequest, db: DbSession, user: CurrentPatient
-) -> Response:
-    fluxo = await oauth_google_service.oauth_queries.buscar_fluxo_para_troca(
-        db,
-        codigo_hash=oauth_google_service._hash(dados.codigo),
-        agora=oauth_google_service._agora(),
-    )
-    if not fluxo or fluxo.vincular_user_id != user.id or not fluxo.subject or not fluxo.email:
-        raise HTTPException(status_code=400, detail="código de vínculo inválido")
-    if not await oauth_google_service.oauth_queries.consumir_codigo_de_troca(db, fluxo_id=fluxo.id):
-        raise HTTPException(status_code=400, detail="código de vínculo inválido")
-    try:
-        await oauth_google_service.oauth_queries.criar_identidade(
-            db, user_id=user.id, provider="google", subject=fluxo.subject, email=fluxo.email
-        )
-        fluxo.email = None
-        fluxo.nome = None
-        await oauth_google_service._auditar(
-            db, "auth.google.vincular", fluxo.id, "sucesso", usuario=user
-        )
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="identidade Google já vinculada") from exc
-    return Response(status_code=204)
 
 
 def _exigir_configurado(settings: Settings) -> None:

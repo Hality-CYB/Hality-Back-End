@@ -51,6 +51,7 @@ class OAuthFluxo(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Mantido para compatibilidade com bancos que já receberam a migração.
     vincular_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )

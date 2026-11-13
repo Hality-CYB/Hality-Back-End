@@ -456,12 +456,31 @@ O `authorize` é público e grava um fluxo por chamada, então tem rate limit po
 
 O callback sempre redireciona para `GOOGLE_FRONTEND_REDIRECT_URL` com:
 
-- sucesso: `?code=<código de troca, uso único, 2 min>&etapa=sessao|consentimento`. Com `etapa=consentimento` (conta nova) o frontend mostra os termos (`GET /consentimentos/termos`) e envia o `POST /auth/google/exchange` com `{"codigo": "...", "consentimentos": [...]}` — o aceite de `health_data` é obrigatório e **só então a conta é criada**;
-- falha (sempre recuperável, nenhuma conta parcial): `?erro=<código>` com `cancelado`, `estado_invalido`, `callback_invalido`, `erro_provedor`, `provedor_indisponivel`, `identidade_invalida`, `email_nao_verificado`, `conta_existente`, `papel_nao_permitido` ou `conta_inativa`.
+- sucesso: `?code=<código de troca, uso único, 2 min>&etapa=sessao|consentimento`. Com `etapa=consentimento` (conta nova), o frontend coleta senha e termos e envia `codigo`, `senha` e `consentimentos` ao `POST /auth/google/exchange`. O aceite de `health_data` é obrigatório e a conta só é criada após a validação;
+- falha (sempre recuperável, nenhuma conta parcial): `?erro=<código>` com `cancelado`, `estado_invalido`, `callback_invalido`, `erro_provedor`, `provedor_indisponivel`, `identidade_invalida`, `email_nao_verificado`, `email_pendente`, `conta_existente`, `papel_nao_permitido` ou `conta_inativa`.
 
 ### Política de vínculo de contas
 
-A identidade é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail **nunca** vincula sozinho. Se o e-mail do Google já pertence a uma conta que não está vinculada ao Google, o login é recusado com `conta_existente` (vincular exigiria uma ação autenticada do titular, fora deste corte). Unlink e múltiplos provedores também estão fora de escopo.
+A identidade permanente é a dupla (`provider`, `sub`) em `identidades_externas`; o e-mail só resolve o primeiro vínculo quando o Google é autoritativo sobre o endereço: conta `@gmail.com`, ou Google Workspace com `email_verified` e `hd` no ID token.
+
+- conta manual verificada: recebe o vínculo Google e mantém senha, dados, consentimentos e ID;
+- conta manual não verificada: é preservada junto com seus dados e consentimentos; a pessoa deve confirmar o e-mail antes de tentar novamente;
+- conta inativa ou papel diferente de paciente: não é vinculada automaticamente;
+- conta Google com e-mail externo sem `hd`: `email_verified` não basta para vincular ou substituir uma conta existente; o fluxo retorna `conta_existente` e exige outro método de confirmação.
+
+Unlink e múltiplos provedores continuam fora de escopo.
+
+### Teste local com Google
+
+Crie um cliente OAuth de desenvolvimento do tipo aplicativo web e autorize exatamente
+`http://localhost:8000/api/v1/auth/google/callback` como URI de redirecionamento. Configure
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` e
+`GOOGLE_FRONTEND_REDIRECT_URL` no `.env` do backend usando os endereços do `.env.example`.
+Com o banco migrado e a API na porta 8000, inicie o frontend na porta 3000 e use
+**Continuar com Google**. Em um projeto Google em teste, inclua a conta utilizada entre os
+usuários de teste. Para verificar o vínculo automático, primeiro confirme o e-mail da conta
+local e depois entre pelo Google com o mesmo endereço de um provedor autoritativo.
+Os testes automatizados simulam o Google e não validam a configuração do cliente real.
 
 ## Home
 
