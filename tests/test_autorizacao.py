@@ -49,7 +49,7 @@ from app.models import (
     User,
 )
 from app.schemas.usuario import TipoUsuario
-from app.services import diagnostico_storage
+from app.services import storage
 from tests.conftest import CONSENTIMENTOS_CADASTRO, confirmar_email_cadastrado
 
 AUTH_HEADERS = {"Authorization": "Bearer fake-token"}
@@ -229,8 +229,7 @@ async def _criar_cenario() -> Cenario:
     finally:
         await engine.dispose()
 
-    diagnostico_storage._STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    (diagnostico_storage._STORAGE_DIR / nome_imagem).write_bytes(b"imagem")
+    await storage.atual().salvar(f"diagnosticos/{nome_imagem}", b"imagem", "image/png")
 
     return Cenario(
         **usuarios,
@@ -258,7 +257,7 @@ async def _remover_cenario(cenario: Cenario) -> None:
     finally:
         await engine.dispose()
 
-    (diagnostico_storage._STORAGE_DIR / cenario.nome_imagem).unlink(missing_ok=True)
+    await storage.atual().remover(f"diagnosticos/{cenario.nome_imagem}")
 
 
 @pytest.fixture
@@ -667,7 +666,7 @@ def test_toda_rota_clinica_declara_papeis_via_exigir_papeis() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and r.path not in _ROTAS_CLINICAS_PUBLICAS
     ]
-    assert len(rotas) == 14
+    assert len(rotas) == 15
 
     for rota in rotas:
         papeis = _papeis_declarados(rota.dependant)
@@ -786,6 +785,21 @@ def test_rota_da_imagem_com_bearer_continua_protegida(cenario: Cenario) -> None:
 
     _deslogar()
     assert TestClient(app).get(rota).status_code == 401
+
+
+def test_rota_da_imagem_com_bearer_redireciona_no_s3(storage_s3_ativo, cenario: Cenario) -> None:
+    rota = f"/api/v1/diagnosticos/imagens/{cenario.nome_imagem}"
+
+    _autenticar_como(cenario.paciente)
+    resposta = TestClient(app).get(rota, headers=AUTH_HEADERS, follow_redirects=False)
+
+    assert resposta.status_code == 302
+    assert resposta.headers["cache-control"] == "no-store"
+    assert f"/diagnosticos/{cenario.nome_imagem}?" in resposta.headers["location"]
+
+    _autenticar_como(cenario.outro_paciente)
+    negada = TestClient(app).get(rota, headers=AUTH_HEADERS, follow_redirects=False)
+    assert negada.status_code == 404
 
 
 def test_log_do_acesso_por_url_assinada(cenario: Cenario, caplog: pytest.LogCaptureFixture) -> None:

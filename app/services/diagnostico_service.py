@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, date, datetime, time
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -8,13 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import (
     UsuarioAutenticado,
+    assinar_upload_token,
     assinar_url_imagem,
     pode_acessar_paciente,
     url_imagem_assinada_valida,
+    validar_upload_token,
 )
 from app.core.config import get_settings
 from app.core.erros_diagnostico import erro_publico
 from app.db import anamnese_queries, auditoria_queries, diagnostico_queries
+from app.models.anamnese import Anamnese
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
 from app.models.diagnostico import Diagnostico
 from app.models.diagnostico_revisao import DiagnosticoRevisao
@@ -417,14 +419,25 @@ async def listar_diagnosticos(
     )
 
 
-async def criar_diagnostico(
+IMAGEM_LEITURA_VALIDADE_SEGUNDOS = 5 * 60
+
+
+class UploadInvalidoError(Exception):
+    def __init__(self, motivo: str) -> None:
+        self.motivo = motivo
+        super().__init__(motivo)
+
+
+MOTIVO_UPLOAD_INVALIDO = "Envio da imagem inválido ou expirado. Envie a foto de novo."
+MOTIVO_UPLOAD_AUSENTE = "A imagem não foi enviada. Envie a foto de novo."
+
+
+async def _anamnese_para_envio(
     db: AsyncSession,
     usuario: UsuarioAutenticado,
     anamnese_id: int,
-    imagem: bytes,
-    content_type: str,
-    parametros_captura: dict[str, Any],
-) -> DiagnosticoCriadoResponse:
+) -> Anamnese:
+    """Checagens comuns de todo envio de foto; devolve a anamnese travada."""
     # Lock até o commit: um reenvio concorrente espera e recebe 409.
     anamnese = await anamnese_queries.buscar_por_id(
         db,
@@ -445,8 +458,6 @@ async def criar_diagnostico(
     if executor_anamnese != usuario.id:
         raise AnamneseNaoEncontradaError
 
-    paciente_id = anamnese.paciente_id
-
     existente = await diagnostico_queries.buscar_por_anamnese(
         db,
         anamnese_id,
@@ -456,20 +467,47 @@ async def criar_diagnostico(
         raise AnamneseJaUtilizadaError(existente)
 
     # O titular é o dono da anamnese, mesmo quando quem envia é o profissional.
-    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, paciente_id)
+    await consentimento_service.exigir_tratamento_vigente_se_decidido(db, anamnese.paciente_id)
 
-    _validar_imagem(
-        imagem,
-        content_type,
+    return anamnese
+
+
+async def preparar_upload(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    content_type: str,
+) -> tuple[diagnostico_storage.AlvoDeUpload, str]:
+    """Alvo para o navegador enviar a foto direto ao storage, e o token de confirmação."""
+    await _anamnese_para_envio(db, usuario, anamnese_id)
+    # Só leitura: solta o lock da anamnese (nos erros, quem fecha a sessão solta).
+    await db.rollback()
+
+    if not diagnostico_storage.formato_aceito(content_type):
+        raise ImagemInvalidaError("Formato de imagem inválido. Envie JPEG, PNG ou WEBP.")
+
+    chave, alvo = await diagnostico_storage.preparar_upload(content_type)
+    token = assinar_upload_token(
+        chave=chave,
+        usuario_id=usuario.id,
+        anamnese_id=anamnese_id,
+        content_type=content_type,
     )
 
+    return alvo, token
+
+
+async def _inserir_diagnostico(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    paciente_id: uuid.UUID,
+    anamnese_id: int,
+    url_arquivo: str,
+    imagem: bytes,
+    content_type: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
     sha256 = await diagnostico_storage.calcular_sha256(imagem)
-
-    url_arquivo = await diagnostico_storage.salvar(
-        imagem,
-        content_type,
-        get_settings().api_v1_prefix,
-    )
 
     try:
         diagnostico = await diagnostico_queries.inserir(
@@ -513,13 +551,90 @@ async def criar_diagnostico(
     )
 
 
-async def obter_caminho_imagem(
+async def criar_diagnostico(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    imagem: bytes,
+    content_type: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
+    anamnese = await _anamnese_para_envio(db, usuario, anamnese_id)
+
+    _validar_imagem(
+        imagem,
+        content_type,
+    )
+
+    url_arquivo = await diagnostico_storage.salvar(
+        imagem,
+        content_type,
+        get_settings().api_v1_prefix,
+    )
+
+    return await _inserir_diagnostico(
+        db,
+        usuario,
+        anamnese.paciente_id,
+        anamnese_id,
+        url_arquivo,
+        imagem,
+        content_type,
+        parametros_captura,
+    )
+
+
+async def confirmar_upload(
+    db: AsyncSession,
+    usuario: UsuarioAutenticado,
+    anamnese_id: int,
+    upload_token: str,
+    parametros_captura: dict[str, Any],
+) -> DiagnosticoCriadoResponse:
+    """Confirma a foto enviada direto ao storage e cria o diagnóstico."""
+    token = validar_upload_token(upload_token, usuario_id=usuario.id, anamnese_id=anamnese_id)
+
+    if token is None:
+        raise UploadInvalidoError(MOTIVO_UPLOAD_INVALIDO)
+
+    try:
+        anamnese = await _anamnese_para_envio(db, usuario, anamnese_id)
+    except AnamneseJaUtilizadaError:
+        await diagnostico_storage.remover_upload(token.chave)
+        raise
+
+    try:
+        url_arquivo, imagem = await diagnostico_storage.consolidar_upload(
+            token.chave, get_settings().api_v1_prefix
+        )
+    except FileNotFoundError as exc:
+        raise UploadInvalidoError(MOTIVO_UPLOAD_AUSENTE) from exc
+
+    try:
+        _validar_imagem(imagem, token.content_type)
+    except (ImagemInvalidaError, ArquivoMuitoGrandeError):
+        await diagnostico_storage.remover(url_arquivo)
+        raise
+
+    return await _inserir_diagnostico(
+        db,
+        usuario,
+        anamnese.paciente_id,
+        anamnese_id,
+        url_arquivo,
+        imagem,
+        token.content_type,
+        parametros_captura,
+    )
+
+
+async def obter_leitura_imagem(
     db: AsyncSession,
     usuario: UsuarioAutenticado | None,
     nome_arquivo: str,
     expira_em: int | None = None,
     assinatura: str | None = None,
-) -> Path:
+) -> diagnostico_storage.ArquivoLocal | diagnostico_storage.UrlAssinada:
     if usuario is not None:
         paciente_id = await diagnostico_queries.buscar_paciente_por_arquivo_imagem(
             db,
@@ -546,12 +661,12 @@ async def obter_caminho_imagem(
     if not permitido:
         raise ImagemNaoEncontradaError
 
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
+    leitura = await diagnostico_storage.leitura(nome_arquivo, IMAGEM_LEITURA_VALIDADE_SEGUNDOS)
 
-    if caminho is None:
+    if leitura is None:
         raise ImagemNaoEncontradaError
 
-    return caminho
+    return leitura
 
 
 async def obter_diagnostico(

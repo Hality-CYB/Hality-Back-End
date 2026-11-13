@@ -1,17 +1,35 @@
 import asyncio
 import hashlib
-from pathlib import Path
+from pathlib import PurePosixPath
 from uuid import uuid4
+
+from app.services import storage
+from app.services.storage import AlvoDeUpload, ArquivoLocal, UrlAssinada
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-_STORAGE_DIR = Path(".data/diagnosticos")
+# Validade do alvo de upload (presigned POST / policy local).
+UPLOAD_VALIDADE_SEGUNDOS = 15 * 60
 
 _EXTENSOES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
 }
+
+_CONTENT_TYPES = {extensao: tipo for tipo, extensao in _EXTENSOES.items()}
+
+
+def formato_aceito(content_type: str) -> bool:
+    return content_type in _EXTENSOES
+
+
+def _nome_da_url(url_arquivo: str) -> str:
+    return PurePosixPath(url_arquivo.split("?", 1)[0]).name
+
+
+def _url_arquivo(nome_arquivo: str, api_prefix: str) -> str:
+    return f"{api_prefix.rstrip('/')}/diagnosticos/imagens/{nome_arquivo}"
 
 
 async def salvar(
@@ -24,33 +42,50 @@ async def salvar(
     if extensao is None:
         raise ValueError("content_type não suportado")
 
-    await asyncio.to_thread(
-        _STORAGE_DIR.mkdir,
-        parents=True,
-        exist_ok=True,
-    )
-
     nome_arquivo = f"{uuid4().hex}{extensao}"
 
-    caminho = _STORAGE_DIR / nome_arquivo
+    await storage.atual().salvar(f"diagnosticos/{nome_arquivo}", conteudo, content_type)
 
-    await asyncio.to_thread(
-        _gravar_exclusivo,
-        caminho,
-        conteudo,
+    return _url_arquivo(nome_arquivo, api_prefix)
+
+
+async def preparar_upload(content_type: str) -> tuple[str, AlvoDeUpload]:
+    """Chave em `uploads/` e o alvo para o navegador enviar a foto direto."""
+    extensao = _EXTENSOES.get(content_type)
+
+    if extensao is None:
+        raise ValueError("content_type não suportado")
+
+    chave = f"uploads/{uuid4().hex}{extensao}"
+    alvo = await storage.atual().alvo_de_upload(
+        chave, content_type, MAX_IMAGE_BYTES, UPLOAD_VALIDADE_SEGUNDOS
     )
 
-    prefixo = api_prefix.rstrip("/")
-
-    return f"{prefixo}/diagnosticos/imagens/{nome_arquivo}"
+    return chave, alvo
 
 
-def _gravar_exclusivo(
-    caminho: Path,
-    conteudo: bytes,
-) -> None:
-    with caminho.open("xb") as arquivo:
-        arquivo.write(conteudo)
+async def consolidar_upload(chave_upload: str, api_prefix: str) -> tuple[str, bytes]:
+    """Move o upload para `diagnosticos/` e devolve `url_arquivo` e os bytes.
+
+    Move antes de ler: depois disso o navegador não consegue mais trocar o
+    arquivo, então o `sha256` calculado é do objeto que fica guardado.
+    """
+    nome_arquivo = PurePosixPath(chave_upload).name
+    destino = f"diagnosticos/{nome_arquivo}"
+
+    await storage.atual().mover(chave_upload, destino)
+
+    try:
+        conteudo = await storage.atual().ler(destino)
+    except BaseException:
+        await storage.atual().remover(destino)
+        raise
+
+    return _url_arquivo(nome_arquivo, api_prefix), conteudo
+
+
+async def remover_upload(chave_upload: str) -> None:
+    await storage.atual().remover(chave_upload)
 
 
 async def calcular_sha256(
@@ -63,34 +98,27 @@ async def calcular_sha256(
 
 async def ler_privado(url_arquivo: str) -> bytes:
     """Lê um arquivo pelo identificador interno, sem expor URL de storage."""
-    caminho = resolver_caminho(Path(url_arquivo).name)
-    if caminho is None:
-        raise FileNotFoundError("imagem não encontrada")
-    return await asyncio.to_thread(caminho.read_bytes)
+    try:
+        return await storage.atual().ler(f"diagnosticos/{_nome_da_url(url_arquivo)}")
+    except ValueError as exc:
+        raise FileNotFoundError("imagem não encontrada") from exc
 
 
 async def remover(
     url_arquivo: str,
 ) -> None:
-    nome_arquivo = Path(url_arquivo).name
-
-    caminho = _STORAGE_DIR / nome_arquivo
-
-    await asyncio.to_thread(
-        caminho.unlink,
-        missing_ok=True,
-    )
+    try:
+        await storage.atual().remover(f"diagnosticos/{_nome_da_url(url_arquivo)}")
+    except ValueError:
+        return
 
 
-def resolver_caminho(
-    nome_arquivo: str,
-) -> Path | None:
-    if Path(nome_arquivo).name != nome_arquivo:
+async def leitura(nome_arquivo: str, validade: int) -> ArquivoLocal | UrlAssinada | None:
+    try:
+        return await storage.atual().leitura(f"diagnosticos/{nome_arquivo}", validade)
+    except ValueError:
         return None
 
-    caminho = _STORAGE_DIR / nome_arquivo
 
-    if not caminho.is_file():
-        return None
-
-    return caminho
+def content_type_da_extensao(nome_arquivo: str) -> str | None:
+    return _CONTENT_TYPES.get(PurePosixPath(nome_arquivo).suffix)

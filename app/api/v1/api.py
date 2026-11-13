@@ -21,11 +21,20 @@ from app.api.v1.endpoints import (
     home,
     paciente,
     profissional,
+    uploads_local,
     users,
     vinculo,
 )
+from app.core.config import get_settings
 
 api_router = APIRouter()
+
+
+def incluir_rotas_de_storage(router: APIRouter, backend: str) -> None:
+    """A rota de upload só existe com o storage local; no S3 o navegador fala com o bucket."""
+    if backend == "local":
+        router.include_router(uploads_local.router)
+
 
 # Rotas de saúde, anamnese e diagnóstico (existentes)
 api_router.include_router(health.router)
@@ -35,6 +44,7 @@ api_router.include_router(conteudo_admin.router)
 api_router.include_router(conteudo.router)
 api_router.include_router(conteudo_publico.router)
 api_router.include_router(diagnostico.router)
+incluir_rotas_de_storage(api_router, get_settings().storage_backend)
 api_router.include_router(admin_diagnosticos.router)
 api_router.include_router(admin_dataset_exports.router)
 api_router.include_router(admin_rotulos_dataset.router)

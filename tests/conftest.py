@@ -70,6 +70,7 @@ from app.models import (
     RefreshToken,
     User,
 )
+from app.services import storage
 
 # Decisões mínimas para um cadastro público válido (só o tratamento é obrigatório).
 CONSENTIMENTOS_CADASTRO = [{"finalidade": "health_data", "versao": "v1", "aceito": True}]
@@ -203,7 +204,11 @@ async def _current_active_user_de_teste(request: Request) -> SimpleNamespace:
     return SimpleNamespace(id=PACIENTE_STUB_ID, role="paciente", is_active=True)
 
 
-_MODULOS_COM_PACIENTE_DE_TESTE = {"test_anamnese", "test_diagnostico"}
+_MODULOS_COM_PACIENTE_DE_TESTE = {
+    "test_anamnese",
+    "test_diagnostico",
+    "test_diagnostico_upload_direto",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -383,3 +388,41 @@ def cenario_admin() -> Iterator[CenarioAdmin]:
     finally:
         app.dependency_overrides.pop(current_active_user, None)
         _limpar_cenario_admin(cenario.token)
+
+
+@pytest.fixture(autouse=True)
+def storage_local_isolado(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+):
+    """Cada teste grava num diretório próprio, nunca no `.data/` do repositório."""
+    raiz = tmp_path_factory.mktemp("storage")
+    monkeypatch.setattr(storage, "_RAIZ_LOCAL", raiz)
+    storage._redefinir()
+    yield raiz
+    storage._redefinir()
+
+
+BUCKET_S3 = "hality-teste"
+REGIAO_S3 = "us-east-2"
+
+
+@pytest.fixture
+def s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[storage.StorageS3]:
+    """Bucket simulado com moto; o adaptador não vira o storage da app."""
+    import boto3
+    from moto import mock_aws
+
+    for nome in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(nome, "teste")
+    with mock_aws():
+        boto3.client("s3", region_name=REGIAO_S3).create_bucket(
+            Bucket=BUCKET_S3, CreateBucketConfiguration={"LocationConstraint": REGIAO_S3}
+        )
+        yield storage.StorageS3(BUCKET_S3, REGIAO_S3)
+
+
+@pytest.fixture
+def storage_s3_ativo(s3: storage.StorageS3) -> storage.StorageS3:
+    """Faz a app inteira usar o bucket simulado (rotas de leitura com redirect)."""
+    storage._redefinir(s3)
+    return s3
