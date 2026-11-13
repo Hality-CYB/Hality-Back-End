@@ -143,7 +143,8 @@ async def _candidate(db: AsyncSession, diagnostico: Diagnostico) -> _Candidate:
         if revisao is None:
             raise DatasetExportError
         label = await db.get(ClassificacaoDiagnostico, revisao.classificacao_id)
-        label_source = "profissional"
+        autor = await db.get(User, revisao.profissional_id)
+        label_source = "hality" if autor and autor.role == "admin" else "profissional"
         label_version = revisao.versao
 
     if label is None or not await consentimento_service.finalidade_vigente(
@@ -282,7 +283,9 @@ async def _storage_inalterado(artifacts: list[_Artifact]) -> None:
 
 def _manifest(artifacts: list[_Artifact]) -> bytes:
     output = io.StringIO(newline="")
-    writer = csv.DictWriter(output, fieldnames=_MANIFEST_FIELDS, lineterminator="\r\n")
+    writer = csv.DictWriter(
+        output, fieldnames=_MANIFEST_FIELDS, delimiter=";", lineterminator="\r\n"
+    )
     writer.writeheader()
     for artifact in artifacts:
         candidate = artifact.candidate
@@ -300,16 +303,17 @@ def _manifest(artifacts: list[_Artifact]) -> bytes:
                 "sha256": artifact.sha256,
             }
         )
-    return output.getvalue().encode("utf-8")
+    return output.getvalue().encode("utf-8-sig")
 
 
 def _readme() -> bytes:
     return (
         "Pacote de imagens consentidas para treinamento e avaliação.\n\n"
+        "O manifest.csv usa UTF-8 com BOM e campos separados por ponto e vírgula (;).\n\n"
         "As imagens foram separadas de identificadores diretos, anamnese e observações, "
         "mas podem continuar identificáveis. Este arquivo não contém dados pessoais nem "
         "rótulos de IA usados como alvo.\n"
-    ).encode()
+    ).encode("utf-8-sig")
 
 
 def _fingerprint(candidate: _Candidate) -> tuple:
