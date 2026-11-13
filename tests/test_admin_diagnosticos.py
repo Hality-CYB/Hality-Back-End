@@ -1231,7 +1231,11 @@ async def test_confirmacao_da_mesma_escala_pelo_admin_libera_dataset_com_fonte_h
     exportado = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [ident]})
     assert exportado.status_code == 200
     with zipfile.ZipFile(io.BytesIO(exportado.content)) as arquivo:
-        linha = next(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+        linha = next(
+            csv.DictReader(
+                io.StringIO(arquivo.read("manifest.csv").decode("utf-8-sig")), delimiter=";"
+            )
+        )
     assert linha["label_source"] == "hality"
     assert linha["label_code"] == codigo
 

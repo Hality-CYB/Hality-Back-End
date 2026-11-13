@@ -13,6 +13,7 @@ from PIL import Image, ImageOps
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import tem_papel
 from app.core.config import Settings
 from app.core.consentimentos import Finalidade, termo_vigente
 from app.db import auditoria_queries
@@ -23,6 +24,7 @@ from app.models.imagem import Imagem
 from app.models.rotulo_dataset import RotuloDataset
 from app.models.user import User
 from app.schemas.diagnostico import StatusDiagnostico
+from app.schemas.usuario import TipoUsuario
 from app.services import consentimento_service, diagnostico_storage
 
 TAXONOMY_VERSION = "v1"
@@ -144,7 +146,7 @@ async def _candidate(db: AsyncSession, diagnostico: Diagnostico) -> _Candidate:
             raise DatasetExportError
         label = await db.get(ClassificacaoDiagnostico, revisao.classificacao_id)
         autor = await db.get(User, revisao.profissional_id)
-        label_source = "hality" if autor and autor.role == "admin" else "profissional"
+        label_source = "hality" if autor and tem_papel(autor, TipoUsuario.ADMIN) else "profissional"
         label_version = revisao.versao
 
     if label is None or not await consentimento_service.finalidade_vigente(
