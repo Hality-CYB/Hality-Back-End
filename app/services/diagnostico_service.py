@@ -10,6 +10,7 @@ from app.auth.policies import (
     assinar_upload_token,
     assinar_url_imagem,
     pode_acessar_paciente,
+    tem_papel,
     url_imagem_assinada_valida,
     validar_upload_token,
 )
@@ -66,6 +67,7 @@ from app.schemas.profissional_diagnostico import (
     RevisaoProfissionalResponse,
     RevisaoProfissionalResumo,
 )
+from app.schemas.usuario import TipoUsuario
 from app.services import (
     consentimento_service,
     diagnostico_provider,
@@ -1462,7 +1464,7 @@ async def obter_diagnostico_admin(
         diagnostico,
         ultima_revisao is not None,
         fonte_revisao="hality"
-        if autor_revisao and autor_revisao.role == "admin"
+        if autor_revisao and tem_papel(autor_revisao, TipoUsuario.ADMIN)
         else "profissional",
     )
 
