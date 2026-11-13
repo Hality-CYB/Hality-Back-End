@@ -162,8 +162,8 @@ async def test_exportacao_rota_storage_manifesto_e_auditoria(
     assert resposta.status_code == 200
     assert resposta.headers["content-type"] == "application/zip"
     with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
-        manifesto = arquivo.read("manifest.csv").decode()
-        linhas = list(csv.DictReader(io.StringIO(manifesto)))
+        manifesto = arquivo.read("manifest.csv").decode("utf-8-sig")
+        linhas = list(csv.DictReader(io.StringIO(manifesto), delimiter=";"))
         assert len(linhas) == 1
         assert linhas[0]["label_source"] == "profissional"
         assert (
@@ -1268,7 +1268,11 @@ async def test_exportacao_aceita_imagem_antiga_sem_content_type(
 
     assert resposta.status_code == 200
     with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
-        linha = next(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+        linha = next(
+            csv.DictReader(
+                io.StringIO(arquivo.read("manifest.csv").decode("utf-8-sig")), delimiter=";"
+            )
+        )
         assert linha["image_path"].endswith(".jpg")
         with Image.open(io.BytesIO(arquivo.read(linha["image_path"]))) as imagem:
             assert imagem.size == (2, 4)  # orientação aplicada
