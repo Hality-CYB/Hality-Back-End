@@ -480,6 +480,8 @@ async def preparar_upload(
 ) -> tuple[diagnostico_storage.AlvoDeUpload, str]:
     """Alvo para o navegador enviar a foto direto ao storage, e o token de confirmação."""
     await _anamnese_para_envio(db, usuario, anamnese_id)
+    # O rollback expira o usuário da sessão: o id é lido antes dele.
+    usuario_id = usuario.id
     # Só leitura: solta o lock da anamnese (nos erros, quem fecha a sessão solta).
     await db.rollback()
 
@@ -489,7 +491,7 @@ async def preparar_upload(
     chave, alvo = await diagnostico_storage.preparar_upload(content_type)
     token = assinar_upload_token(
         chave=chave,
-        usuario_id=usuario.id,
+        usuario_id=usuario_id,
         anamnese_id=anamnese_id,
         content_type=content_type,
     )

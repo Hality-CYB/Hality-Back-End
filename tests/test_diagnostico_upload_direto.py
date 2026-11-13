@@ -12,11 +12,16 @@ from urllib.parse import parse_qs, urlsplit
 
 import boto3
 import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.policies import assinar_upload_token
+from app.auth.users import current_active_user
 from app.db import diagnostico_queries
+from app.db.session import get_db
 from app.main import app
+from app.models.user import User
 from tests.test_diagnostico import (
     AUTH_HEADERS,
     JPEG_MINIMO,
@@ -95,6 +100,33 @@ def test_fluxo_completo_grava_como_o_multipart(anamnese_id, storage_local_isolad
     leitura = client.get(detalhe["imagens"][0]["url_arquivo"])
     assert leitura.status_code == 200
     assert leitura.content == JPEG_MINIMO
+
+
+def test_alvo_com_usuario_orm_da_sessao_da_request(anamnese_id, storage_local_isolado) -> None:
+    """Como em produção: o usuário é um `User` ORM da mesma sessão da request.
+
+    O rollback que solta o lock da anamnese expira o usuário; ler `usuario.id`
+    depois dele estourava `MissingGreenlet` (500). A suíte usa um stub que não é
+    ORM, então esse caminho precisa de um usuário carregado pela sessão.
+    """
+
+    async def usuario_da_sessao(db: AsyncSession = Depends(get_db)) -> User:  # noqa: B008
+        usuario = await db.get(User, PACIENTE_STUB_ID)
+        assert usuario is not None
+        return usuario
+
+    anterior = app.dependency_overrides[current_active_user]
+    app.dependency_overrides[current_active_user] = usuario_da_sessao
+    try:
+        alvo = _pedir_alvo(anamnese_id)
+        assert alvo.status_code == 200
+        corpo = alvo.json()
+        assert set(corpo) == {"url", "fields", "upload_token"}
+
+        assert _enviar_ao_alvo(corpo).status_code == 204
+        assert _confirmar(anamnese_id, corpo["upload_token"]).status_code == 202
+    finally:
+        app.dependency_overrides[current_active_user] = anterior
 
 
 def test_alvo_recusa_anamnese_inexistente() -> None:
