@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -151,14 +152,13 @@ async def obter_info(
     db: AsyncSession,
     diagnostico: Diagnostico,
     tem_revisao_profissional: bool,
+    fonte_revisao: Literal["hality", "profissional"] = "profissional",
 ) -> RotuloDatasetInfo:
     historico = await _historico(db, diagnostico.id)
     itens = [_para_item(item) for item in historico]
     atual = itens[-1] if itens else None
     tem_rotulo_humano = atual is not None or tem_revisao_profissional
-    fonte = (
-        "hality" if atual is not None else ("profissional" if tem_revisao_profissional else "ia")
-    )
+    fonte = "hality" if atual is not None else (fonte_revisao if tem_revisao_profissional else "ia")
     consentido = await consentimento_service.finalidade_vigente(
         db, diagnostico.paciente_id, Finalidade.IMAGE_TRAINING
     )

@@ -3,7 +3,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BOOLEANOS_VERDADEIROS = {"1", "true", "yes", "on"}
@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     # desenvolvimento (diagnostico_mock). No compose é o nome do serviço na rede
     # interna (http://hality-ai:8000); fora do Docker, http://localhost:8000.
     hality_ai_url: str | None = None
+    # Segundos até o mock sair de processando na leitura seguinte.
+    # 0 conclui na próxima leitura. Não negativo.
+    mock_processing_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
     # A API carrega os modelos e roda 5 passagens por foto; dá folga ao timeout.
     hality_ai_timeout_seconds: float = 30.0
 

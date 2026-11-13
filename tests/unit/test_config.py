@@ -158,3 +158,34 @@ def test_storage_s3_completo_e_aceito_em_qualquer_ambiente() -> None:
 def test_storage_desconhecido_falha() -> None:
     with pytest.raises(ValidationError):
         Settings(**CONFIGURACAO_MINIMA, storage_backend="gcs", _env_file=None)
+
+
+def test_atraso_do_mock_padrao_e_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MOCK_PROCESSING_SECONDS", raising=False)
+
+    settings = Settings(**CONFIGURACAO_MINIMA, _env_file=None)
+
+    assert settings.mock_processing_seconds == 0
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        ("0", 0.0),
+        ("0.4", 0.4),
+    ],
+)
+def test_atraso_do_mock_le_a_env(
+    monkeypatch: pytest.MonkeyPatch, bruto: str, esperado: float
+) -> None:
+    monkeypatch.setenv("MOCK_PROCESSING_SECONDS", bruto)
+
+    settings = Settings(**CONFIGURACAO_MINIMA, _env_file=None)
+
+    assert settings.mock_processing_seconds == esperado
+
+
+@pytest.mark.parametrize("valor", [-0.1, float("nan"), float("inf")])
+def test_atraso_do_mock_rejeita_valor_invalido(valor: float) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**CONFIGURACAO_MINIMA, mock_processing_seconds=valor, _env_file=None)
