@@ -1454,10 +1454,16 @@ async def obter_diagnostico_admin(
     historico = await diagnostico_queries.listar_revisoes(db, diagnostico.id)
     ultima_revisao = historico[-1] if historico else None
 
+    autor_revisao = (
+        await db.get(User, ultima_revisao.revisao.profissional_id) if ultima_revisao else None
+    )
     rotulo_dataset = await rotulo_dataset_service.obter_info(
         db,
         diagnostico,
         ultima_revisao is not None,
+        fonte_revisao="hality"
+        if autor_revisao and autor_revisao.role == "admin"
+        else "profissional",
     )
 
     revisao = RevisaoProfissional(**_valores_revisao_admin(diagnostico, ultima_revisao))
