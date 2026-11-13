@@ -19,7 +19,7 @@ from app.auth.users import current_active_user
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models import ClassificacaoDiagnostico, Diagnostico, User
+from app.models import ClassificacaoDiagnostico, Diagnostico, DiagnosticoRevisao, User
 from app.services import admin_resumo_service
 
 pytestmark = pytest.mark.asyncio
@@ -35,6 +35,7 @@ TABELAS = [
     User.__table__,
     ClassificacaoDiagnostico.__table__,
     Diagnostico.__table__,
+    DiagnosticoRevisao.__table__,
 ]
 
 # agosto de 2026 inteiro, em UTC
@@ -193,7 +194,8 @@ async def test_admin_recebe_o_contrato_do_resumo(http, dados, como) -> None:
 
     assert response.status_code == 200
     corpo = response.json()
-    assert set(corpo) == {"periodo", "diagnosticos", "revisao", "halitose"}
+    assert set(corpo) == {"periodo", "diagnosticos", "revisao", "concordancia", "halitose"}
+    assert set(corpo["concordancia"]) == {"comparados", "concordantes", "taxa", "matriz"}
     assert set(corpo["periodo"]) == {"inicio", "fim", "timezone"}
     assert set(corpo["diagnosticos"]) == {"total", "por_classificacao", "por_status"}
     assert set(corpo["revisao"]) == {"pendentes", "revisados"}
@@ -326,3 +328,84 @@ async def test_data_malformada_retorna_422(http, dados, como) -> None:
     como("admin")
 
     assert (await http.get(URL, params={"inicio": "ontem"})).status_code == 422
+
+
+# concordância entre a IA e a revisão
+
+
+async def _revisar(session_factory, anamnese_id: int, classificacao_id: int, versao: int) -> None:
+    from sqlalchemy import select
+
+    async with session_factory() as db:
+        diagnostico = await db.scalar(
+            select(Diagnostico).where(Diagnostico.anamnese_id == anamnese_id)
+        )
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=diagnostico.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=classificacao_id,
+                versao=versao,
+                criado_em=datetime(2026, 8, 20, tzinfo=UTC),
+            )
+        )
+        await db.commit()
+
+
+def _celula(corpo, ia: int, revisao: int) -> int:
+    [celula] = [
+        c for c in corpo["concordancia"]["matriz"] if c["ia"] == ia and c["revisao"] == revisao
+    ]
+    return celula["total"]
+
+
+async def test_sem_revisoes_a_concordancia_vem_zerada_e_sem_taxa(http, dados, como) -> None:
+    como("admin")
+
+    corpo = (await http.get(URL, params=AGOSTO)).json()
+
+    assert corpo["concordancia"]["comparados"] == 0
+    assert corpo["concordancia"]["concordantes"] == 0
+    # sem nada revisado não existe taxa (null, não zero)
+    assert corpo["concordancia"]["taxa"] is None
+    assert len(corpo["concordancia"]["matriz"]) == 9
+    assert all(c["total"] == 0 for c in corpo["concordancia"]["matriz"])
+
+
+async def test_concordancia_compara_a_ia_com_a_revisao_mais_recente(
+    http, dados, como, session_factory
+) -> None:
+    # d1 normal -> revisão normal (concorda)
+    await _revisar(session_factory, 1, dados["normal"], 1)
+    # d2 íntima -> revisão social (discorda)
+    await _revisar(session_factory, 2, dados["social"], 1)
+    # d3 social -> primeiro íntima, depois social: vale a mais recente (concorda)
+    await _revisar(session_factory, 3, dados["intima"], 1)
+    await _revisar(session_factory, 3, dados["social"], 2)
+    # d6 é de setembro: fica fora do período
+    await _revisar(session_factory, 6, dados["normal"], 1)
+    como("admin")
+
+    corpo = (await http.get(URL, params=AGOSTO)).json()
+    concordancia = corpo["concordancia"]
+
+    assert concordancia["comparados"] == 3
+    assert concordancia["concordantes"] == 2
+    assert concordancia["taxa"] == pytest.approx(2 / 3)
+    assert _celula(corpo, 1, 1) == 1
+    assert _celula(corpo, 2, 3) == 1
+    assert _celula(corpo, 3, 3) == 1
+    assert _celula(corpo, 3, 2) == 0
+    assert sum(c["total"] for c in concordancia["matriz"]) == 3
+
+
+async def test_diagnostico_sem_classificacao_da_ia_nao_entra_na_concordancia(
+    http, dados, como, session_factory
+) -> None:
+    # d4 está processando, sem classificação da IA
+    await _revisar(session_factory, 4, dados["normal"], 1)
+    como("admin")
+
+    corpo = (await http.get(URL, params=AGOSTO)).json()
+
+    assert corpo["concordancia"]["comparados"] == 0

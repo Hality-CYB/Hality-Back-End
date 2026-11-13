@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import admin_resumo_queries
-from app.schemas.admin_resumo import AdminResumoResponse, DiagnosticosResumo, RevisaoResumo
+from app.schemas.admin_resumo import (
+    AdminResumoResponse,
+    CelulaConcordancia,
+    ConcordanciaIA,
+    DiagnosticosResumo,
+    RevisaoResumo,
+)
 from app.schemas.profissionais import PeriodoResumo
 
 # a task pede um limite maximo de periodo mas nao fala quanto,
@@ -11,6 +17,7 @@ from app.schemas.profissionais import PeriodoResumo
 LIMITE_PERIODO_DIAS = 366
 
 STATUS_PENDENTE = "aguardando_revisao"
+NIVEIS = (1, 2, 3)
 
 
 class PeriodoInvalidoError(Exception):
@@ -42,6 +49,7 @@ async def montar_resumo(
         db, inicio_utc, fim_utc
     )
     revisados = await admin_resumo_queries.contar_revisados(db, inicio_utc, fim_utc)
+    pares = await admin_resumo_queries.contar_ia_versus_revisao(db, inicio_utc, fim_utc)
 
     # o id da classificacao vira texto porque chave de json e texto
     por_classificacao = {}
@@ -62,4 +70,20 @@ async def montar_resumo(
             pendentes=por_status.get(STATUS_PENDENTE, 0),
             revisados=revisados,
         ),
+        concordancia=_concordancia(pares),
+    )
+
+
+def _concordancia(pares: dict[tuple[int, int], int]) -> ConcordanciaIA:
+    comparados = sum(pares.values())
+    concordantes = sum(total for (ia, revisao), total in pares.items() if ia == revisao)
+    return ConcordanciaIA(
+        comparados=comparados,
+        concordantes=concordantes,
+        taxa=concordantes / comparados if comparados else None,
+        matriz=[
+            CelulaConcordancia(ia=ia, revisao=revisao, total=pares.get((ia, revisao), 0))
+            for ia in NIVEIS
+            for revisao in NIVEIS
+        ],
     )
