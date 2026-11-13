@@ -61,6 +61,7 @@ async def test_gerar_escreve_zip_manifesto_imagens_e_precedencia_dos_rotulos(
         _candidate(code="halitose_intima", source="hality", version=2, url="/hality.png"),
         _candidate(code="halito_normal", source="profissional", version=1, url="/prof.png"),
     ]
+    candidatos[0].label.nome_exibicao = 'Hálito; "íntimo"'
     imagem = _png_bytes()
     monkeypatch.setattr(
         dataset_export_service,
@@ -76,12 +77,16 @@ async def test_gerar_escreve_zip_manifesto_imagens_e_precedencia_dos_rotulos(
     spool = await dataset_export_service.gerar(AsyncMock(), ADMIN, [2, 1], _settings(), "corr-1")
     with zipfile.ZipFile(spool) as arquivo:
         nomes = set(arquivo.namelist())
-        linhas = list(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+        manifest = arquivo.read("manifest.csv")
+        assert manifest.startswith(b"\xef\xbb\xbf")
+        linhas = list(csv.DictReader(io.StringIO(manifest.decode("utf-8-sig")), delimiter=";"))
+        assert "ponto e vírgula" in arquivo.read("README.md").decode("utf-8-sig")
 
     assert "README.md" in nomes
     assert len(linhas) == 2
     assert {linha["label_source"] for linha in linhas} == {"hality", "profissional"}
     assert {linha["label_code"] for linha in linhas} == {"halitose_intima", "halito_normal"}
+    assert linhas[0]["label_name"] == 'Hálito; "íntimo"'
     assert all(linha["image_path"] in nomes for linha in linhas)
     assert leitura.await_count == 4
     spool.close()
