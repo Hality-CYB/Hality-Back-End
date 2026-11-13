@@ -33,3 +33,15 @@ class RotuloDatasetInfo(BaseModel):
     fonte_efetiva: Literal["hality", "profissional", "ia"]
     exportavel: bool
     motivo: str | None = None
+
+
+FonteRotulo = Literal["hality", "profissional", "ia"]
+MotivoInelegivel = Literal["nao_concluido", "sem_imagem", "sem_rotulo_humano", "sem_consentimento"]
+
+
+class ElegibilidadeDataset(BaseModel):
+    """Se o diagnóstico entra hoje numa exportação, com as regras da própria exportação."""
+
+    exportavel: bool
+    fonte_efetiva: FonteRotulo
+    motivo: MotivoInelegivel | None

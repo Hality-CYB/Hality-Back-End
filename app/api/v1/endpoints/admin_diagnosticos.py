@@ -11,7 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.deps import CurrentAdminDep, DbSession, require_admin
+from app.api.deps import CurrentAdminDep, DbSession, SettingsDep, require_admin
 from app.schemas.admin_diagnostico import (
     AdminDiagnosticoDetalhe,
     AdminDiagnosticoListResponse,
@@ -28,6 +28,7 @@ router = APIRouter(
 @router.get("", response_model=AdminDiagnosticoListResponse)
 async def listar_diagnosticos_admin(
     db: DbSession,
+    settings: SettingsDep,
     paciente_id: Annotated[
         uuid.UUID | None, Query(description="filtra pelo paciente; UUID")
     ] = None,
@@ -95,6 +96,7 @@ async def listar_diagnosticos_admin(
             pagina=pagina,
             limite=limite,
             ordem=ordem,
+            exportacao_habilitada=settings.dataset_export_enabled,
         )
 
     except diagnostico_service.DiagnosticoFiltroInvalidoError as exc:

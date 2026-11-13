@@ -31,6 +31,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models import (
+    Anamnese,
     AuditoriaAcesso,
     ClassificacaoDiagnostico,
     Diagnostico,
@@ -206,6 +207,7 @@ DATA_BASE = datetime(2099, 8, 1, 9, 0, tzinfo=UTC)
 
 TABELAS = [
     User.__table__,
+    Anamnese.__table__,
     IdentityAction.__table__,
     EmailOutbox.__table__,
     Profissional.__table__,
@@ -449,6 +451,7 @@ async def test_lista_admin_sem_filtros_traz_todos_e_minimiza_dados(http, dados, 
             "automatica",
             "revisao",
             "qtd_imagens",
+            "dataset",
         }
 
     bruto = r.text
@@ -639,10 +642,7 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
         "exportavel": True,
         "motivo": None,
     }
-    assert corpo["imagem"] == {
-        "disponivel": False,
-        "motivo": "politica_de_acesso_pendente",
-    }
+    assert corpo["imagem"] == {"disponivel": True, "motivo": None}
 
     assert corpo["qtd_imagens"] == 1
     assert corpo["anamnese_id"] == 1
@@ -651,22 +651,77 @@ async def test_detalhe_separa_automatica_revisao_e_dataset(http, dados, como) ->
     assert corpo["historico_revisoes"][0]["profissional_revisor_nome"] == "Prof"
 
 
-async def test_detalhe_minimiza_dados_sensiveis(http, dados, como) -> None:
+async def test_detalhe_traz_foto_assinada_e_anamnese(http, dados, como, session_factory) -> None:
+    """O admin vê a foto e a anamnese para rotular (decisão do time em 2026-11-13)."""
+    d1 = dados["d"]["d1"]
+    async with session_factory() as db:
+        anamnese = Anamnese(
+            paciente_id=PACIENTE_A,
+            id_versao_questionario="v1",
+            respostas=[
+                {
+                    "pergunta_id": "halito_ao_acordar",
+                    "des_pergunta": "Você sente mau hálito ao acordar?",
+                    "tipo_pergunta": "boolean",
+                    "des_resposta": "Sim",
+                    "valor": True,
+                    "tipo_resposta": "bool",
+                }
+            ],
+        )
+        db.add(anamnese)
+        await db.flush()
+        diagnostico = await db.get(Diagnostico, d1.id)
+        diagnostico.anamnese_id = anamnese.id
+        await db.commit()
+
+    como("admin")
+    corpo = (await http.get(f"{BASE}/{d1.id}")).json()
+
+    [imagem] = corpo["imagens"]
+    assert imagem["url_arquivo"].startswith("/api/v1/diagnosticos/imagens/segredo.jpg?expira=")
+    assert "assinatura=" in imagem["url_arquivo"]
+    assert corpo["anamnese"]["respostas"] == [
+        {
+            "pergunta_id": "halito_ao_acordar",
+            "enunciado": "Você sente mau hálito ao acordar?",
+            "tipo": "boolean",
+            "resposta": "Sim",
+            "valor": True,
+            "tipo_resposta": "bool",
+        }
+    ]
+
+
+async def test_url_da_foto_do_detalhe_abre_a_imagem(http, dados, como) -> None:
+    como("admin")
+    corpo = (await http.get(f"{BASE}/{dados['d']['d1'].id}")).json()
+    url = corpo["imagens"][0]["url_arquivo"]
+
+    # Sem Bearer: a assinatura é a credencial, como no detalhe do paciente.
+    app.dependency_overrides.pop(current_active_user, None)
+    resposta = await http.get(url)
+
+    # 404 porque o arquivo não existe no teste; 401 seria a assinatura recusada.
+    assert resposta.status_code == 404
+
+
+async def test_detalhe_continua_sem_dados_de_conta(http, dados, como) -> None:
     como("admin")
     r = await http.get(f"{BASE}/{dados['d']['d1'].id}")
 
-    for proibido in (
-        "url_arquivo",
-        "segredo.jpg",
-        "parametros_captura",
-        "respostas",
-        "email",
-        "hashed_password",
-        "paciente_nome",
-    ):
+    for proibido in ("parametros_captura", "email", "hashed_password", "paciente_nome"):
         assert proibido not in r.text
-    assert "imagens" not in r.json()
-    assert "anamnese" not in r.json()
+
+
+async def test_abrir_o_detalhe_com_dados_clinicos_fica_na_auditoria(
+    http, dados, como, session_factory
+) -> None:
+    como("admin")
+    await http.get(f"{BASE}/{dados['d']['d1'].id}")
+
+    eventos = await _auditorias(session_factory)
+    assert any(e.recurso_id == str(dados["d"]["d1"].id) for e in eventos)
 
 
 async def test_detalhe_sem_classificacao_e_sem_revisao(http, dados, como) -> None:
@@ -1392,3 +1447,161 @@ async def test_exportacao_confirma_auditoria_e_solta_a_transacao_antes_do_downlo
             select(AuditoriaAcesso).where(AuditoriaAcesso.acao == "dataset.exportar")
         )
     assert evento.resultado == "sucesso"
+
+
+# ---------------------------------------------------------------------------
+# Elegibilidade do dataset na fila (sem buscar o detalhe de cada item)
+# ---------------------------------------------------------------------------
+
+
+async def _dataset_por_id(http) -> dict[int, dict]:
+    corpo = (await http.get(BASE)).json()
+    return {item["id"]: item["dataset"] for item in corpo["itens"]}
+
+
+async def _classificacao(db, codigo: str) -> ClassificacaoDiagnostico:
+    return await db.scalar(
+        select(ClassificacaoDiagnostico).where(ClassificacaoDiagnostico.codigo == codigo)
+    )
+
+
+async def test_fila_traz_a_elegibilidade_de_cada_item(http, dados, como) -> None:
+    como("admin")
+    dataset = await _dataset_por_id(http)
+    d = dados["d"]
+
+    assert dataset[d["d1"].id] == {
+        "exportavel": True,
+        "fonte_efetiva": "profissional",
+        "motivo": None,
+    }
+    assert dataset[d["d2"].id] == {
+        "exportavel": False,
+        "fonte_efetiva": "ia",
+        "motivo": "sem_imagem",
+    }
+    for pendente in ("d3", "d4", "d5"):
+        assert dataset[d[pendente].id]["motivo"] == "nao_concluido"
+
+
+async def test_fila_explica_falta_de_rotulo_e_de_consentimento(
+    http, dados, como, session_factory
+) -> None:
+    d = dados["d"]
+    async with session_factory() as db:
+        for diagnostico in (d["d2"], d["d3"]):
+            db.add(
+                Imagem(
+                    diagnostico_id=diagnostico.id,
+                    url_arquivo="/x.jpg",
+                    ordem=1,
+                    parametros_captura={},
+                )
+            )
+        d3 = await db.get(Diagnostico, d["d3"].id)
+        d3.status = "concluido"
+        db.add(
+            DiagnosticoRevisao(
+                diagnostico_id=d3.id,
+                profissional_id=PROFISSIONAL_ID,
+                classificacao_id=d3.classificacao_id,
+                versao=1,
+                criado_em=DATA_BASE,
+            )
+        )
+        await db.commit()
+
+    como("admin")
+    dataset = await _dataset_por_id(http)
+
+    assert dataset[d["d2"].id]["motivo"] == "sem_rotulo_humano"
+    # Paciente B nunca autorizou o uso da imagem para treino.
+    assert dataset[d["d3"].id] == {
+        "exportavel": False,
+        "fonte_efetiva": "profissional",
+        "motivo": "sem_consentimento",
+    }
+
+
+@pytest.mark.parametrize("origem", ["rotulo", "revisao_do_admin"])
+async def test_fila_reconhece_o_rotulo_da_hality(
+    http, dados, como, session_factory, origem
+) -> None:
+    d2 = dados["d"]["d2"]
+    async with session_factory() as db:
+        db.add(Imagem(diagnostico_id=d2.id, url_arquivo="/x.jpg", ordem=1, parametros_captura={}))
+        social = await _classificacao(db, "mau_halito_social")
+        if origem == "rotulo":
+            db.add(
+                RotuloDataset(
+                    diagnostico_id=d2.id, admin_id=ADMIN_ID, classificacao_id=social.id, version=1
+                )
+            )
+        else:
+            db.add(
+                DiagnosticoRevisao(
+                    diagnostico_id=d2.id,
+                    profissional_id=ADMIN_ID,
+                    classificacao_id=social.id,
+                    versao=1,
+                    criado_em=DATA_BASE,
+                )
+            )
+        await db.commit()
+
+    como("admin")
+    dataset = await _dataset_por_id(http)
+
+    assert dataset[d2.id] == {"exportavel": True, "fonte_efetiva": "hality", "motivo": None}
+
+
+async def test_elegibilidade_da_fila_bate_com_a_exportacao(
+    http, dados, como, session_factory
+) -> None:
+    """A fila não pode prometer um item que a exportação recusa, nem o contrário."""
+    d = dados["d"]
+    async with session_factory() as db:
+        db.add(
+            Imagem(diagnostico_id=d["d2"].id, url_arquivo="/x.jpg", ordem=1, parametros_captura={})
+        )
+        await db.commit()
+
+    como("admin")
+    dataset = await _dataset_por_id(http)
+
+    async with session_factory() as db:
+        for diagnostico_id, info in dataset.items():
+            try:
+                await dataset_export_service._candidates(db, [diagnostico_id])
+                aceito = True
+            except dataset_export_service.DatasetExportError:
+                aceito = False
+            assert aceito is info["exportavel"], (diagnostico_id, info)
+
+
+async def test_fila_consulta_o_consentimento_em_lote(http, dados, como, monkeypatch) -> None:
+    from app.services import consentimento_service
+
+    async def por_item(*_args, **_kwargs):
+        raise AssertionError("a fila não deve consultar o consentimento item a item")
+
+    monkeypatch.setattr(consentimento_service, "finalidade_vigente", por_item)
+    como("admin")
+
+    resposta = await http.get(BASE)
+
+    assert resposta.status_code == 200
+
+
+@pytest.mark.parametrize("ligada", [True, False])
+async def test_fila_informa_se_a_exportacao_esta_ligada(
+    http, dados, como, monkeypatch, ligada
+) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", ligada)
+    como("admin")
+
+    corpo = (await http.get(BASE)).json()
+
+    assert corpo["exportacao_habilitada"] is ligada
