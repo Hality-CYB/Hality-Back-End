@@ -35,6 +35,8 @@ from app.models import (
     ClassificacaoDiagnostico,
     Diagnostico,
     DiagnosticoRevisao,
+    EmailOutbox,
+    IdentityAction,
     Imagem,
     Profissional,
     RotuloDataset,
@@ -204,6 +206,8 @@ DATA_BASE = datetime(2099, 8, 1, 9, 0, tzinfo=UTC)
 
 TABELAS = [
     User.__table__,
+    IdentityAction.__table__,
+    EmailOutbox.__table__,
     Profissional.__table__,
     ClassificacaoDiagnostico.__table__,
     Diagnostico.__table__,
@@ -1170,6 +1174,66 @@ async def test_detalhe_rotulo_dataset_sem_rotulo_humano_motivo_sem_rotulo_humano
     assert rotulo["fonte_efetiva"] == "ia"
     assert rotulo["exportavel"] is False
     assert rotulo["motivo"] == "sem_rotulo_humano"
+
+
+@pytest.mark.parametrize("chave", ["d1", "d2"])
+async def test_confirmacao_da_mesma_escala_pelo_admin_libera_dataset_com_fonte_hality(
+    http, dados, como, session_factory, monkeypatch, chave
+):
+    import csv
+    import io
+    import zipfile
+
+    from PIL import Image
+
+    from app.core.config import get_settings
+    from app.services import diagnostico_storage
+
+    como("admin")
+    ident = dados["d"][chave].id
+    async with session_factory() as db:
+        if chave == "d2":
+            db.add(
+                Imagem(
+                    diagnostico_id=ident,
+                    url_arquivo="/api/v1/diagnosticos/imagens/teste.png",
+                    ordem=1,
+                    parametros_captura={},
+                    content_type="image/png",
+                )
+            )
+        await db.commit()
+    antes = (await http.get(f"{BASE}/{ident}")).json()
+    codigo = (antes["revisao"]["classificacao"] or antes["automatica"]["classificacao"])["codigo"]
+    if chave == "d2":
+        assert antes["rotulo_dataset"]["exportavel"] is False
+    resposta = await http.patch(
+        f"{BASE}/{ident}/revisao",
+        json={
+            "classificacao": codigo,
+            "version": antes["reclassificacao"]["version"],
+        },
+    )
+    assert resposta.status_code == 200
+    depois = (await http.get(f"{BASE}/{ident}")).json()
+    assert depois["revisao"]["classificacao"]["codigo"] == codigo
+    assert depois["rotulo_dataset"]["fonte_efetiva"] == "hality"
+    assert depois["rotulo_dataset"]["exportavel"] is True
+
+    png = io.BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(png, format="PNG")
+
+    async def ler(*args):
+        return png.getvalue()
+
+    monkeypatch.setattr(diagnostico_storage, "ler_privado", ler)
+    monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
+    exportado = await http.post("/api/v1/admin/datasets/exports", json={"diagnostico_ids": [ident]})
+    assert exportado.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(exportado.content)) as arquivo:
+        linha = next(csv.DictReader(io.StringIO(arquivo.read("manifest.csv").decode())))
+    assert linha["label_source"] == "hality"
+    assert linha["label_code"] == codigo
 
 
 # ---------------------------------------------------------------------------
