@@ -6,12 +6,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.erros_diagnostico import CodigoErroDiagnostico
 from app.db import diagnostico_queries
 from app.models.diagnostico import Diagnostico
 from app.schemas.diagnostico import OrigemResultado, StatusDiagnostico
-
-MOCK_PROCESSING_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -56,7 +55,7 @@ def _processamento_concluido(
     if criado_em.tzinfo is None:
         criado_em = criado_em.replace(tzinfo=UTC)
 
-    return (datetime.now(UTC) - criado_em).total_seconds() >= MOCK_PROCESSING_SECONDS
+    return (datetime.now(UTC) - criado_em).total_seconds() >= get_settings().mock_processing_seconds
 
 
 async def processar_se_necessario(
