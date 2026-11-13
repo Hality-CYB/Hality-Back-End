@@ -1,4 +1,4 @@
-# --- S3: imagens de diagnostico e backups (privado, criptografado, versionado) ---
+# --- S3: imagens de diagnostico, midias de conteudo e backups (privado, criptografado, versionado) ---
 resource "aws_s3_bucket" "assets" {
   # O sufixo com o id da conta garante nome global unico.
   bucket = "${var.project}-${var.env}-assets-${data.aws_caller_identity.current.account_id}"
@@ -76,7 +76,40 @@ resource "aws_s3_bucket_lifecycle_configuration" "assets" {
     expiration { expired_object_delete_marker = true }
   }
 
+  # Upload direto do navegador: o arquivo chega em uploads/ e a API o move para
+  # diagnosticos/ ou conteudos/ ao confirmar. O que nao for confirmado expira
+  # em 1 dia, entao nenhuma foto de saude abandonada fica no bucket.
+  rule {
+    id     = "uploads-abandonados"
+    status = "Enabled"
+    filter { prefix = "uploads/" }
+
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "uploads-marcadores"
+    status = "Enabled"
+    filter { prefix = "uploads/" }
+
+    expiration { expired_object_delete_marker = true }
+  }
+
   depends_on = [aws_s3_bucket_versioning.assets]
+}
+
+# O navegador envia direto ao bucket com POST (presigned POST). A leitura passa
+# por <img>/<video> seguindo o redirect da API, sem precisar de CORS.
+resource "aws_s3_bucket_cors_configuration" "assets" {
+  bucket = aws_s3_bucket.assets.id
+
+  cors_rule {
+    allowed_methods = ["POST"]
+    allowed_origins = var.app_origins
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
+  }
 }
 
 resource "aws_s3_bucket_policy" "assets" {
