@@ -4,6 +4,8 @@ Testa só a função pura `_mapear`; o fluxo com banco (chamada à API, persist�
 e falhas) é coberto pela suíte de diagnóstico que usa Postgres real.
 """
 
+import pytest
+
 from app.services.diagnostico_provider import (
     CLASSIFICACAO_INDICIO_FORTE,
     CLASSIFICACAO_INDICIO_LEVE,
@@ -60,3 +62,44 @@ def test_probabilidade_ausente_nao_quebra_e_fica_sem_saburra() -> None:
     assert mapeado.classificacao_codigo == CLASSIFICACAO_INDICIO_LEVE
     assert mapeado.escala_saburra is None
     assert mapeado.confianca_ia is None
+
+
+@pytest.mark.asyncio
+async def test_ler_imagem_le_pelo_storage(storage_local_isolado, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services import diagnostico_provider, storage
+
+    await storage.atual().salvar("diagnosticos/abc.png", b"bytes", "image/png")
+    imagens = [
+        SimpleNamespace(url_arquivo="/api/v1/diagnosticos/imagens/abc.png", content_type=None)
+    ]
+    monkeypatch.setattr(
+        diagnostico_provider.diagnostico_queries, "listar_imagens", AsyncMock(return_value=imagens)
+    )
+
+    lida = await diagnostico_provider._ler_imagem(AsyncMock(), SimpleNamespace(id=1))
+
+    assert lida == (b"bytes", "image/jpeg")
+
+
+@pytest.mark.asyncio
+async def test_ler_imagem_sem_arquivo_no_storage_devolve_none(
+    storage_local_isolado, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.services import diagnostico_provider
+
+    imagens = [
+        SimpleNamespace(
+            url_arquivo="/api/v1/diagnosticos/imagens/sumiu.png", content_type="image/png"
+        )
+    ]
+    monkeypatch.setattr(
+        diagnostico_provider.diagnostico_queries, "listar_imagens", AsyncMock(return_value=imagens)
+    )
+
+    assert await diagnostico_provider._ler_imagem(AsyncMock(), SimpleNamespace(id=1)) is None

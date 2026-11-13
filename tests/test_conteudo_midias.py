@@ -9,6 +9,7 @@ import os
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import pytest_asyncio
@@ -34,9 +35,10 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
 @pytest.fixture(autouse=True)
-def storage_temporario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(conteudo_storage, "_STORAGE_DIR", tmp_path)
-    return tmp_path
+def storage_temporario(storage_local_isolado: Path) -> Path:
+    pasta = storage_local_isolado / "conteudos"
+    pasta.mkdir(parents=True, exist_ok=True)
+    return pasta
 
 
 @pytest_asyncio.fixture
@@ -220,3 +222,119 @@ async def test_varredura_no_upload_apaga_so_orfao_antigo(http, storage_temporari
         _nome(em_uso),
         novo,
     }
+
+
+UPLOAD_DIRETO = "/api/v1/admin/conteudos/midias/upload"
+PUBLICA = "/api/v1/public/conteudos/midias/"
+
+
+async def _alvo(http: AsyncClient, tipo: str = "image/png", tamanho: int = len(PNG)):
+    return await http.post(
+        UPLOAD_DIRETO, headers=AUTH, json={"content_type": tipo, "tamanho": tamanho}
+    )
+
+
+async def _enviar_ao_alvo(
+    http: AsyncClient, alvo: dict, dados: bytes = PNG, tipo: str = "image/png"
+):
+    return await http.post(alvo["url"], data=alvo["fields"], files={"file": ("m", dados, tipo)})
+
+
+@pytest.mark.parametrize(
+    ("tipo", "esperado", "extensao"),
+    [("image/png", "imagem", ".png"), ("video/mp4", "video", ".mp4")],
+)
+async def test_alvo_de_midia_e_envio_direto(http, storage_temporario, tipo, esperado, extensao):
+    resposta = await _alvo(http, tipo)
+
+    assert resposta.status_code == 200
+    alvo = resposta.json()
+    assert alvo["tipo"] == esperado
+    assert alvo["url"] == "/api/v1/uploads/local"
+    assert alvo["fields"]["key"].startswith("conteudos/")
+    assert alvo["fields"]["key"].endswith(extensao)
+    assert alvo["url_publica"] == PUBLICA + alvo["fields"]["key"].split("/", 1)[1]
+
+    assert (await _enviar_ao_alvo(http, alvo, PNG, tipo)).status_code == 204
+
+    leitura = await http.get(alvo["url_publica"])
+    assert leitura.status_code == 200
+    assert leitura.content == PNG
+    assert len(list(storage_temporario.iterdir())) == 1
+
+
+@pytest.mark.parametrize(("tipo", "tamanho"), [("application/pdf", 10), ("image/png", 0)])
+async def test_alvo_de_midia_recusa_formato_ou_tamanho_vazio(http, tipo, tamanho):
+    resposta = await _alvo(http, tipo, tamanho)
+
+    assert resposta.status_code == 400
+    assert resposta.json()["motivo"]
+
+
+@pytest.mark.parametrize(
+    ("tipo", "tamanho", "codigo"),
+    [
+        ("image/png", 10 * 1024 * 1024, 200),
+        ("image/png", 10 * 1024 * 1024 + 1, 413),
+        ("video/webm", 50 * 1024 * 1024, 200),
+        ("video/webm", 50 * 1024 * 1024 + 1, 413),
+    ],
+)
+async def test_alvo_de_midia_respeita_o_limite_do_tipo(http, tipo, tamanho, codigo):
+    assert (await _alvo(http, tipo, tamanho)).status_code == codigo
+
+
+async def test_so_admin_pede_alvo_de_midia(http, cenario_admin):
+    autenticar_como(cenario_admin.profissional)
+
+    assert (await _alvo(http)).status_code == 403
+    assert (
+        await http.post(UPLOAD_DIRETO, json={"content_type": "image/png", "tamanho": 1})
+    ).status_code == 401
+
+
+async def test_varredura_local_apaga_upload_antigo_sem_confirmacao(
+    http, storage_temporario, storage_local_isolado
+):
+    abandonado = (await _alvo(http)).json()
+    await _enviar_ao_alvo(http, abandonado)
+    recente = (await _alvo(http)).json()
+    await _enviar_ao_alvo(http, recente)
+    orfao = _nome((await _enviar(http)).json()["url"])
+    antigo = time.time() - 2 * 24 * 60 * 60
+    for caminho in (
+        storage_local_isolado / abandonado["fields"]["key"],
+        storage_temporario / orfao,
+    ):
+        os.utime(caminho, (antigo, antigo))
+
+    await _enviar(http)
+
+    assert not (storage_local_isolado / abandonado["fields"]["key"]).exists()
+    assert (storage_local_isolado / recente["fields"]["key"]).exists()
+    assert not (storage_temporario / orfao).exists()
+
+
+async def test_leitura_publica_no_s3_redireciona_para_url_assinada(http, storage_s3_ativo):
+    url = (await _enviar(http)).json()["url"]
+
+    resposta = await http.get(url, follow_redirects=False)
+
+    assert resposta.status_code == 302
+    assert resposta.headers["cache-control"] == "public, max-age=300"
+    destino = urlsplit(resposta.headers["location"])
+    assert destino.hostname == "hality-teste.s3.us-east-2.amazonaws.com"
+    assert destino.path == f"/conteudos/{_nome(url)}"
+    assert parse_qs(destino.query)["X-Amz-Expires"] == ["3600"]
+    inexistente = await http.get(PUBLICA + "nao-existe.png", follow_redirects=False)
+    assert inexistente.status_code == 404
+
+
+async def test_alvo_de_midia_no_s3_e_presigned_post(http, storage_s3_ativo):
+    alvo = (await _alvo(http, "video/mp4", 1000)).json()
+
+    assert alvo["url"] == "https://hality-teste.s3.us-east-2.amazonaws.com/"
+    assert alvo["fields"]["key"].startswith("conteudos/")
+    assert alvo["fields"]["Content-Type"] == "video/mp4"
+    assert "policy" in alvo["fields"]
+    assert alvo["url_publica"].startswith(PUBLICA)

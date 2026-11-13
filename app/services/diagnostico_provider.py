@@ -8,7 +8,6 @@ indício de halitose + probabilidade, enquanto o back trabalha com uma
 classificação ordenada e uma escala de saburra. A tradução está em `_mapear`.
 """
 
-import asyncio
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,13 +78,11 @@ async def _ler_imagem(
         return None
 
     imagem = imagens[0]
-    nome_arquivo = imagem.url_arquivo.rsplit("/", 1)[-1]
-    caminho = diagnostico_storage.resolver_caminho(nome_arquivo)
 
-    if caminho is None:
+    try:
+        conteudo = await diagnostico_storage.ler_privado(imagem.url_arquivo)
+    except FileNotFoundError:
         return None
-
-    conteudo = await asyncio.to_thread(caminho.read_bytes)
 
     return conteudo, imagem.content_type or "image/jpeg"
 

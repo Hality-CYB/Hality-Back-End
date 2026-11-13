@@ -120,3 +120,41 @@ def test_producao_aceita_remetente_de_dominio_proprio() -> None:
 
     assert settings.environment == "production"
     assert settings.resend_test_recipient is None
+
+
+def test_storage_padrao_e_local() -> None:
+    settings = Settings(**CONFIGURACAO_MINIMA, _env_file=None)
+
+    assert settings.storage_backend == "local"
+    assert settings.s3_bucket is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"s3_bucket": "bucket"},
+        {"aws_region": "us-east-2"},
+        {"s3_bucket": " ", "aws_region": "x"},
+    ],
+)
+def test_storage_s3_exige_bucket_e_regiao(extra: dict[str, str]) -> None:
+    with pytest.raises(ValidationError, match="S3_BUCKET e AWS_REGION"):
+        Settings(**CONFIGURACAO_MINIMA, storage_backend="s3", **extra, _env_file=None)
+
+
+def test_storage_s3_completo_e_aceito_em_qualquer_ambiente() -> None:
+    settings = Settings(
+        **CONFIGURACAO_MINIMA,
+        storage_backend="s3",
+        s3_bucket="bucket",
+        aws_region="us-east-2",
+        _env_file=None,
+    )
+
+    assert settings.storage_backend == "s3"
+
+
+def test_storage_desconhecido_falha() -> None:
+    with pytest.raises(ValidationError):
+        Settings(**CONFIGURACAO_MINIMA, storage_backend="gcs", _env_file=None)

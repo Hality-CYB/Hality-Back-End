@@ -960,8 +960,7 @@ def test_falha_ao_gravar_diagnostico_remove_original_do_storage(monkeypatch) -> 
     db.rollback.assert_awaited_once()
 
 
-def test_storage_nao_sobrescreve_original(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
+def test_storage_nao_sobrescreve_original(monkeypatch, storage_local_isolado) -> None:
     nome_fixo = SimpleNamespace(hex="mesmo-nome")
     monkeypatch.setattr(diagnostico_storage, "uuid4", lambda: nome_fixo)
 
@@ -970,7 +969,7 @@ def test_storage_nao_sobrescreve_original(monkeypatch, tmp_path) -> None:
     with pytest.raises(FileExistsError):
         asyncio.run(diagnostico_storage.salvar(b"outra", "image/jpeg", "/api/v1"))
 
-    assert (tmp_path / "mesmo-nome.jpg").read_bytes() == b"original"
+    assert (storage_local_isolado / "diagnosticos/mesmo-nome.jpg").read_bytes() == b"original"
 
 
 def _imagens_da_anamnese(anamnese_id: int) -> list[Imagem]:
@@ -1015,9 +1014,7 @@ def test_reenvio_da_mesma_anamnese_e_idempotente() -> None:
         assert imagem.sha256 == hashlib.sha256(JPEG_MINIMO).hexdigest()
         assert imagem.tamanho_bytes == len(JPEG_MINIMO)
         assert imagem.content_type == "image/jpeg"
-        caminho = diagnostico_storage.resolver_caminho(imagem.url_arquivo.rsplit("/", 1)[-1])
-        assert caminho is not None
-        assert caminho.read_bytes() == JPEG_MINIMO
+        assert asyncio.run(diagnostico_storage.ler_privado(imagem.url_arquivo)) == JPEG_MINIMO
     finally:
         _remover_arquivos(imagens)
         _limpar_consentimento_e_anamnese([], anamnese_id)

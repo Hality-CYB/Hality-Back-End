@@ -147,7 +147,6 @@ async def test_exportacao_rota_storage_manifesto_e_auditoria(
 
     como("admin")
     monkeypatch.setattr(get_settings(), "dataset_export_enabled", True)
-    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
     original = io.BytesIO()
     Image.new("RGB", (2, 2), "red").save(original, format="PNG")
     url = await diagnostico_storage.salvar(original.getvalue(), "image/png", "/api/v1")
@@ -1187,7 +1186,6 @@ async def _foto_do_d1(session_factory, monkeypatch, tmp_path, *, content_type=No
 
     from app.services import diagnostico_storage
 
-    monkeypatch.setattr(diagnostico_storage, "_STORAGE_DIR", tmp_path)
     foto = io.BytesIO()
     exif = Image.Exif()
     exif[274] = 6  # orientação: girada 90 graus

@@ -63,3 +63,9 @@ variable "http_ingress_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+variable "app_origins" {
+  description = "Origens do front que enviam arquivos direto ao bucket (CORS)."
+  type        = list(string)
+  default     = ["https://hality-cyb.duckdns.org"]
+}

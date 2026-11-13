@@ -91,7 +91,13 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# Acesso ao bucket do projeto (imagens de diagnostico e backups)
+# Acesso ao bucket do projeto, restrito aos prefixos que a aplicacao usa:
+# uploads/, diagnosticos/ e conteudos/ (API) e backups/ (hality-backup.sh).
+# Nao alcanca deploy/ (imagem do hality-ai).
+locals {
+  app_s3_prefixes = ["uploads", "diagnosticos", "conteudos", "backups"]
+}
+
 resource "aws_iam_role_policy" "s3" {
   name = "${var.project}-${var.env}-s3-access"
   role = aws_iam_role.ec2.id
@@ -101,12 +107,15 @@ resource "aws_iam_role_policy" "s3" {
       {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
-        Resource = "${aws_s3_bucket.assets.arn}/*"
+        Resource = [for p in local.app_s3_prefixes : "${aws_s3_bucket.assets.arn}/${p}/*"]
       },
       {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = aws_s3_bucket.assets.arn
+        # IfExists: HeadObject de chave ausente nao carrega s3:prefix e precisa
+        # receber 404 (nao 403); a listagem fica restrita aos prefixos.
+        Condition = { StringLikeIfExists = { "s3:prefix" = [for p in local.app_s3_prefixes : "${p}/*"] } }
       },
     ]
   })
@@ -160,6 +169,9 @@ resource "aws_instance" "app" {
 
   metadata_options {
     http_tokens = "required" # IMDSv2
+    # Hop 2: a API roda em container (rede bridge do Docker) e precisa alcancar
+    # o IMDSv2 para obter as credenciais da role (boto3).
+    http_put_response_hop_limit = 2
   }
 
   # Guarda o Postgres com dado de saude: disco criptografado.

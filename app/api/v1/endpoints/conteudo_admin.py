@@ -19,6 +19,8 @@ from app.schemas.conteudo import (
     ConteudoUpdate,
     DestinoConteudo,
     MidiaEnviadaResponse,
+    MidiaUploadRequest,
+    MidiaUploadResponse,
     OrdemConteudo,
     StatusConteudo,
 )
@@ -129,6 +131,39 @@ async def enviar_midia(
     await conteudo_service.limpar_midias_orfas(db)
 
     return MidiaEnviadaResponse(url=url, tipo=tipo)
+
+
+@router.post(
+    "/midias/upload",
+    response_model=MidiaUploadResponse,
+)
+async def preparar_upload_midia(
+    payload: MidiaUploadRequest,
+    admin: CurrentAdminMutationDep,
+    db: DbSession,
+) -> MidiaUploadResponse | JSONResponse:
+    """Alvo (formato presigned POST) para o navegador enviar a mídia direto ao storage.
+
+    O arquivo só passa a ser usado quando um conteúdo salvo aponta para `url_publica`.
+    """
+    try:
+        tipo, alvo, url_publica = await conteudo_storage.preparar_upload(
+            payload.content_type, payload.tamanho, get_settings().api_v1_prefix
+        )
+    except conteudo_storage.MidiaInvalidaError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"motivo": exc.motivo},
+        )
+    except conteudo_storage.MidiaMuitoGrandeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="arquivo acima do tamanho máximo permitido",
+        ) from exc
+
+    await conteudo_service.limpar_midias_orfas(db)
+
+    return MidiaUploadResponse(url=alvo.url, fields=alvo.fields, url_publica=url_publica, tipo=tipo)
 
 
 @router.get(
