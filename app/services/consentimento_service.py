@@ -17,7 +17,7 @@ As funções `gravar_*` não fazem commit: o chamador controla a transação.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -194,6 +194,21 @@ async def finalidade_vigente(
     ultimos = await consentimento_queries.ultimos_eventos(db, titular_id)
     evento = ultimos.get(finalidade.value)
     return bool(evento and evento.aceito and evento.versao == TERMOS[finalidade].versao)
+
+
+async def titulares_com_finalidade_vigente(
+    db: AsyncSession, titular_ids: Collection[uuid.UUID], finalidade: Finalidade
+) -> set[uuid.UUID]:
+    """Versão em lote de `finalidade_vigente`, para listas (ex.: a fila do admin)."""
+    eventos = await consentimento_queries.ultimos_eventos_da_finalidade(
+        db, set(titular_ids), finalidade.value
+    )
+    versao = TERMOS[finalidade].versao
+    return {
+        titular_id
+        for titular_id, evento in eventos.items()
+        if evento.aceito and evento.versao == versao
+    }
 
 
 async def exigir_tratamento_vigente_se_decidido(db: AsyncSession, titular_id: uuid.UUID) -> None:

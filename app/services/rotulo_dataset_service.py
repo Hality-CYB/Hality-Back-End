@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
@@ -5,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.policies import tem_papel
 from app.core.consentimentos import Finalidade
 from app.db import auditoria_queries
 from app.models.classificacao_diagnostico import ClassificacaoDiagnostico
@@ -14,10 +16,14 @@ from app.models.rotulo_dataset import RotuloDataset
 from app.models.user import User
 from app.schemas.diagnostico import ClassificacaoDiagnosticoResumo, StatusDiagnostico
 from app.schemas.rotulo_dataset import (
+    ElegibilidadeDataset,
+    FonteRotulo,
+    MotivoInelegivel,
     RotuloDatasetAutor,
     RotuloDatasetInfo,
     RotuloDatasetItem,
 )
+from app.schemas.usuario import TipoUsuario
 from app.services import consentimento_service
 
 
@@ -179,3 +185,65 @@ async def obter_info(
         exportavel=exportavel,
         motivo=motivo,
     )
+
+
+async def elegibilidade_em_lote(
+    db: AsyncSession,
+    diagnosticos: list[Diagnostico],
+    qtd_imagens: dict[int, int],
+    autores_das_revisoes: dict[int, uuid.UUID],
+) -> dict[int, ElegibilidadeDataset]:
+    """Elegibilidade de vários diagnósticos com as regras de `dataset_export_service`.
+
+    Concluído, com imagem, com rótulo humano (Hality ou a última revisão) e com o
+    consentimento de treino vigente. A exportação revalida tudo na hora de gerar o
+    ZIP; aqui é só para a fila mostrar o estado sem buscar o detalhe de cada item.
+    """
+    if not diagnosticos:
+        return {}
+    ids = [d.id for d in diagnosticos]
+    com_rotulo_hality = set(
+        await db.scalars(
+            select(RotuloDataset.diagnostico_id)
+            .where(RotuloDataset.diagnostico_id.in_(ids))
+            .distinct()
+        )
+    )
+    autores = set(autores_das_revisoes.values())
+    admins = (
+        {
+            usuario.id
+            for usuario in await db.scalars(select(User).where(User.id.in_(autores)))
+            if tem_papel(usuario, TipoUsuario.ADMIN)
+        }
+        if autores
+        else set()
+    )
+    consentidos = await consentimento_service.titulares_com_finalidade_vigente(
+        db, {d.paciente_id for d in diagnosticos}, Finalidade.IMAGE_TRAINING
+    )
+
+    resultado: dict[int, ElegibilidadeDataset] = {}
+    for diagnostico in diagnosticos:
+        autor = autores_das_revisoes.get(diagnostico.id)
+        fonte: FonteRotulo
+        if diagnostico.id in com_rotulo_hality:
+            fonte = "hality"
+        elif autor is not None:
+            fonte = "hality" if autor in admins else "profissional"
+        else:
+            fonte = "ia"
+
+        motivo: MotivoInelegivel | None = None
+        if diagnostico.status != StatusDiagnostico.CONCLUIDO.value:
+            motivo = "nao_concluido"
+        elif qtd_imagens.get(diagnostico.id, 0) == 0:
+            motivo = "sem_imagem"
+        elif fonte == "ia":
+            motivo = "sem_rotulo_humano"
+        elif diagnostico.paciente_id not in consentidos:
+            motivo = "sem_consentimento"
+        resultado[diagnostico.id] = ElegibilidadeDataset(
+            exportavel=motivo is None, fonte_efetiva=fonte, motivo=motivo
+        )
+    return resultado
