@@ -99,9 +99,9 @@ async def buscar_identidade_do_usuario(
 
 
 async def criar_identidade(
-    db: AsyncSession, *, user_id: uuid.UUID, provider: str, subject: str
+    db: AsyncSession, *, user_id: uuid.UUID, provider: str, subject: str, email: str | None = None
 ) -> IdentidadeExterna:
-    identidade = IdentidadeExterna(user_id=user_id, provider=provider, subject=subject)
+    identidade = IdentidadeExterna(user_id=user_id, provider=provider, subject=subject, email=email)
     db.add(identidade)
     await db.flush()
     return identidade

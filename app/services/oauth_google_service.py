@@ -296,6 +296,7 @@ async def processar_callback(
     codigo = secrets.token_urlsafe(32)
     fluxo.estado = ESTADO_AUTENTICADO
     fluxo.subject = google.subject
+    fluxo.email = google.email
     fluxo.codigo_hash = _hash(codigo)
     fluxo.codigo_expira_em = _agora() + CODIGO_TROCA_TTL
     await _auditar(db, "auth.google.callback", fluxo.id, "sucesso", metadata={"etapa": etapa.value})
@@ -392,6 +393,9 @@ async def _trocar_para_conta_existente(db: AsyncSession, fluxo: OAuthFluxo) -> U
             )
             await db.commit()
             raise ContaExistenteError
+        # Endereço apenas informativo: a identidade continua sendo o `sub` imutável.
+        if fluxo.email:
+            identidade.email = fluxo.email
         identidade.ultimo_login_em = _agora()
         fluxo.email = None
         fluxo.nome = None
@@ -432,7 +436,9 @@ async def _criar_usuario_google(
         hashed_password=password_helper.hash(senha),
         is_verified=True,
     )
-    await oauth_queries.criar_identidade(db, user_id=usuario.id, provider=PROVIDER, subject=subject)
+    await oauth_queries.criar_identidade(
+        db, user_id=usuario.id, provider=PROVIDER, subject=subject, email=email
+    )
     await consentimento_service.gravar_decisoes(
         db,
         titular=usuario,

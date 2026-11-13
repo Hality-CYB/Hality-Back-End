@@ -47,6 +47,7 @@ EXCHANGE_URL = "/api/v1/auth/google/exchange"
 ME_URL = "/api/v1/users/me"
 FRONTEND_URL = "http://localhost:3000/login/google"
 CLIENT_SECRET = "segredo-do-cliente-jamais-no-frontend"
+LINK_URL = "/api/v1/auth/google/link"
 
 TRATAMENTO = {"finalidade": "health_data", "versao": "v1", "aceito": True}
 TREINO_ACEITO = {"finalidade": "image_training", "versao": "v1", "aceito": True}
@@ -176,6 +177,49 @@ async def test_codigo_de_vinculo_manual_antigo_nao_emite_sessao(client, google, 
 
 async def _contar(db: AsyncSession, modelo, *filtros) -> int:
     return await db.scalar(select(func.count()).select_from(modelo).where(*filtros))
+
+
+@pytest.mark.asyncio
+async def test_status_google_exige_autenticacao(client):
+    assert (await client.get(LINK_URL)).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_status_google_atualiza_email_sem_alterar_conta(client, google, db_session):
+    sessao = await _primeiro_login(client)
+    headers = {"Authorization": f"Bearer {sessao['access_token']}"}
+    resposta = await client.get(LINK_URL, headers=headers)
+    assert resposta.json() == {"vinculado": True, "email": GOOGLE.email}
+    assert resposta.headers["cache-control"] == "no-store"
+    google.identidade = IdentidadeGoogle(
+        subject=GOOGLE.subject, email="novo@gmail.com", nome=GOOGLE.nome, email_autoritativo=True
+    )
+    retorno = await _fluxo_ate_o_callback(client)
+    assert (await _trocar(client, retorno["code"])).status_code == 200
+    assert (await client.get(LINK_URL, headers=headers)).json() == {
+        "vinculado": True,
+        "email": "novo@gmail.com",
+    }
+    assert (await client.get(ME_URL, headers=headers)).json()["email"] == GOOGLE.email
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("papel", ["paciente", "profissional", "admin"])
+async def test_status_google_isolado_por_paciente(client, google, db_session, papel):
+    await _primeiro_login(client)  # Outra conta possui vínculo.
+    await _registrar_com_senha(client, db_session, "outro@example.com", role=papel)
+    login = await client.post(
+        "/api/v1/auth/login", data={"username": "outro@example.com", "password": "SenhaSegura123!"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    resposta = await client.get(LINK_URL, headers=headers)
+    if papel == "paciente":
+        assert resposta.status_code == 200
+        assert resposta.json() == {"vinculado": False, "email": None}
+        # A consulta não inicia OAuth nem cria identidade.
+        assert await _contar(db_session, IdentidadeExterna) == 1
+    else:
+        assert resposta.status_code == 403
 
 
 async def _usuario(db: AsyncSession, email: str) -> User | None:
@@ -748,6 +792,11 @@ async def test_conta_manual_verificada_com_mesmo_email_e_vinculada(
     assert await _contar(db_session, User) == 1
     depois = await _usuario(db_session, GOOGLE.email)
     assert depois.id == antes.id and depois.hashed_password == senha_antes
+    headers = {"Authorization": f"Bearer {resposta.json()['access_token']}"}
+    assert (await client.get(LINK_URL, headers=headers)).json() == {
+        "vinculado": True,
+        "email": GOOGLE.email,
+    }
     evento = await db_session.scalar(select(ConsentimentoEvento))
     assert evento.titular_id == antes.id and evento.origem == "registro"
     # A conta segue acessível pela senha de sempre após ganhar o segundo método.

@@ -7,6 +7,11 @@ from app.core.senha import SenhaNova
 from app.schemas.consentimento import DecisaoConsentimento
 
 
+class VinculoGoogleResponse(BaseModel):
+    vinculado: bool
+    email: str | None
+
+
 class TrocaGoogleRequest(BaseModel):
     """Código de troca de uso único recebido no redirecionamento do callback.
 

@@ -27,7 +27,7 @@ class IdentidadeExterna(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(String(20))
     subject: Mapped[str] = mapped_column(String(255))
-    # Mantido para preservar dados já gravados pela versão anterior do fluxo.
+    # Último e-mail validado pelo provedor; informativo, nunca chave de autenticação.
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
