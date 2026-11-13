@@ -1337,6 +1337,7 @@ async def listar_diagnosticos_admin(
     pagina: int = 1,
     limite: int = 20,
     ordem: str = "data_desc",
+    exportacao_habilitada: bool = False,
 ) -> AdminDiagnosticoListResponse:
     (
         data_inicio_normalizada,
@@ -1385,6 +1386,15 @@ async def listar_diagnosticos_admin(
         db,
         diagnostico_ids,
     )
+    elegibilidade = await rotulo_dataset_service.elegibilidade_em_lote(
+        db,
+        [item.diagnostico for item in resultado.itens],
+        quantidades_imagens,
+        {
+            diagnostico_id: revisao.revisao.profissional_id
+            for diagnostico_id, revisao in ultimas_revisoes.items()
+        },
+    )
 
     return AdminDiagnosticoListResponse(
         itens=[
@@ -1408,9 +1418,11 @@ async def listar_diagnosticos_admin(
                     )
                 ),
                 qtd_imagens=quantidades_imagens.get(item.diagnostico.id, 0),
+                dataset=elegibilidade[item.diagnostico.id],
             )
             for item in resultado.itens
         ],
+        exportacao_habilitada=exportacao_habilitada,
         pagina=pagina,
         limite=limite,
         total=resultado.total,
@@ -1425,8 +1437,10 @@ async def obter_diagnostico_admin(
 ) -> AdminDiagnosticoDetalhe:
     """Detalhe administrativo. Somente leitura + auditoria de abertura.
 
-    Diferente do detalhe do paciente, NÃO chama `diagnostico_mock`: o admin
-    nunca dispara processamento nem altera o diagnóstico.
+    Traz a foto e a anamnese, como o detalhe do profissional: o admin usa as
+    duas para rotular e reclassificar (decisão do time em 2026-11-13). Diferente
+    do detalhe do paciente, NÃO chama `diagnostico_mock`: o admin nunca dispara
+    processamento nem altera o diagnóstico.
     """
 
     diagnostico = await diagnostico_queries.buscar_por_id(
@@ -1449,9 +1463,12 @@ async def obter_diagnostico_admin(
             diagnostico.classificacao_id,
         )
 
-    qtd_imagens = await diagnostico_queries.contar_imagens(
-        db,
-        diagnostico.id,
+    imagens = await diagnostico_queries.listar_imagens(db, diagnostico.id)
+    qtd_imagens = len(imagens)
+    anamnese = (
+        await anamnese_queries.buscar_por_id(db, diagnostico.anamnese_id)
+        if diagnostico.anamnese_id is not None
+        else None
     )
     historico = await diagnostico_queries.listar_revisoes(db, diagnostico.id)
     ultima_revisao = historico[-1] if historico else None
@@ -1501,7 +1518,33 @@ async def obter_diagnostico_admin(
         ),
         anamnese_id=diagnostico.anamnese_id,
         qtd_imagens=qtd_imagens,
-        imagem=ImagemInfo(),
+        imagem=ImagemInfo(disponivel=qtd_imagens > 0, motivo=None),
+        imagens=[
+            ImagemDiagnostico(
+                id=imagem.id,
+                url_arquivo=assinar_url_imagem(imagem.url_arquivo),
+                ordem=imagem.ordem,
+                data_captura=imagem.data_captura,
+            )
+            for imagem in imagens
+        ],
+        anamnese=(
+            AnamneseDiagnostico(
+                id=anamnese.id,
+                paciente_id=anamnese.paciente_id,
+                data_preenchimento=anamnese.data_preenchimento,
+                versao_questionario=anamnese.id_versao_questionario,
+                respostas=[
+                    ItemRespostaRegistrada.model_validate(resposta).model_dump(
+                        mode="json",
+                        by_alias=True,
+                    )
+                    for resposta in anamnese.respostas
+                ],
+            )
+            if anamnese is not None
+            else None
+        ),
     )
 
     await auditoria_queries.registrar_acesso(
