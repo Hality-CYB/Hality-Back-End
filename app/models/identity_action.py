@@ -60,7 +60,9 @@ class EmailOutbox(Base):
         Index("ix_email_outbox_correlation_id", "correlation_id"),
         UniqueConstraint("review_id", "purpose", name="uq_email_outbox_review_id_purpose"),
         CheckConstraint(
-            "(action_id IS NOT NULL) != (review_id IS NOT NULL)",
+            "(CASE WHEN action_id IS NOT NULL THEN 1 ELSE 0 END + "
+            "CASE WHEN review_id IS NOT NULL THEN 1 ELSE 0 END + "
+            "CASE WHEN solicitacao_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
             name="ck_email_outbox_one_source",
         ),
     )
@@ -70,6 +72,8 @@ class EmailOutbox(Base):
         ForeignKey("identity_actions.id", ondelete="CASCADE"), nullable=True
     )
     review_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Como review_id, referencia a origem sem acoplar o ciclo de vida da entrega.
+    solicitacao_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
     purpose: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")

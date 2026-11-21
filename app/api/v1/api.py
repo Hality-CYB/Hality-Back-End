@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     home,
     paciente,
     profissional,
+    solicitacoes_profissionais,
     uploads_local,
     users,
     vinculo,
@@ -52,6 +53,7 @@ api_router.include_router(admin_resumo.router)
 api_router.include_router(admin_revisoes.router)
 api_router.include_router(home.router)
 api_router.include_router(profissional.router)
+api_router.include_router(solicitacoes_profissionais.router)
 api_router.include_router(vinculo.router)
 api_router.include_router(paciente.router)
 api_router.include_router(admin_usuarios.router)

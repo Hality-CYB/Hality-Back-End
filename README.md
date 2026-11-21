@@ -2,6 +2,32 @@
 
 Backend em FastAPI, gerenciado com [uv](https://docs.astral.sh/uv/).
 
+## Solicitação de acesso profissional
+
+`POST /api/v1/auth/profissionais/solicitacoes` recebe `nome`, `email`, `telefone`
+(opcional), `registro_profissional`, `especialidade` e `aceita_termos: true`. Retorna
+202 e mantém a solicitação separada de `users`: não há sessão ou acesso até a aprovação
+administrativa e ativação por convite. Há limite persistido de seis tentativas por hora/IP,
+validação estrita e conflito 409 para e-mail com conta ou solicitação existente.
+
+Somente admins acessam `GET /api/v1/admin/solicitacoes-profissionais`
+(`status=pendente|aprovada|recusada`, `pagina`, `limite` até 50) e
+`POST /api/v1/admin/solicitacoes-profissionais/{id}/decisao`
+(`decisao=aprovada|recusada`). Decisões usam bloqueio transacional e auditoria;
+conflito ou decisão já concluída retorna 409. A aprovação cria profissional inativo,
+sem vínculo Hality, e enfileira convite para confirmação de e-mail e definição de senha.
+A recusa não cria conta e enfileira uma notificação pela mesma outbox com retry.
+
+Aplicar `uv run alembic upgrade heads` antes de iniciar API e worker: migration
+`a5b6c7d8e9f0` cria `solicitacoes_profissionais` e amplia a origem de `email_outbox`.
+Não há nova variável: é necessário manter o worker transacional e o provedor de e-mail
+configurados. `EMAIL_PROVIDER=noop` não envia mensagens externas. Reenvio de convite
+expirado continua disponível na gestão administrativa de usuários.
+
+Solicitações com e-mail de paciente existente não convertem a conta nem alteram seu
+histórico: a equipe trata esses casos pelos mecanismos administrativos vigentes.
+Decisões são definitivas nesta versão; nova análise deve ser solicitada à equipe.
+
 ## Como iniciar o projeto
 
 Existem dois caminhos: rodar a **API local com o banco em container** (melhor pro dia a dia de desenvolvimento, porque o reload automático é instantâneo) ou rodar a **API também em container** (ver [Rodando a API com Docker](#rodando-a-api-com-docker)). O passo a passo abaixo é o primeiro caso.

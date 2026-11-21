@@ -17,6 +17,7 @@ from app.services.identity_token_service import (
     INVITATION,
     PASSWORD_RESET,
     PROCESSING,
+    PROFESSIONAL_REQUEST_RATE_WINDOW_SECONDS,
     SENT,
     _token_for,
     consume_invitation,
@@ -366,7 +367,15 @@ async def test_outbox_limpa_janelas_de_rate_limit_expiradas(db_session: AsyncSes
     antigo = IdentityRateLimit(
         key_hash="a" * 64,
         window_started_at=agora
-        - timedelta(seconds=settings.identity_recovery_rate_window_seconds + 1),
+        - timedelta(
+            seconds=max(
+                PROFESSIONAL_REQUEST_RATE_WINDOW_SECONDS,
+                settings.identity_recovery_rate_window_seconds,
+                settings.email_verification_rate_window_seconds,
+                settings.google_authorize_rate_window_seconds,
+            )
+            + 1
+        ),
         attempts=1,
     )
     atual = IdentityRateLimit(key_hash="b" * 64, window_started_at=agora, attempts=1)

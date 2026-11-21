@@ -41,6 +41,7 @@ BLOCKED = "blocked"
 HELD = "held"
 DIAGNOSTIC_REVIEW = "diagnostic_review"
 DIAGNOSTIC_REVIEW_OVERRIDE = "diagnostic_review_override"
+PROFESSIONAL_REQUEST_RATE_WINDOW_SECONDS = 3600
 
 
 class InvalidIdentityTokenError(Exception):
@@ -433,6 +434,7 @@ async def dispatch_pending_emails(
     settings = get_settings()
     # A tabela não guarda a janela de cada chave: só some o que já venceu em todas.
     retention_seconds = max(
+        PROFESSIONAL_REQUEST_RATE_WINDOW_SECONDS,
         settings.identity_recovery_rate_window_seconds,
         settings.google_authorize_rate_window_seconds,
         settings.email_verification_rate_window_seconds,
@@ -464,7 +466,22 @@ async def dispatch_pending_emails(
     await db.commit()
     delivered = 0
     for outbox in rows:
-        if outbox.review_id is not None:
+        if outbox.solicitacao_id is not None:
+            from app.models.solicitacao_profissional import SolicitacaoProfissional
+
+            solicitacao = await db.get(SolicitacaoProfissional, outbox.solicitacao_id)
+            if solicitacao is None or solicitacao.status != "recusada":
+                outbox.status = EXPIRED
+                await db.commit()
+                continue
+            message = EmailMessage(
+                recipient=outbox.recipient_email,
+                purpose=outbox.purpose,
+                token="",
+                token_url=get_settings().identity_token_base_url.rstrip("/").split("?")[0],
+                correlation_id=outbox.correlation_id,
+            )
+        elif outbox.review_id is not None:
             message = await _review_message(db, outbox)
             if message is None:
                 outbox.status = EXPIRED
