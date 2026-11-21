@@ -14,9 +14,11 @@ from app.models.profissional import Profissional
 from app.models.questionario import Questionario
 from app.models.refresh_token import RefreshToken
 from app.models.rotulo_dataset import RotuloDataset
+from app.models.solicitacao_profissional import SolicitacaoProfissional
 from app.models.user import User
 
 __all__ = [
+    "SolicitacaoProfissional",
     "Anamnese",
     "AuditoriaAcesso",
     "ClassificacaoDiagnostico",
