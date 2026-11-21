@@ -61,7 +61,31 @@ def _erro_de_validacao(response: httpx.Response) -> bool:
 
 
 def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str, str]:
-    if message.purpose == INVITATION:
+    if message.purpose == "professional_rejected":
+        subject = "Solicitação de acesso profissional — Check Your Breath"
+        title = "Solicitação não aprovada"
+        description = (
+            "A equipe Hality analisou sua solicitação de acesso profissional "
+            "e não aprovou o cadastro."
+        )
+        detail = (
+            "Para esclarecer dúvidas ou solicitar uma nova análise, entre em contato "
+            "com a equipe Hality pelos canais disponíveis na plataforma."
+        )
+        button = "Acessar a plataforma"
+    elif message.purpose == "professional_approved":
+        subject = "Seu acesso profissional foi aprovado — Check Your Breath"
+        title = "Cadastro profissional aprovado"
+        description = (
+            "A equipe Hality aprovou sua solicitação. Confirme seu e-mail e defina uma senha "
+            "pelo link abaixo para começar a acompanhar seus pacientes."
+        )
+        button = "Ativar acesso profissional"
+        detail = (
+            f"O link expira em {token_expiry_minutes} minutos. "
+            "Se necessário, solicite um novo convite à equipe Hality."
+        )
+    elif message.purpose == INVITATION:
         subject = "Seu convite para o Check Your Breath"
         title = "Você foi convidado(a)"
         description = (

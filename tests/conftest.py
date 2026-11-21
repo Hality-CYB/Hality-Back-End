@@ -68,6 +68,7 @@ from app.models import (
     Profissional,
     Questionario,
     RefreshToken,
+    SolicitacaoProfissional,
     User,
 )
 from app.services import storage
@@ -135,6 +136,8 @@ if "identidades_externas" not in TestBase.metadata.tables:
     IdentidadeExterna.__table__.to_metadata(TestBase.metadata)
 if "oauth_fluxos" not in TestBase.metadata.tables:
     OAuthFluxo.__table__.to_metadata(TestBase.metadata)
+if "solicitacoes_profissionais" not in TestBase.metadata.tables:
+    SolicitacaoProfissional.__table__.to_metadata(TestBase.metadata)
 
 
 @pytest_asyncio.fixture
