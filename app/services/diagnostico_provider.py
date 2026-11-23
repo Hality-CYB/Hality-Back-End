@@ -30,7 +30,7 @@ CLASSIFICACAO_INDICIO_LEVE = "halitose_intima"
 CLASSIFICACAO_INDICIO_FORTE = "mau_halito_social"
 
 # Acima deste valor, o indício é classificado como o grau mais alto.
-LIMIAR_INDICIO_FORTE = 0.75
+LIMIAR_INDICIO_FORTE = 0.9
 
 
 @dataclass(frozen=True)
@@ -126,15 +126,16 @@ async def processar_se_necessario(
             erro_interno=str(exc),
         )
 
-    # Vereditos inconclusivos/rejeitados não viram resultado: falha com o motivo
-    # que a API devolveu (texto de orientação ao usuário) guardado no erro interno.
+    # Vereditos inconclusivos/rejeitados não viram resultado: falha com código
+    # próprio (IMAGEM_REJEITADA) e o motivo da IA guardado como a orientação
+    # que será mostrada ao usuário (ex.: "mostre a língua de frente").
     if resultado.rejeitado:
         return await diagnostico_queries.marcar_falha(
             db,
             diagnostico,
             origem=OrigemResultado.MODELO,
-            erro_codigo=CodigoErroDiagnostico.FALHA_PROCESSAMENTO,
-            erro_interno=f"{resultado.veredito}: {resultado.motivo}",
+            erro_codigo=CodigoErroDiagnostico.IMAGEM_REJEITADA,
+            erro_interno=resultado.motivo or None,
         )
 
     mapeado = _mapear(resultado)

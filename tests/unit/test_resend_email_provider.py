@@ -11,6 +11,7 @@ from app.services.resend_email_provider import (
     PermanentEmailError,
     ResendEmailProvider,
     RetryableEmailError,
+    _render,
 )
 
 
@@ -28,6 +29,52 @@ def _settings(**overrides) -> Settings:
         "resend_test_recipient": "pessoa@example.com",
     }
     return Settings(**(data | overrides), _env_file=None)
+
+
+@pytest.mark.parametrize(
+    "purpose", ["invitation", "password_reset", "email_verification", "professional_approved"]
+)
+def test_links_de_identidade_informam_validade_de_seis_horas(purpose: str) -> None:
+    message = EmailMessage(
+        recipient="pessoa@example.com",
+        purpose=purpose,
+        token="token-de-teste",
+        token_url="https://app.example.com/acao",
+        correlation_id=f"validade-{purpose}",
+        token_expiry_minutes=360,
+    )
+
+    _, html, plain = _render(message, 360)
+
+    assert "O link expira em 6 horas." in html
+    assert "O link expira em 6 horas." in plain
+    assert "360 minutos" not in html + plain
+
+
+@pytest.mark.asyncio
+async def test_email_usa_validade_registrada_no_link_em_vez_da_configuracao_atual() -> None:
+    payloads = []
+
+    def receber(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "email_teste"})
+
+    provider = ResendEmailProvider(
+        _settings(identity_token_expire_minutes=360), httpx.MockTransport(receber)
+    )
+    await provider.send(
+        EmailMessage(
+            recipient="pessoa@example.com",
+            purpose="invitation",
+            token="token-antigo",
+            token_url="https://app.example.com/acao",
+            correlation_id="convite-antigo",
+            token_expiry_minutes=60,
+        )
+    )
+
+    assert "O link expira em 1 hora." in payloads[0]["html"]
+    assert "O link expira em 1 hora." in payloads[0]["text"]
 
 
 @pytest.mark.asyncio

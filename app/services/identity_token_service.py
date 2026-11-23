@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import ceil
 from typing import Protocol
 from urllib.parse import quote
 
@@ -59,6 +60,7 @@ class EmailMessage:
     professional_name: str | None = None
     professional_specialty: str | None = None
     professional_registration: str | None = None
+    token_expiry_minutes: int | None = None
 
 
 class EmailProvider(Protocol):
@@ -507,6 +509,9 @@ async def dispatch_pending_emails(
                     f"?purpose={quote(action.purpose)}&token={quote(token)}"
                 ),
                 correlation_id=outbox.correlation_id,
+                token_expiry_minutes=ceil(
+                    (_utc(action.expires_at) - _utc(action.created_at)).total_seconds() / 60
+                ),
             )
         outbox.attempts += 1
         try:
