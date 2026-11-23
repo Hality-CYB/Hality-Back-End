@@ -43,10 +43,10 @@ def test_indicio_fraco_vira_halitose_intima() -> None:
 
 
 def test_indicio_forte_vira_mau_halito_social() -> None:
-    mapeado = _mapear(_resultado("indicio", 0.88))
+    mapeado = _mapear(_resultado("indicio", 0.95))
 
     assert mapeado.classificacao_codigo == CLASSIFICACAO_INDICIO_FORTE
-    assert mapeado.escala_saburra == 88
+    assert mapeado.escala_saburra == 95
 
 
 def test_limiar_e_inclusivo_no_grau_forte() -> None:
