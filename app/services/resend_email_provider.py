@@ -60,7 +60,17 @@ def _erro_de_validacao(response: httpx.Response) -> bool:
     return isinstance(corpo, dict) and corpo.get("name") == "validation_error"
 
 
+def _formatar_validade_token(minutos: int) -> str:
+    if minutos > 0 and minutos % 60 == 0:
+        horas = minutos // 60
+        unidade = "hora" if horas == 1 else "horas"
+        return f"{horas} {unidade}"
+    unidade = "minuto" if minutos == 1 else "minutos"
+    return f"{minutos} {unidade}"
+
+
 def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str, str]:
+    validade = _formatar_validade_token(token_expiry_minutes)
     if message.purpose == "professional_rejected":
         subject = "Solicitação de acesso profissional — Check Your Breath"
         title = "Solicitação não aprovada"
@@ -82,8 +92,7 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
         )
         button = "Ativar acesso profissional"
         detail = (
-            f"O link expira em {token_expiry_minutes} minutos. "
-            "Se necessário, solicite um novo convite à equipe Hality."
+            f"O link expira em {validade}. Se necessário, solicite um novo convite à equipe Hality."
         )
     elif message.purpose == INVITATION:
         subject = "Seu convite para o Check Your Breath"
@@ -93,10 +102,7 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
             "Defina sua senha para ativar a conta."
         )
         button = "Aceitar convite"
-        detail = (
-            f"O link expira em {token_expiry_minutes} minutos. "
-            "Se não esperava este convite, ignore a mensagem."
-        )
+        detail = f"O link expira em {validade}. Se não esperava este convite, ignore a mensagem."
     elif message.purpose == PASSWORD_RESET:
         subject = "Redefina sua senha do Check Your Breath"
         title = "Redefinição de senha"
@@ -105,10 +111,7 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
             "Use o link abaixo para escolher uma nova senha."
         )
         button = "Redefinir senha"
-        detail = (
-            f"O link expira em {token_expiry_minutes} minutos. "
-            "Se não fez a solicitação, ignore a mensagem."
-        )
+        detail = f"O link expira em {validade}. Se não fez a solicitação, ignore a mensagem."
     elif message.purpose == EMAIL_VERIFICATION:
         subject = "Confirme seu e-mail no Check Your Breath"
         title = "Confirme seu e-mail"
@@ -117,10 +120,7 @@ def _render(message: EmailMessage, token_expiry_minutes: int) -> tuple[str, str,
             "Confirme seu endereço de e-mail para conseguir entrar."
         )
         button = "Confirmar e-mail"
-        detail = (
-            f"O link expira em {token_expiry_minutes} minutos. "
-            "Se não criou esta conta, ignore a mensagem."
-        )
+        detail = f"O link expira em {validade}. Se não criou esta conta, ignore a mensagem."
     elif message.purpose == DIAGNOSTIC_REVIEW_OVERRIDE:
         subject = "Um diagnóstico que você revisou foi reclassificado"
         title = "Diagnóstico reclassificado"
@@ -175,7 +175,14 @@ class ResendEmailProvider:
         allowed = self.settings.resend_test_recipient
         if allowed and message.recipient.casefold() != allowed.casefold():
             raise SandboxRecipientError("destinatário fora da lista de testes")
-        subject, html, plain = _render(message, self.settings.identity_token_expire_minutes)
+        subject, html, plain = _render(
+            message,
+            (
+                message.token_expiry_minutes
+                if message.token_expiry_minutes is not None
+                else self.settings.identity_token_expire_minutes
+            ),
+        )
         cyb_logo, hality_logo = _logos()
         payload = {
             "from": self.settings.resend_from_email,

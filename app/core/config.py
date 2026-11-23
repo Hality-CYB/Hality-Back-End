@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     secret_key: SecretStr
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
-    identity_token_expire_minutes: int = 60
+    identity_token_expire_minutes: int = 360
     identity_token_base_url: str = "http://localhost:3000"
     email_provider: str = "noop"
     resend_api_key: SecretStr | None = None

@@ -205,7 +205,7 @@ async def test_token_de_outra_finalidade_nao_confirma(
 
 
 @pytest.mark.asyncio
-async def test_link_expira_em_60_minutos(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_link_expira_em_6_horas(client: AsyncClient, db_session: AsyncSession) -> None:
     email = "validade@hality.com"
     antes = datetime.now(UTC)
     await client.post(REGISTER_URL, json=_cadastro(email))
@@ -213,7 +213,7 @@ async def test_link_expira_em_60_minutos(client: AsyncClient, db_session: AsyncS
     acao = (await _acoes_de_verificacao(db_session, email))[0]
     expira = acao.expires_at.replace(tzinfo=UTC)
 
-    assert timedelta(minutes=59) < expira - antes <= timedelta(minutes=61)
+    assert timedelta(hours=5, minutes=59) < expira - antes <= timedelta(hours=6, minutes=1)
 
 
 @pytest.mark.asyncio
