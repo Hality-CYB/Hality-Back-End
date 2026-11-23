@@ -30,7 +30,7 @@ CLASSIFICACAO_INDICIO_LEVE = "halitose_intima"
 CLASSIFICACAO_INDICIO_FORTE = "mau_halito_social"
 
 # Acima deste valor, o indício é classificado como o grau mais alto.
-LIMIAR_INDICIO_FORTE = 0.75
+LIMIAR_INDICIO_FORTE = 0.9
 
 
 @dataclass(frozen=True)
