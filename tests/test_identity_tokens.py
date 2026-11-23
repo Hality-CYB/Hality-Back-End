@@ -19,6 +19,7 @@ from app.services.identity_token_service import (
     PROCESSING,
     PROFESSIONAL_REQUEST_RATE_WINDOW_SECONDS,
     SENT,
+    EmailMessage,
     _token_for,
     consume_invitation,
     create_invitation,
@@ -216,6 +217,34 @@ async def test_outbox_retry_e_marca_falha_sem_token_no_erro(db_session: AsyncSes
         else outbox.available_at
     )
     assert datetime.now(UTC) + timedelta(minutes=1) >= available_at
+
+
+@pytest.mark.asyncio
+async def test_outbox_preserva_validade_registrada_para_link_ja_enfileirado(
+    db_session: AsyncSession,
+) -> None:
+    user = User(email="validade-antiga@hality.com", hashed_password="hash", name="Pessoa")
+    db_session.add(user)
+    await db_session.flush()
+    await create_invitation(db_session, user)
+    action = await db_session.scalar(
+        select(IdentityAction).where(IdentityAction.user_id == user.id)
+    )
+    assert action is not None
+    action.expires_at = action.created_at + timedelta(hours=1)
+    await db_session.commit()
+
+    class Provider:
+        message: EmailMessage | None = None
+
+        async def send(self, message: EmailMessage) -> None:
+            self.message = message
+
+    provider = Provider()
+    assert await dispatch_pending_emails(db_session, provider) == 1
+
+    assert provider.message is not None
+    assert provider.message.token_expiry_minutes == 60
 
 
 @pytest.mark.asyncio

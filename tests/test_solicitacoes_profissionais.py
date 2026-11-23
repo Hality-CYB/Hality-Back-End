@@ -117,7 +117,10 @@ async def test_aprovacao_convite_ativacao_e_nao_concede_vinculo_hality(client, d
     mensagem = provider.send.call_args.args[0]
     assert mensagem.purpose == "professional_approved"
     assert "purpose=invitation" in mensagem.token_url
-    assert "aprovado" in _render(mensagem, 60)[0]
+    assunto, html, texto = _render(mensagem, 360)
+    assert "aprovado" in assunto
+    assert "O link expira em 6 horas." in html
+    assert "O link expira em 6 horas." in texto
     assert (
         await client.get(
             "/api/v1/profissional/resumo",

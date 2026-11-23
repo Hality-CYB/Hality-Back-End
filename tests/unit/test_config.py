@@ -45,6 +45,12 @@ def test_configuracao_serializada_nao_expoe_url_com_senha() -> None:
     assert "token-super-secreto" not in repr(settings)
 
 
+def test_validade_padrao_dos_links_de_identidade_e_seis_horas() -> None:
+    settings = Settings(**CONFIGURACAO_MINIMA, _env_file=None)
+
+    assert settings.identity_token_expire_minutes == 360
+
+
 def test_producao_exige_remetente_e_url_publica() -> None:
     with pytest.raises(ValidationError, match="EMAIL_PROVIDER deve ser resend"):
         Settings(**CONFIGURACAO_MINIMA, environment="production", _env_file=None)
