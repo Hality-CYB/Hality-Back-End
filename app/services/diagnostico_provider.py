@@ -126,15 +126,16 @@ async def processar_se_necessario(
             erro_interno=str(exc),
         )
 
-    # Vereditos inconclusivos/rejeitados não viram resultado: falha com o motivo
-    # que a API devolveu (texto de orientação ao usuário) guardado no erro interno.
+    # Vereditos inconclusivos/rejeitados não viram resultado: falha com código
+    # próprio (IMAGEM_REJEITADA) e o motivo da IA guardado como a orientação
+    # que será mostrada ao usuário (ex.: "mostre a língua de frente").
     if resultado.rejeitado:
         return await diagnostico_queries.marcar_falha(
             db,
             diagnostico,
             origem=OrigemResultado.MODELO,
-            erro_codigo=CodigoErroDiagnostico.FALHA_PROCESSAMENTO,
-            erro_interno=f"{resultado.veredito}: {resultado.motivo}",
+            erro_codigo=CodigoErroDiagnostico.IMAGEM_REJEITADA,
+            erro_interno=resultado.motivo or None,
         )
 
     mapeado = _mapear(resultado)

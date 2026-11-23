@@ -117,7 +117,7 @@ def _origem_resultado(
 def _campos_erro(
     diagnostico: Diagnostico,
 ) -> dict[str, str | None]:
-    erro = erro_publico(diagnostico.status, diagnostico.erro_codigo)
+    erro = erro_publico(diagnostico.status, diagnostico.erro_codigo, diagnostico.erro)
 
     if erro is None:
         return {"erro": None, "erro_codigo": None}
